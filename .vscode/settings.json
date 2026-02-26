@@ -1,0 +1,21 @@
+{
+    "dotnet.defaultSolution": "FastDrawingVisual.sln",
+    "omnisharp.useModernNet": true,
+    "omnisharp.enableRoslynAnalyzers": true,
+    "omnisharp.enableEditorConfigSupport": true,
+    "omnisharp.minFindSymbolsFilterLength": 3,
+    "omnisharp.analyzeOpenDocumentsOnly": false,
+    "omnisharp.sdkPath": "",
+    "omnisharp.sdkVersion": "",
+    "omnisharp.sdkIncludePrereleases": false,
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "**/bin": true,
+        "**/obj": true
+    },
+    "dotnet.server.useOmnisharp": false
+}

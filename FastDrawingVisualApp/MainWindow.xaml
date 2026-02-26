@@ -1,0 +1,52 @@
+﻿<Window x:Class="FastDrawingVisualApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:FastDrawingVisualApp"
+        xmlns:fdv="clr-namespace:FastDrawingVisual.Controls;assembly=FastDrawingVisual"
+        mc:Ignorable="d"
+        Title="FastDrawingVisual Demo" Height="600" Width="900"
+        Background="#1E1E2E">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 标题栏 -->
+        <Border Grid.Row="0" Background="#181825" Padding="16,10">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Ellipse Width="12" Height="12" Fill="#CBA6F7" Margin="0,0,8,0"/>
+                <TextBlock Text="FastDrawingVisual" FontSize="16" FontWeight="Bold"
+                           Foreground="#CDD6F4" FontFamily="Segoe UI"/>
+                <TextBlock Text=" · 渲染演示" FontSize="14"
+                           Foreground="#6C7086" FontFamily="Segoe UI" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
+            </StackPanel>
+        </Border>
+
+        <!-- 主画布区域 -->
+        <Border Grid.Row="1" Margin="16" CornerRadius="8"
+                BorderBrush="#313244" BorderThickness="1"
+                Background="#181825">
+            <fdv:FastDrawingVisual x:Name="FastCanvas"/>
+        </Border>
+
+        <!-- 底部状态栏 -->
+        <Border Grid.Row="2" Background="#181825" Padding="16,8">
+            <StackPanel Orientation="Horizontal">
+                <Ellipse x:Name="StatusIndicator" Width="8" Height="8"
+                         Fill="#A6E3A1" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" Text="正在初始化…"
+                           Foreground="#6C7086" FontSize="12" FontFamily="Segoe UI"
+                           VerticalAlignment="Center"/>
+                <TextBlock Text=" | " Foreground="#313244" Margin="8,0" FontSize="12"/>
+                <TextBlock x:Name="FrameInfoText" Text="Frame: —"
+                           Foreground="#6C7086" FontSize="12" FontFamily="Segoe UI"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

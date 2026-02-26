@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36811.4
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FastDrawingVisual", "FastDrawingVisual\FastDrawingVisual.csproj", "{3041E623-9B43-1C37-FE4B-3F5FB6A8D86A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FastDrawingVisualApp", "FastDrawingVisualApp\FastDrawingVisualApp.csproj", "{F2EE8A47-12D5-577F-2EAE-C3F01824A2F3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3041E623-9B43-1C37-FE4B-3F5FB6A8D86A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3041E623-9B43-1C37-FE4B-3F5FB6A8D86A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3041E623-9B43-1C37-FE4B-3F5FB6A8D86A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3041E623-9B43-1C37-FE4B-3F5FB6A8D86A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F2EE8A47-12D5-577F-2EAE-C3F01824A2F3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F2EE8A47-12D5-577F-2EAE-C3F01824A2F3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F2EE8A47-12D5-577F-2EAE-C3F01824A2F3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F2EE8A47-12D5-577F-2EAE-C3F01824A2F3}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E40EED9F-4139-41AD-9303-FE06317A72E9}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,17 @@
+{
+    "msbuild": {
+        "useBundledOnly": false,
+        "loadProjectsOnDemand": false
+    },
+    "RoslynExtensionsOptions": {
+        "enableDecompilationSupport": true,
+        "enableAnalyzersSupport": true,
+        "enableImportCompletion": true,
+        "enableAsyncCompletion": true,
+        "documentAnalysisTimeoutMs": 300000
+    },
+    "FormattingOptions": {
+        "enableEditorConfigSupport": true,
+        "organizeImports": true
+    }
+}
