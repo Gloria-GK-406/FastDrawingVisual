@@ -38,7 +38,8 @@ namespace FastDrawingVisual.Controls
         private volatile Action<IDrawingContext>? _pendingDrawAction;
 
         // ── DrawingWorker 生命周期 ───────────────────────────────────────────
-        private readonly CancellationTokenSource _workerCts = new CancellationTokenSource();
+        private readonly object _workerLock = new object();
+        private CancellationTokenSource? _workerCts;
         private Task? _drawingWorkerTask;
 
         // ── 辅助提交路径：DispatcherTimer ───────────────────────────────────
@@ -52,6 +53,7 @@ namespace FastDrawingVisual.Controls
         private bool _isInitialized;
         private bool _isDeviceLost;
         private bool _isDisposed;
+        private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
 
         public ImageSource Source => _d3dImage;
         public double Width => _width;
@@ -94,7 +96,7 @@ namespace FastDrawingVisual.Controls
             _isDeviceLost = false;
 
             // 启动 DrawingWorker（Task 生命周期与此实例绑定）
-            _drawingWorkerTask = Task.Run(DrawingWorkerLoopAsync);
+            StartDrawingWorker();
 
             CompositionTarget.Rendering += OnCompositionTargetRendering;
             return true;
@@ -104,12 +106,17 @@ namespace FastDrawingVisual.Controls
         public void Resize(int width, int height)
         {
             if (_isDisposed) throw new ObjectDisposedException(nameof(D3DFastImage));
+            if (width <= 0 || height <= 0) throw new ArgumentException("宽高必须大于 0。");
             if (width == _width && height == _height) return;
+            if (_isDeviceLost)
+            {
+                // 设备丢失期间仅记录目标尺寸，待恢复时按最新尺寸重建。
+                _width = width;
+                _height = height;
+                return;
+            }
 
-            UnbindBackBuffer();
-            _pool.CreateResources(width, height);
-            _width = width;
-            _height = height;
+            RebuildResources(width, height);
         }
 
         #endregion
@@ -144,51 +151,45 @@ namespace FastDrawingVisual.Controls
         /// 使用 <see cref="PeriodicTimer"/>（1 ms）轮询 <see cref="_pendingDrawAction"/> 槽：
         /// 有委托则取出绘制；无委托则等到下次 Tick，线程在等待期间被挂起（不自旋）。
         /// </summary>
-        private async Task DrawingWorkerLoopAsync()
+        private async Task DrawingWorkerLoopAsync(CancellationToken token)
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1));
-            var token = _workerCts.Token;
-
-            while (true)
+            try
             {
                 // 等待下一个 1 ms Tick；取消时返回 false 并退出循环。
                 // 若本次绘制耗时超过 1 ms，WaitForNextTickAsync 在调用时立即返回（不会堆积 Tick）。
-                try
+                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
                 {
-                    if (!await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
-                        break;
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+                    if (_isDeviceLost || !_isInitialized) continue;
 
-                if (_isDeviceLost || !_isInitialized) continue;
+                    // 原子取出最新委托（若未到新的提交，槽为空则跳过）
+                    var action = Interlocked.Exchange(ref _pendingDrawAction, null);
+                    if (action == null) continue;
 
-                // 原子取出最新委托（若未到新的提交，槽为空则跳过）
-                var action = Interlocked.Exchange(ref _pendingDrawAction, null);
-                if (action == null) continue;
+                    // 申请一个可绘制 RenderFrame
+                    var frame = _pool.AcquireForDrawing();
+                    if (frame == null)
+                    {
+                        // 帧池暂时无可用帧（三重缓冲下极少发生）：归还委托，下次 Tick 重试。
+                        Interlocked.CompareExchange(ref _pendingDrawAction, action, null);
+                        continue;
+                    }
 
-                // 申请一个可绘制 RenderFrame
-                var frame = _pool.AcquireForDrawing();
-                if (frame == null)
-                {
-                    // 帧池暂时无可用帧（三重缓冲下极少发生）：归还委托，下次 Tick 重试。
-                    Interlocked.CompareExchange(ref _pendingDrawAction, action, null);
-                    continue;
+                    // 执行绘制委托
+                    try
+                    {
+                        using var ctx = frame.OpenCanvas();
+                        action(ctx);
+                    } // ctx.Dispose() 内完成 Skia Flush + GPU 上传 + Pool 通知 → ReadyForPresent
+                    catch
+                    {
+                        // 委托内部异常：强制归还帧，避免帧池泄漏
+                        frame.TryTransitionTo(FrameState.Drawing, FrameState.Ready);
+                    }
                 }
-
-                // 执行绘制委托
-                try
-                {
-                    using var ctx = frame.OpenCanvas();
-                    action(ctx);
-                } // ctx.Dispose() 内完成 Skia Flush + GPU 上传 + Pool 通知 → ReadyForPresent
-                catch
-                {
-                    // 委托内部异常：强制归还帧，避免帧池泄漏
-                    frame.TryTransitionTo(FrameState.Drawing, FrameState.Ready);
-                }
+            }catch(OperationCanceledException)
+            {
+                //什么都不用做，正常退出即可
             }
         }
 
@@ -262,7 +263,12 @@ namespace FastDrawingVisual.Controls
                 _isDeviceLost = true;
                 _uiDispatcher.BeginInvoke(() =>
                 {
+                    if (_isDisposed) return;
                     _retryTimer.Stop();
+                    if (!StopDrawingWorker(WorkerShutdownTimeout))
+                        return;
+
+                    _isInitialized = false;
                     UnbindBackBuffer();
                     _pool.ReleaseResources();
                 });
@@ -273,17 +279,19 @@ namespace FastDrawingVisual.Controls
                 {
                     try
                     {
-                        _deviceManager.Dispose();
-                        if (_deviceManager.Initialize() && _width > 0 && _height > 0)
+                        if (_isDisposed) return;
+                        if (!_deviceManager.Initialize())
+                            return;
+
+                        if (_width > 0 && _height > 0)
                         {
-                            _pool.CreateResources(_width, _height);
-                            _isDeviceLost = false;
-                            // DrawingWorker 轮询自动恢复，无需额外通知
+                            RebuildResources(_width, _height);
                         }
                     }
                     catch
                     {
                         // 恢复失败，保持 DeviceLost 状态，等待下次机会
+                        _isDeviceLost = true;
                     }
                 });
             }
@@ -314,15 +322,109 @@ namespace FastDrawingVisual.Controls
 
             _retryTimer.Stop();
 
-            // 停止 DrawingWorker：取消 Token，PeriodicTimer.WaitForNextTickAsync 会立即返回 false
-            _workerCts.Cancel();
-            _drawingWorkerTask?.Wait(timeout: TimeSpan.FromSeconds(2));
-            _workerCts.Dispose();
+            // Dispose 阶段必须保证 Worker 彻底停机，避免后续释放资源时并发访问。
+            StopDrawingWorker(Timeout.InfiniteTimeSpan);
 
             UnbindBackBuffer();
 
             _pool.Dispose();
             _deviceManager.Dispose();
+        }
+
+        private void RebuildResources(int width, int height)
+        {
+            if (!StopDrawingWorker(WorkerShutdownTimeout))
+                throw new TimeoutException("绘制线程未在超时时间内退出，已中止 Resize 以避免并发释放资源。");
+
+            _retryTimer.Stop();
+            _isInitialized = false;
+
+            UnbindBackBuffer();
+            _pool.ReleaseResources();
+            _pool.CreateResources(width, height);
+
+            _width = width;
+            _height = height;
+            _isInitialized = true;
+            _isDeviceLost = false;
+
+            StartDrawingWorker();
+        }
+
+        private void StartDrawingWorker()
+        {
+            if (_isDisposed || _isDeviceLost || !_isInitialized) return;
+
+            lock (_workerLock)
+            {
+                if (_isDisposed || _isDeviceLost || !_isInitialized) return;
+                if (_drawingWorkerTask is { IsCompleted: false }) return;
+
+                _workerCts?.Dispose();
+                _workerCts = new CancellationTokenSource();
+                var token = _workerCts.Token;
+                _drawingWorkerTask = Task.Run(() => DrawingWorkerLoopAsync(token));
+            }
+        }
+
+        private bool StopDrawingWorker(TimeSpan timeout)
+        {
+            Task? workerTask;
+            CancellationTokenSource? workerCts;
+
+            lock (_workerLock)
+            {
+                workerTask = _drawingWorkerTask;
+                workerCts = _workerCts;
+            }
+
+            if (workerCts == null && workerTask == null)
+                return true;
+
+            workerCts?.Cancel();
+
+            if (workerTask != null)
+            {
+                try
+                {
+                    if (timeout == Timeout.InfiniteTimeSpan)
+                    {
+                        workerTask.Wait();
+                    }
+                    else if (!workerTask.Wait(timeout))
+                    {
+                        return false;
+                    }
+                }
+                catch (AggregateException ex) when (IsCancellationOnly(ex))
+                {
+                    // 取消导致的退出是预期路径。
+                }
+            }
+
+            lock (_workerLock)
+            {
+                if (ReferenceEquals(_drawingWorkerTask, workerTask))
+                    _drawingWorkerTask = null;
+
+                if (ReferenceEquals(_workerCts, workerCts))
+                {
+                    _workerCts?.Dispose();
+                    _workerCts = null;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsCancellationOnly(AggregateException ex)
+        {
+            foreach (var inner in ex.Flatten().InnerExceptions)
+            {
+                if (inner is not OperationCanceledException)
+                    return false;
+            }
+            return true;
         }
     }
 }
