@@ -6,6 +6,7 @@ using SharpDX.Direct3D11;
 using Texture2D11 = SharpDX.Direct3D11.Texture2D;
 using Texture9 = SharpDX.Direct3D9.Texture;
 using Surface9 = SharpDX.Direct3D9.Surface;
+using System.Diagnostics;
 
 namespace FastDrawingVisual.Rendering.D3D
 {
@@ -27,6 +28,10 @@ namespace FastDrawingVisual.Rendering.D3D
         private Texture2D11? _stagingTexture;   // 持久化 staging，避免每帧分配
         private Texture9? _d3d9Texture;
         private Surface9? _d3d9Surface;
+
+        // GPU 同步查询：在 CopyResource 提交后插入 Event query，
+        // 自旋等待 GPU 回信后再标记帧就绪，彻底消除异步读取旧纹理的问题。
+        private Query? _syncQuery;
 
         // Skia CPU 画布
         private SKSurface? _skiaSurface;
@@ -96,6 +101,14 @@ namespace FastDrawingVisual.Rendering.D3D
             _skiaSurface = SKSurface.Create(info)
                 ?? throw new InvalidOperationException("无法创建 SKSurface。");
 
+            // 5. 创建持久化 GPU Event Query，用于精确等待 CopyResource 完成
+            var queryDesc = new QueryDescription
+            {
+                Type = QueryType.Event,
+                Flags = QueryFlags.None,
+            };
+            _syncQuery = new Query(device, queryDesc);
+
             // 重置为可用状态
             Interlocked.Exchange(ref _state, (int)FrameState.Ready);
         }
@@ -105,6 +118,9 @@ namespace FastDrawingVisual.Rendering.D3D
         {
             _skiaSurface?.Dispose();
             _skiaSurface = null;
+
+            _syncQuery?.Dispose();
+            _syncQuery = null;
 
             _d3d9Surface?.Dispose();
             _d3d9Surface = null;
@@ -145,7 +161,7 @@ namespace FastDrawingVisual.Rendering.D3D
             // Skia flush（CPU 模式下是 no-op，但保持语义正确）
             _skiaSurface.Canvas.Flush();
 
-            // CPU → D3D11 上传
+            // CPU → D3D11 上传（包含 GPU 同步等待，完成后才返回）
             UploadToD3D11();
 
             // 通知 Pool：本帧已就绪，请将状态推进到 ReadyForPresent
@@ -154,11 +170,12 @@ namespace FastDrawingVisual.Rendering.D3D
 
         /// <summary>
         /// 将 Skia CPU 画布的像素写入持久化 Staging 纹理，再 CopyResource 到共享 D3D11 纹理。
+        /// 使用 D3D11 Event Query 精确等待 GPU 完成复制，确保 D3D9 共享表面内容完整后再通知帧池。
         /// 由于同一时刻只有一帧处于 Drawing 状态，此处无须额外加锁。
         /// </summary>
         private unsafe void UploadToD3D11()
         {
-            if (_skiaSurface == null || _d3d11Texture == null || _stagingTexture == null)
+            if (_skiaSurface == null || _d3d11Texture == null || _stagingTexture == null || _syncQuery == null)
                 return;
 
             // PeekPixels 对 CPU 画布是零拷贝访问
@@ -167,8 +184,10 @@ namespace FastDrawingVisual.Rendering.D3D
                 return;
 
             var context = _deviceManager.D3D11Device.ImmediateContext;
-            var mapped = context.MapSubresource(_stagingTexture, 0,
-                              MapMode.Write, MapFlags.None);
+
+            // ── 第一步：CPU 像素 → Staging 纹理 ─────────────────────────────────
+            // MapSubresource 会隐式同步等待 GPU 对 staging 的访问完成（Write 模式）
+            var mapped = context.MapSubresource(_stagingTexture, 0, MapMode.Write, MapFlags.None);
             try
             {
                 var src = (byte*)pixmap.GetPixels().ToPointer();
@@ -189,8 +208,25 @@ namespace FastDrawingVisual.Rendering.D3D
                 context.UnmapSubresource(_stagingTexture, 0);
             }
 
-            // Staging → 共享纹理（GPU 内部拷贝，比 UpdateSubresource 更高效）
+            // ── 第二步：Staging → 共享纹理（GPU 拷贝） ───────────────────────────
+            // SharpDX CopyResource 签名为 (source, destination)，内部再按 D3D11 顺序转发
             context.CopyResource(_stagingTexture, _d3d11Texture);
+
+            // ── 第三步：插入 GPU Event Query fence，阻塞直到 CopyResource 真正完成 ──
+            // End() 把 fence 标记插入 GPU 命令流。
+            // Flush() 确保命令队列被立即提交给 GPU（否则命令可能仍滞留在驱动缓冲区中，
+            //   导致 GetData 永远轮询不到完成信号）。
+            // 注意：D3D11 Event Query 的数据类型是 BOOL（4 字节 int），
+            //   不能用 C# bool（1 字节）——大小不匹配会导致读到错误值，出现死循环。
+            context.End(_syncQuery);
+            context.Flush(); // 必须显式 Flush，才能确保 End() 标记被提交给 GPU
+
+            // 自旋等待 GPU 到达 fence 点（一次 CopyResource 通常 < 0.1 ms）
+            // GetData<int> 对应 D3D11 BOOL（4 字节）；非零值表示 GPU 已完成
+            while (!context.GetData<int>(_syncQuery, AsynchronousFlags.DoNotFlush, out _))
+            {
+                Thread.Sleep(0); // 让出 CPU 时间片，避免纯忙等
+            }
         }
 
         /// <summary>
