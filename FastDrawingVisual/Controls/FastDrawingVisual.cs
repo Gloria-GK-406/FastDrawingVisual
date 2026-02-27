@@ -1,6 +1,7 @@
 ﻿using FastDrawingVisual.Rendering;
 using System;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 
 namespace FastDrawingVisual.Controls
@@ -15,7 +16,7 @@ namespace FastDrawingVisual.Controls
     ///   4. 将 <see cref="IFastImage.TryOpenRender"/> 暴露给调用方。
     /// </para>
     /// </summary>
-    public class FastDrawingVisual : FrameworkElement, IDisposable
+    public class FastDrawingVisual : Image, IDisposable
     {
         private IFastImage? _image;
         private bool _isDisposed;
@@ -73,22 +74,14 @@ namespace FastDrawingVisual.Controls
                 _image.Resize(px, py);
             }
 
+            this.Source = _image?.Source;
+
             // 通知 WPF 重新调用 OnRender
             InvalidateVisual();
         }
 
         private void OnSizeChanged(object sender, SizeChangedEventArgs e)
             => EnsureInitialized();
-
-        protected override void OnRender(DrawingContext drawingContext)
-        {
-            base.OnRender(drawingContext);
-
-            var source = _image?.Source;
-            if (source == null) return;
-
-            drawingContext.DrawImage(source, new Rect(0, 0, ActualWidth, ActualHeight));
-        }
 
         protected override Size MeasureOverride(Size availableSize) => availableSize;
 

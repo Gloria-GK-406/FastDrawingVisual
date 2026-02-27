@@ -98,6 +98,24 @@ namespace FastDrawingVisual.Rendering.D3D
             }
         }
 
+        public void MarkPresentedFrameAsReady(RenderFrame presentingFrame)
+        {
+            lock (_lock)
+            {
+                //当前可能有两个presenting帧，一个是正在present的，一个是上次present但还未被抢占回ready的
+                //实际上这里需要操作修改的可能只有一个，但为了保险起见，还是遍历所有帧进行状态检查和修改
+                _frames.Where(frame=>frame != presentingFrame && frame.State == FrameState.Presenting)
+                    .ToList()
+                    .ForEach(frame => frame.ForceSetState(FrameState.Ready));
+            }
+        }
+
+        public void ResetToReadyForPresent(RenderFrame frame)
+        {
+            frame.ForceSetState(FrameState.ReadyForPresent);
+             _hasReadyFrame = true;
+        }
+
         /// <summary>
         /// 尝试获取一个待呈现的帧（ReadyForPresent → Presenting）。
         /// 同时将上一个 Presenting 帧归还为 Ready（因为 SetBackBuffer 后 WPF 会释放旧表面引用）。
@@ -116,30 +134,13 @@ namespace FastDrawingVisual.Rendering.D3D
                 if (!_hasReadyFrame)
                     return null;
 
-                RenderFrame? readyFrame = null;
-                RenderFrame? presentingFrame = null;
-
-                foreach (var frame in _frames)
-                {
-                    switch (frame.State)
-                    {
-                        case FrameState.ReadyForPresent: 
-                            readyFrame = frame; 
-                            break;
-                        case FrameState.Presenting: 
-                            presentingFrame = frame; 
-                            break;
-                    }
-                }
+                RenderFrame? readyFrame = _frames.Where(frame => frame.State == FrameState.ReadyForPresent).FirstOrDefault();
 
                 if (readyFrame == null)
                 {
                     _hasReadyFrame = false;
                     return null;
                 }
-
-                // 旧的 Presenting 帧归还为 Ready（SetBackBuffer 替换后 WPF 已释放其引用）
-                presentingFrame?.ForceSetState(FrameState.Ready);
 
                 // 新帧进入 Presenting
                 readyFrame.ForceSetState(FrameState.Presenting);

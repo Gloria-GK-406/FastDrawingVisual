@@ -124,19 +124,25 @@ namespace FastDrawingVisual.Controls
 
             // TryLock 获取 D3DImage 写权限
             if (!_d3dImage.TryLock(new Duration(TimeSpan.FromMilliseconds(2))))
+            {
+                _d3dImage.Unlock();
+                _pool.ResetToReadyForPresent(frame);
                 return;
+            }
 
             try
             {
                 // 替换后缓冲（WPF 会释放对旧 D3D9 表面的引用，Pool 会在下次调用时回收旧帧）
                 _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9,
-                                        frame.D3D9SurfacePointer,
-                                        enableSoftwareFallback: true);
+                                        frame.D3D9SurfacePointer);
                 _d3dImage.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
+
+                _pool.MarkPresentedFrameAsReady(frame);
             }
             finally
             {
                 _d3dImage.Unlock();
+                //回收帧资源，标记帧为可重用
             }
         }
 
@@ -178,16 +184,14 @@ namespace FastDrawingVisual.Controls
 
         private void UnbindBackBuffer()
         {
-            if (_d3dImage.TryLock(new Duration(TimeSpan.FromMilliseconds(100))))
+            _d3dImage.Lock();
+            try
             {
-                try
-                {
-                    _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
-                }
-                finally
-                {
-                    _d3dImage.Unlock();
-                }
+                _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
+            }
+            finally
+            {
+                _d3dImage.Unlock();
             }
         }
 

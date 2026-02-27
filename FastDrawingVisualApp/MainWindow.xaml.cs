@@ -1,5 +1,6 @@
 ﻿using FastDrawingVisual.Rendering;
 using System;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -8,7 +9,6 @@ namespace FastDrawingVisualApp
 {
     public partial class MainWindow : Window
     {
-        private readonly DispatcherTimer _animTimer;
         private double _animPhase = 0;
         private int _frameCount = 0;
         private DateTime _lastFpsTime = DateTime.Now;
@@ -32,27 +32,28 @@ namespace FastDrawingVisualApp
         private static readonly Pen _bluePen    = Freeze(new Pen(_blueBrush, 2));
         private static readonly Pen _whitePen   = Freeze(new Pen(_whiteBrush, 1.5));
 
+        private readonly PeriodicTimer _timer;
+
         public MainWindow()
         {
             InitializeComponent();
 
             FastCanvas.Loaded += (_, _) => UpdateStatus(true);
+            _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
 
             // 动画定时器，约 60fps
-            _animTimer = new DispatcherTimer(DispatcherPriority.Render)
-            {
-                Interval = TimeSpan.FromMilliseconds(16)
-            };
-            _animTimer.Tick += OnAnimTick;
-            _animTimer.Start();
+            Task.Run(OnAnimTick);
         }
 
-        private void OnAnimTick(object? sender, EventArgs e)
+        private async Task OnAnimTick()
         {
-            _animPhase += 0.04;
+            while (await _timer.WaitForNextTickAsync())
+            {
+                _animPhase += 0.1;
 
-            RenderFrame();
-            UpdateFps();
+                RenderFrame();
+                UpdateFps();
+            }
         }
 
         private void RenderFrame()
@@ -82,7 +83,6 @@ namespace FastDrawingVisualApp
                              new Point(12, 12), _dimBrush, "Segoe UI", 13);
             }
 
-            FastCanvas.InvalidateVisual();
             _frameCount++;
 
             if (!FastCanvas.IsReady)
@@ -177,23 +177,29 @@ namespace FastDrawingVisualApp
         // ── FPS 计算 ──────────────────────────────────────────────────────────
         private void UpdateFps()
         {
-            var now = DateTime.Now;
-            double elapsed = (now - _lastFpsTime).TotalSeconds;
-            if (elapsed >= 0.5)
+            Dispatcher.InvokeAsync(() =>
             {
-                _fps = _frameCount / elapsed;
-                _frameCount = 0;
-                _lastFpsTime = now;
-                FrameInfoText.Text = $"FPS: {_fps:F1}";
-            }
+                var now = DateTime.Now;
+                double elapsed = (now - _lastFpsTime).TotalSeconds;
+                if (elapsed >= 0.5)
+                {
+                    _fps = _frameCount / elapsed;
+                    _frameCount = 0;
+                    _lastFpsTime = now;
+                    FrameInfoText.Text = $"FPS: {_fps:F1}";
+                }
+            });
         }
 
         private void UpdateStatus(bool ready)
         {
-            StatusIndicator.Fill = ready
-                ? new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1))
-                : new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8));
-            StatusText.Text = ready ? "FastDrawingVisual 已就绪" : "正在初始化…";
+            Dispatcher.InvokeAsync(() =>
+            {
+                StatusIndicator.Fill = ready
+    ? new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1))
+    : new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8));
+                StatusText.Text = ready ? "FastDrawingVisual 已就绪" : "正在初始化…";
+            });
         }
 
         // ── 工具方法 ──────────────────────────────────────────────────────────
@@ -205,7 +211,7 @@ namespace FastDrawingVisualApp
 
         protected override void OnClosed(EventArgs e)
         {
-            _animTimer.Stop();
+            _timer.Dispose();
             FastCanvas.Dispose();
             base.OnClosed(e);
         }
