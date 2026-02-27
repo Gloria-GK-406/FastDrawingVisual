@@ -186,7 +186,8 @@ namespace FastDrawingVisual.Rendering.D3D
             var context = _deviceManager.D3D11Device.ImmediateContext;
 
             // ── 第一步：CPU 像素 → Staging 纹理 ─────────────────────────────────
-            // MapSubresource 会隐式同步等待 GPU 对 staging 的访问完成（Write 模式）
+            // MapSubresource 会隐式同步等待 GPU 对 staging 的访问完成（Write 模式）。
+            // 由于 Event Query 自旋已确认上一次 CopyResource 完成，此处通常立即返回。
             var mapped = context.MapSubresource(_stagingTexture, 0, MapMode.Write, MapFlags.None);
             try
             {
@@ -194,13 +195,25 @@ namespace FastDrawingVisual.Rendering.D3D
                 var dst = (byte*)mapped.DataPointer.ToPointer();
                 int srcRowBytes = _width * 4;
 
-                for (int y = 0; y < _height; y++)
+                if (mapped.RowPitch == srcRowBytes)
                 {
-                    System.Buffer.MemoryCopy(
-                        src + (long)y * srcRowBytes,
-                        dst + (long)y * mapped.RowPitch,
-                        srcRowBytes,
-                        srcRowBytes);
+                    // ── 快速路径：行跨度与像素行字节数相等，帧数据在内存中完全连续 ──
+                    // 单次 bulk 拷贝：消除 _height 次函数调用，允许更大粒度 SIMD 传输。
+                    // 常见对齐分辨率（1920/1280/960/800 等宽度 × 4 字节恰好是 256 的倍数）
+                    // 均命中此路径。
+                    System.Buffer.MemoryCopy(src, dst, (long)srcRowBytes * _height, (long)srcRowBytes * _height);
+                }
+                else
+                {
+                    // ── 慢速路径：GPU 驱动对行尾做了填充对齐，必须逐行拷贝 ──
+                    for (int y = 0; y < _height; y++)
+                    {
+                        System.Buffer.MemoryCopy(
+                            src + (long)y * srcRowBytes,
+                            dst + (long)y * mapped.RowPitch,
+                            srcRowBytes,
+                            srcRowBytes);
+                    }
                 }
             }
             finally

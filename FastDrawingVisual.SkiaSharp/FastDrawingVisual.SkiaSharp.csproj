@@ -9,11 +9,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 契约接口层 -->
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
-    <!-- WPF 降级实现（直接引用，无 D3D/Skia 依赖，无需 NoInlining 保护） -->
-    <ProjectReference Include="..\FastDrawingVisual.WpfRenderer\FastDrawingVisual.WpfRenderer.csproj" />
-    <!-- SkiaSharp 加速实现（编译时引用；[NoInlining] 保护确保 Win7 下不触发加载） -->
-    <ProjectReference Include="..\FastDrawingVisual.SkiaSharp\FastDrawingVisual.SkiaSharp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SkiaSharp核心绘图库 -->
+    <PackageReference Include="SkiaSharp" Version="3.119.2" />
+    <!-- SharpDX DirectX绑定 - 用于D3D11/D3D9互操作 -->
+    <PackageReference Include="SharpDX" Version="4.2.0" />
+    <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
+    <PackageReference Include="SharpDX.Direct3D9" Version="4.2.0" />
+    <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
   </ItemGroup>
 </Project>

@@ -1,50 +1,52 @@
 ﻿using FastDrawingVisual.Rendering;
 using System;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Media;
 
 namespace FastDrawingVisual.Controls
 {
     /// <summary>
-    /// 基于 <see cref="IFastImage"/> 的高性能 WPF 渲染控件。
+    /// 高性能渲染 WPF 控件。
     /// <para>
-    /// 职责：
-    ///   1. 通过 <see cref="FastImageFactory"/> 创建最优 <see cref="IFastImage"/> 实现；
-    ///   2. 在 Loaded / SizeChanged 时完成初始化与 Resize（DPI 感知）；
-    ///   3. 将 <see cref="IFastImage.Source"/> 绘制到 WPF 视觉树；
-    ///   4. 将 <see cref="IFastImage.TryOpenRender"/> 暴露给调用方。
+    /// 通过 <see cref="RendererFactory"/> 在运行时选择最优实现：
+    /// <list type="bullet">
+    ///   <item>Windows 10+（有 D3D11 + d3d12.dll）→ <c>D3DSkiaRenderer</c>（GPU + Skia）</item>
+    ///   <item>其余环境 → <c>WpfFallbackRenderer</c>（纯 WPF DrawingVisual）</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// 使用方式：<br/>
+    ///   XAML 中放置控件，在代码中调用 <see cref="SubmitDrawing"/> 提交绘制委托。<br/>
+    ///   委托接收 <see cref="IDrawingContext"/>，可在任意线程调用（线程安全）。
     /// </para>
     /// </summary>
-    public class FastDrawingVisual : Image, IDisposable
+    public class FastDrawingVisual : FrameworkElement, IDisposable
     {
-        private IFastImage? _image;
+        private IRenderer? _renderer;
+        private bool _visualAdded;
         private bool _isDisposed;
 
-        /// <summary>
-        /// 当前图像是否已成功初始化并可以接受绘制请求。
-        /// </summary>
-        public bool IsReady => _image != null && _image.IsInitialized;
+        // ── 公共状态 ──────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// 向内部调度器提交一个绘制委托（透传至底层 <see cref="IFastImage"/>）。
-        /// 内部 DrawingWorker 将在下一个与 WPF VSync 对齐的绘制窗口执行该委托。
-        /// 可在任意线程调用，线程安全。
-        /// </summary>
-        /// <param name="drawAction">
-        /// 绘制逻辑委托；在后台绘制线程执行，请勿访问 UI 元素。
-        /// 控件未就绪时调用为空操作（不抛出异常）。
-        /// </param>
-        public void SubmitDrawing(Action<IDrawingContext> drawAction)
+        /// <summary>渲染器已初始化且可接受绘制请求。</summary>
+        public bool IsReady => _renderer != null && _visualAdded && !_isDisposed;
+
+        // ── WPF 视觉树托管 ────────────────────────────────────────────────────
+
+        protected override int VisualChildrenCount => _visualAdded ? 1 : 0;
+
+        protected override Visual GetVisualChild(int index)
         {
-            if (_isDisposed) throw new ObjectDisposedException(nameof(FastDrawingVisual));
-            if (_image == null || !_image.IsInitialized) return; // 未就绪时静默丢弃
-            _image.SubmitDrawing(drawAction);
+            if (index != 0 || !_visualAdded || _renderer == null)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            return _renderer.Visual;
         }
+
+        // ── 构造与生命周期 ────────────────────────────────────────────────────
 
         public FastDrawingVisual()
         {
-            Loaded += OnLoaded;
+            Loaded   += OnLoaded;
             Unloaded += OnUnloaded;
         }
 
@@ -59,59 +61,95 @@ namespace FastDrawingVisual.Controls
             SizeChanged -= OnSizeChanged;
         }
 
+        // ── 初始化 / Resize ───────────────────────────────────────────────────
+
         private void EnsureInitialized()
         {
             var (px, py) = GetPixelSize();
             if (px <= 0 || py <= 0) return;
 
-            if (_image == null)
+            if (_renderer == null)
             {
-                // 首次：通过工厂创建
-                _image = FastImageFactory.CreateIFastImage(px, py);
+                // 首次：工厂按运行时能力选择实现
+                _renderer = RendererFactory.Create();
+
+                if (_renderer.Initialize(px, py))
+                {
+                    AddVisualChild(_renderer.Visual);
+                    _visualAdded = true;
+                }
             }
-            else if ((int)_image.Width != px || (int)_image.Height != py)
+            else if (_visualAdded)
             {
-                // 尺寸变化：Resize 复用现有实现
-                _image.Resize(px, py);
+                _renderer.Resize(px, py);
             }
-
-            this.Source = _image?.Source;
-
-            // 通知 WPF 重新调用 OnRender
-            InvalidateVisual();
         }
 
         private void OnSizeChanged(object sender, SizeChangedEventArgs e)
             => EnsureInitialized();
 
-        protected override Size MeasureOverride(Size availableSize) => availableSize;
-
-        protected override Size ArrangeOverride(Size finalSize) => finalSize;
+        // ── 公共 API ──────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 获取控件的 DPI 感知实际像素尺寸。
+        /// 向内部调度器提交绘制委托（任意线程，线程安全）。
+        /// <para>Replace 语义：新委托原子替换未执行的旧委托（旧委托有后继，丢弃安全）。</para>
+        /// 控件未就绪时静默丢弃（不抛出异常）。
         /// </summary>
+        public void SubmitDrawing(Action<IDrawingContext> drawAction)
+        {
+            if (_isDisposed) throw new ObjectDisposedException(nameof(FastDrawingVisual));
+            if (!IsReady) return;
+            _renderer!.SubmitDrawing(drawAction);
+        }
+
+        // ── 布局 ─────────────────────────────────────────────────────────────
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            // 填充所有可用空间
+            return availableSize;
+        }
+
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            if (_visualAdded && _renderer != null)
+            {
+                // 让 DrawingVisual 占满控件区域
+                _renderer.Visual.Offset = new Vector(0, 0);
+            }
+            return finalSize;
+        }
+
+        // ── DPI 感知像素尺寸 ──────────────────────────────────────────────────
+
         private (int width, int height) GetPixelSize()
         {
             var dpi = VisualTreeHelper.GetDpi(this);
             return (
-                (int)Math.Round(ActualWidth * dpi.DpiScaleX),
+                (int)Math.Round(ActualWidth  * dpi.DpiScaleX),
                 (int)Math.Round(ActualHeight * dpi.DpiScaleY)
             );
         }
 
+        // ── 释放 ──────────────────────────────────────────────────────────────
 
         public void Dispose()
         {
             if (_isDisposed) return;
             _isDisposed = true;
 
-            Loaded -= OnLoaded;
+            Loaded   -= OnLoaded;
             Unloaded -= OnUnloaded;
             SizeChanged -= OnSizeChanged;
 
-            (_image as IDisposable)?.Dispose();
-            _image = null;
+            if (_visualAdded && _renderer != null)
+            {
+                RemoveVisualChild(_renderer.Visual);
+                _visualAdded = false;
+            }
+
+            _renderer?.Dispose();
+            _renderer = null;
         }
     }
 }
