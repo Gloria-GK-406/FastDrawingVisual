@@ -33,14 +33,19 @@ namespace FastDrawingVisual.Rendering
         double Height { get; }
 
         /// <summary>
-        /// 尝试打开一个用于执行绘制操作的 <see cref="IDrawingContext"/> 实例。
-        /// 调用方应在完成绘制后正确释放或关闭该上下文。
+        /// 向内部调度器提交一个绘制委托。
+        /// 内部 DrawingWorker 线程将在下一个可用的绘制窗口（与 WPF VSync 对齐）执行该委托。
+        /// <para>
+        /// 若上一个尚未被执行的委托仍在等待，新委托将原子地替换旧委托（Replace 语义）。
+        /// 这保证：① 最新提交的委托总会被执行；② 被替换的旧委托一定有后继，因而丢弃是安全的。
+        /// </para>
+        /// 可在任意线程调用，线程安全。
         /// </summary>
-        /// <returns>
-        /// 成功时返回 <see cref="IDrawingContext"/> 对象；
-        /// 当前无可用渲染帧（所有帧均忙）或设备丢失时返回 <c>null</c>，调用方可跳过本帧稍后重试。
-        /// </returns>
-        IDrawingContext? TryOpenRender();
+        /// <param name="drawAction">
+        /// 绘制逻辑委托，参数为当前帧的 <see cref="IDrawingContext"/>。
+        /// 该委托将在后台绘制线程上执行，请勿访问 UI 元素。
+        /// </param>
+        void SubmitDrawing(Action<IDrawingContext> drawAction);
 
         /// <summary>
         /// 初始化图像的内部资源，使其具有指定的像素宽度和高度。

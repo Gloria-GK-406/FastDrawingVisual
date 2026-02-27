@@ -27,17 +27,19 @@ namespace FastDrawingVisual.Controls
         public bool IsReady => _image != null && _image.IsInitialized;
 
         /// <summary>
-        /// 尝试获取一个可立即使用的绘图上下文（透传至底层 <see cref="IFastImage"/>）。
-        /// 可在任意线程调用。
+        /// 向内部调度器提交一个绘制委托（透传至底层 <see cref="IFastImage"/>）。
+        /// 内部 DrawingWorker 将在下一个与 WPF VSync 对齐的绘制窗口执行该委托。
+        /// 可在任意线程调用，线程安全。
         /// </summary>
-        /// <returns>
-        /// 成功时返回 <see cref="IDrawingContext"/>；
-        /// 控件尚未就绪、底层帧忙或设备丢失时返回 <c>null</c>，调用方可跳过本帧。
-        /// </returns>
-        public IDrawingContext? TryOpenRender()
+        /// <param name="drawAction">
+        /// 绘制逻辑委托；在后台绘制线程执行，请勿访问 UI 元素。
+        /// 控件未就绪时调用为空操作（不抛出异常）。
+        /// </param>
+        public void SubmitDrawing(Action<IDrawingContext> drawAction)
         {
             if (_isDisposed) throw new ObjectDisposedException(nameof(FastDrawingVisual));
-            return _image?.TryOpenRender();
+            if (_image == null || !_image.IsInitialized) return; // 未就绪时静默丢弃
+            _image.SubmitDrawing(drawAction);
         }
 
         public FastDrawingVisual()
@@ -56,7 +58,6 @@ namespace FastDrawingVisual.Controls
         {
             SizeChanged -= OnSizeChanged;
         }
-
 
         private void EnsureInitialized()
         {

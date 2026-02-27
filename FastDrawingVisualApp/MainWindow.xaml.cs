@@ -15,22 +15,22 @@ namespace FastDrawingVisualApp
         private double _fps = 0;
 
         // 预冻结画刷/笔（跨线程安全）
-        private static readonly SolidColorBrush _bgBrush        = Freeze(new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x25)));
-        private static readonly SolidColorBrush _gridBrush      = Freeze(new SolidColorBrush(Color.FromArgb(0x28, 0xCD, 0xD6, 0xF4)));
-        private static readonly SolidColorBrush _purpleBrush    = Freeze(new SolidColorBrush(Color.FromRgb(0xCB, 0xA6, 0xF7)));
-        private static readonly SolidColorBrush _pinkBrush      = Freeze(new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8)));
-        private static readonly SolidColorBrush _blueBrush      = Freeze(new SolidColorBrush(Color.FromRgb(0x89, 0xB4, 0xFA)));
-        private static readonly SolidColorBrush _greenBrush     = Freeze(new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1)));
-        private static readonly SolidColorBrush _yellowBrush    = Freeze(new SolidColorBrush(Color.FromRgb(0xF9, 0xE2, 0xAF)));
-        private static readonly SolidColorBrush _tealBrush      = Freeze(new SolidColorBrush(Color.FromRgb(0x94, 0xE2, 0xD5)));
-        private static readonly SolidColorBrush _whiteBrush     = Freeze(new SolidColorBrush(Colors.White));
-        private static readonly SolidColorBrush _dimBrush       = Freeze(new SolidColorBrush(Color.FromArgb(0xCC, 0x6C, 0x70, 0x86)));
+        private static readonly SolidColorBrush _bgBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x25)));
+        private static readonly SolidColorBrush _gridBrush = Freeze(new SolidColorBrush(Color.FromArgb(0x28, 0xCD, 0xD6, 0xF4)));
+        private static readonly SolidColorBrush _purpleBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xCB, 0xA6, 0xF7)));
+        private static readonly SolidColorBrush _pinkBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8)));
+        private static readonly SolidColorBrush _blueBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x89, 0xB4, 0xFA)));
+        private static readonly SolidColorBrush _greenBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1)));
+        private static readonly SolidColorBrush _yellowBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xF9, 0xE2, 0xAF)));
+        private static readonly SolidColorBrush _tealBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x94, 0xE2, 0xD5)));
+        private static readonly SolidColorBrush _whiteBrush = Freeze(new SolidColorBrush(Colors.White));
+        private static readonly SolidColorBrush _dimBrush = Freeze(new SolidColorBrush(Color.FromArgb(0xCC, 0x6C, 0x70, 0x86)));
 
-        private static readonly Pen _gridPen    = Freeze(new Pen(_gridBrush, 1));
-        private static readonly Pen _purplePen  = Freeze(new Pen(_purpleBrush, 2));
-        private static readonly Pen _pinkPen    = Freeze(new Pen(_pinkBrush, 2));
-        private static readonly Pen _bluePen    = Freeze(new Pen(_blueBrush, 2));
-        private static readonly Pen _whitePen   = Freeze(new Pen(_whiteBrush, 1.5));
+        private static readonly Pen _gridPen = Freeze(new Pen(_gridBrush, 1));
+        private static readonly Pen _purplePen = Freeze(new Pen(_purpleBrush, 2));
+        private static readonly Pen _pinkPen = Freeze(new Pen(_pinkBrush, 2));
+        private static readonly Pen _bluePen = Freeze(new Pen(_blueBrush, 2));
+        private static readonly Pen _whitePen = Freeze(new Pen(_whiteBrush, 1.5));
 
         private readonly PeriodicTimer _timer;
 
@@ -39,7 +39,7 @@ namespace FastDrawingVisualApp
             InitializeComponent();
 
             FastCanvas.Loaded += (_, _) => UpdateStatus(true);
-            _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
+            _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(8));
 
             // 动画定时器，约 60fps
             Task.Run(OnAnimTick);
@@ -49,44 +49,45 @@ namespace FastDrawingVisualApp
         {
             while (await _timer.WaitForNextTickAsync())
             {
-                _animPhase += 0.1;
+                _animPhase += 0.04;
 
-                RenderFrame();
+                // 将本帧绘制逻辑提交给内部调度器。
+                // DrawingWorker 会在下一个与 WPF VSync 对齐的绘制窗口执行它。
+                // 若上一帧委托尚未执行，本帧委托会原子替换它（Replace 语义，后继存在，丢弃安全）。
+                // 注意：捕获 _animPhase 的当前值到局部变量，避免委托执行时读到更新后的值。
+                double phase = _animPhase;
+                FastCanvas.SubmitDrawing(ctx => DrawFrame(ctx, phase));
+
                 UpdateFps();
             }
         }
 
-        private void RenderFrame()
+        /// <summary>
+        /// 实际绘制逻辑。由 DrawingWorker 在后台线程回调，不可访问 UI 元素。
+        /// <paramref name="phase"/> 是提交时刻捕获的动画相位快照，保证帧间一致性。
+        /// </summary>
+        private void DrawFrame(IDrawingContext ctx, double phase)
         {
-            var ctx = FastCanvas.TryOpenRender();
-            if (ctx == null) return;
+            int w = ctx.Width;
+            int h = ctx.Height;
 
-            using (ctx)
-            {
-                int w = ctx.Width;
-                int h = ctx.Height;
+            // ── 背景 ──────────────────────────────────────────────────────
+            ctx.DrawRectangle(_bgBrush, (Pen?)null, new Rect(0, 0, w, h));
 
-                // ── 背景 ──────────────────────────────────────────────────────
-                ctx.DrawRectangle(_bgBrush, (Pen?)null, new Rect(0, 0, w, h));
+            // ── 网格 ──────────────────────────────────────────────────────
+            DrawGrid(ctx, w, h, 40);
 
-                // ── 网格 ──────────────────────────────────────────────────────
-                DrawGrid(ctx, w, h, 40);
+            // ── 动态正弦波（使用捕获的 phase 快照）────────────────────────
+            DrawSineWave(ctx, w, h, phase);
 
-                // ── 动态正弦波 ────────────────────────────────────────────────
-                DrawSineWave(ctx, w, h);
+            // ── 静态图形展示 ───────────────────────────────────────────────
+            DrawShapes(ctx, w, h, phase);
 
-                // ── 静态图形展示 ───────────────────────────────────────────────
-                DrawShapes(ctx, w, h);
-
-                // ── FPS & 尺寸文字 ─────────────────────────────────────────────
-                ctx.DrawText($"FPS: {_fps:F1}  |  {w} × {h} px",
-                             new Point(12, 12), _dimBrush, "Segoe UI", 13);
-            }
+            // ── FPS & 尺寸文字 ─────────────────────────────────────────────
+            ctx.DrawText($"FPS: {_fps:F1}  |  {w} × {h} px",
+                         new Point(12, 12), _dimBrush, "Segoe UI", 13);
 
             _frameCount++;
-
-            if (!FastCanvas.IsReady)
-                UpdateStatus(true);
         }
 
         // ── 网格 ──────────────────────────────────────────────────────────────
@@ -99,20 +100,20 @@ namespace FastDrawingVisualApp
         }
 
         // ── 动态正弦波 ────────────────────────────────────────────────────────
-        private void DrawSineWave(IDrawingContext ctx, int w, int h)
+        private static void DrawSineWave(IDrawingContext ctx, int w, int h, double phase)
         {
             double cy = h / 2.0;
             double amp = h * 0.25;
             const int segments = 200;
 
             double prevX = 0;
-            double prevY = cy + Math.Sin(_animPhase) * amp;
+            double prevY = cy + Math.Sin(phase) * amp;
 
             for (int i = 1; i <= segments; i++)
             {
                 double t = (double)i / segments;
                 double x = t * w;
-                double y = cy + Math.Sin(t * Math.PI * 4 + _animPhase) * amp;
+                double y = cy + Math.Sin(t * Math.PI * 4 + phase) * amp;
 
                 ctx.DrawLine(_purplePen, new Point(prevX, prevY), new Point(x, y));
                 prevX = x;
@@ -121,12 +122,12 @@ namespace FastDrawingVisualApp
 
             // 第二条波（相位偏移）
             prevX = 0;
-            prevY = cy + Math.Sin(_animPhase + Math.PI) * amp * 0.6;
+            prevY = cy + Math.Sin(phase + Math.PI) * amp * 0.6;
             for (int i = 1; i <= segments; i++)
             {
                 double t = (double)i / segments;
                 double x = t * w;
-                double y = cy + Math.Sin(t * Math.PI * 4 + _animPhase + Math.PI) * amp * 0.6;
+                double y = cy + Math.Sin(t * Math.PI * 4 + phase + Math.PI) * amp * 0.6;
 
                 ctx.DrawLine(_pinkPen, new Point(prevX, prevY), new Point(x, y));
                 prevX = x;
@@ -135,13 +136,11 @@ namespace FastDrawingVisualApp
         }
 
         // ── 静态图形展示 ──────────────────────────────────────────────────────
-        private void DrawShapes(IDrawingContext ctx, int w, int h)
+        private static void DrawShapes(IDrawingContext ctx, int w, int h, double phase)
         {
-            double t = (_animPhase % (Math.PI * 2)) / (Math.PI * 2); // 0~1 循环
-
-            // 左下角：旋转矩形（用 TranslateTransform 模拟）
+            // 左下角：旋转矩形
             double cx1 = 80, cy1 = h - 80;
-            double size = 40 + 10 * Math.Sin(_animPhase * 1.5);
+            double size = 40 + 10 * Math.Sin(phase * 1.5);
             ctx.DrawRoundedRectangle(
                 _blueBrush, _whitePen,
                 new Rect(cx1 - size / 2, cy1 - size / 2, size, size),
@@ -149,13 +148,13 @@ namespace FastDrawingVisualApp
 
             // 右下角：脉动椭圆
             double cx2 = w - 80, cy2 = h - 80;
-            double rx = 30 + 15 * Math.Sin(_animPhase * 2);
-            double ry = 20 + 10 * Math.Cos(_animPhase * 2);
+            double rx = 30 + 15 * Math.Sin(phase * 2);
+            double ry = 20 + 10 * Math.Cos(phase * 2);
             ctx.DrawEllipse(_greenBrush, (Pen?)null, new Point(cx2, cy2), rx, ry);
 
             // 右上角：弹跳小球
             double bx = w - 80;
-            double by = 60 + 30 * Math.Abs(Math.Sin(_animPhase * 1.2));
+            double by = 60 + 30 * Math.Abs(Math.Sin(phase * 1.2));
             ctx.DrawEllipse(_yellowBrush, (Pen?)null, new Point(bx, by), 12, 12);
 
             // 左上角：渐变圆环（多环模拟）
