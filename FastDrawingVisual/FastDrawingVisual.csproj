@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <!-- SkiaSharp核心绘图库 - 使用稳定版本避免DX12硬依赖问题 -->
-    <PackageReference Include="SkiaSharp" Version="2.88.9" />
+    <PackageReference Include="SkiaSharp" Version="3.119.2" />
     
     <!-- SharpDX DirectX绑定 - 用于D3D11/D3D9互操作 -->
     <PackageReference Include="SharpDX" Version="4.2.0" />

@@ -145,11 +145,11 @@ namespace FastDrawingVisual.Rendering.Skia
             using var paint = WpfToSkiaConverter.ToSkiaPaint(foreground);
             if (paint == null) return;
 
-            paint.TextSize   = (float)fontSize;
             paint.IsAntialias = true;
             using var typeface = SKTypeface.FromFamilyName(fontFamily);
-            paint.Typeface   = typeface;
-            _canvas.DrawText(text, (float)origin.X, (float)(origin.Y + fontSize), paint);
+            using var font = new SKFont(typeface, (float)fontSize);
+            _canvas.DrawText(text, (float)origin.X, (float)(origin.Y + fontSize),
+                             SKTextAlign.Left, font, paint);
         }
 
         public void DrawGlyphRun(Brush foregroundBrush, GlyphRun glyphRun)
