@@ -158,10 +158,21 @@
     <ClCompile Include="BridgeExports.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
+    <ClCompile Include="BridgeDeviceResources.cpp">
+      <CompileAsManaged>false</CompileAsManaged>
+    </ClCompile>
+    <ClCompile Include="BridgeDrawing.cpp">
+      <CompileAsManaged>false</CompileAsManaged>
+    </ClCompile>
+    <ClCompile Include="BridgePathUtils.cpp">
+      <CompileAsManaged>false</CompileAsManaged>
+    </ClCompile>
     <ClCompile Include="NativeD3D9BridgeProxy.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="BridgeNativeExports.h" />
+    <ClInclude Include="BridgePathUtils.h" />
+    <ClInclude Include="BridgeRendererInternal.h" />
     <ClInclude Include="NativeD3D9BridgeProxy.h" />
   </ItemGroup>
   <ItemGroup>

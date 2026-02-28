@@ -7,9 +7,24 @@
     <ClCompile Include="BridgeExports.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="BridgeDeviceResources.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="BridgeDrawing.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="BridgePathUtils.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="BridgeNativeExports.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="BridgePathUtils.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="BridgeRendererInternal.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="NativeD3D9BridgeProxy.h">
