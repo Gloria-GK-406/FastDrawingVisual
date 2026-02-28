@@ -69,9 +69,11 @@ struct BridgeRenderer {
   int width = 0;
   int height = 0;
   bool frontBufferAvailable = true;
-  // Written by the worker thread (FDV_SubmitCommands), read by the UI thread
-  // (FDV_TryAcquirePresentSurface) ¨C must be atomic.
+  // Written by worker thread, read by UI thread -- must be atomic.
   std::atomic<bool> surfaceReady{false};
+  // Guards D3D9 device access between the worker render thread
+  // (FDV_SubmitCommands) and the WPF UI thread (FDV_TryAcquirePresentSurface).
+  CRITICAL_SECTION cs;
 };
 
 // --------------------------------------------------------------------------
@@ -134,7 +136,7 @@ static bool CreateDeviceAndSurface(BridgeRenderer *s) {
   // proper render target (not an offscreen plain surface).
   hr = s->device->CreateRenderTarget(
       (UINT)s->width, (UINT)s->height, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0,
-      FALSE, // lockable=FALSE ¨C D3DImage does not need CPU lock
+      FALSE, // lockable=FALSE -- D3DImage does not need CPU lock
       &s->renderTarget, nullptr);
 
   if (FAILED(hr)) {
@@ -143,6 +145,7 @@ static bool CreateDeviceAndSurface(BridgeRenderer *s) {
     return false;
   }
 
+  InitializeCriticalSectionAndSpinCount(&s->cs, 1000);
   s->surfaceReady.store(false, std::memory_order_release);
   return true;
 }
@@ -204,7 +207,7 @@ static bool ResetDeviceAndSurface(BridgeRenderer *s) {
 static void SetupRenderState(IDirect3DDevice9 *dev) {
   // Vertices use D3DFVF_XYZRHW (pre-transformed screen-space coordinates).
   // The T&L pipeline is completely bypassed, so SetTransform calls would be
-  // ignored ¨C we skip them entirely.
+  // ignored -- we skip them entirely.
 
   dev->SetRenderState(D3DRS_ZENABLE, FALSE);
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
@@ -226,31 +229,37 @@ struct Vertex2D {
   D3DCOLOR color;
 };
 
-// Tessellate an ellipse outline / fill into triangles using a triangle-fan
-// stored in caller-supplied buffer.  Returns vertex count.
-static int TessellateEllipse(Vertex2D *vbuf, int maxVerts, float cx, float cy,
-                             float rx, float ry, D3DCOLOR color, bool fill) {
-  const int SEGMENTS = 64;
-  if (fill) {
-    // Triangle fan: center + SEGMENTS+1 perimeter points
-    if (maxVerts < SEGMENTS + 2)
-      return 0;
-    vbuf[0] = {cx, cy, 0.5f, 1.0f, color};
-    for (int i = 0; i <= SEGMENTS; ++i) {
-      float a = (float)(i * 2.0 * D3DX_PI / SEGMENTS);
-      vbuf[i + 1] = {cx + cosf(a) * rx, cy + sinf(a) * ry, 0.5f, 1.0f, color};
-    }
-    return SEGMENTS + 2;
-  } else {
-    // Line strip (closed)
-    if (maxVerts < SEGMENTS + 1)
-      return 0;
-    for (int i = 0; i <= SEGMENTS; ++i) {
-      float a = (float)(i * 2.0 * D3DX_PI / SEGMENTS);
-      vbuf[i] = {cx + cosf(a) * rx, cy + sinf(a) * ry, 0.5f, 1.0f, color};
-    }
-    return SEGMENTS + 1;
+// Draw a filled ellipse using D3DPT_TRIANGLELIST.
+// D3DPT_TRIANGLEFAN is deprecated/broken on some D3D9-on-D3D11 wrappers.
+static void DrawFilledEllipse(IDirect3DDevice9 *dev, float cx, float cy,
+                              float rx, float ry, D3DCOLOR color) {
+  const int SEGS = 64;
+  Vertex2D perim[SEGS + 1];
+  for (int i = 0; i <= SEGS; ++i) {
+    float a = (float)(i * 2.0f * D3DX_PI / SEGS);
+    perim[i] = {cx + cosf(a) * rx, cy + sinf(a) * ry, 0.5f, 1.0f, color};
   }
+  // 64 triangles * 3 verts = 192 verts
+  Vertex2D verts[SEGS * 3];
+  Vertex2D center = {cx, cy, 0.5f, 1.0f, color};
+  for (int i = 0; i < SEGS; ++i) {
+    verts[i * 3 + 0] = center;
+    verts[i * 3 + 1] = perim[i];
+    verts[i * 3 + 2] = perim[i + 1];
+  }
+  dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, SEGS, verts, sizeof(Vertex2D));
+}
+
+// Draw a stroked ellipse outline via closed LINESTRIP.
+static void DrawStrokeEllipse(IDirect3DDevice9 *dev, float cx, float cy,
+                              float rx, float ry, D3DCOLOR color) {
+  const int SEGS = 64;
+  Vertex2D verts[SEGS + 1];
+  for (int i = 0; i <= SEGS; ++i) {
+    float a = (float)(i * 2.0f * D3DX_PI / SEGS);
+    verts[i] = {cx + cosf(a) * rx, cy + sinf(a) * ry, 0.5f, 1.0f, color};
+  }
+  dev->DrawPrimitiveUP(D3DPT_LINESTRIP, SEGS, verts, sizeof(Vertex2D));
 }
 
 // Helper: draw a solid filled quad (two triangles)
@@ -317,7 +326,7 @@ static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
     }
 
     // ------------------------------------------------------------------
-    case CMD_FILL_RECT: // [x,y,w,h : 4¡Áf32][A,R,G,B]
+    case CMD_FILL_RECT: // [x,y,w,h : 4xf32][A,R,G,B]
     {
       if (p + 20 > end)
         goto done;
@@ -332,7 +341,7 @@ static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
     }
 
     // ------------------------------------------------------------------
-    case CMD_STROKE_RECT: // [x,y,w,h : 4¡Áf32][thickness:f32][A,R,G,B]
+    case CMD_STROKE_RECT: // [x,y,w,h : 4xf32][thickness:f32][A,R,G,B]
     {
       if (p + 24 > end)
         goto done;
@@ -350,7 +359,7 @@ static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
     }
 
     // ------------------------------------------------------------------
-    case CMD_FILL_ELLIPSE: // [cx,cy:2¡Áf32][rx,ry:2¡Áf32][A,R,G,B]
+    case CMD_FILL_ELLIPSE: // [cx,cy:2xf32][rx,ry:2xf32][A,R,G,B]
     {
       if (p + 20 > end)
         goto done;
@@ -360,11 +369,7 @@ static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
       float ry = ReadF32(p + 12);
       D3DCOLOR color = ReadColor(p + 16);
       p += 20;
-      const int BUF = 128;
-      Vertex2D vbuf[BUF];
-      int n = TessellateEllipse(vbuf, BUF, cx, cy, rx, ry, color, true);
-      if (n >= 3)
-        dev->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, n - 2, vbuf, sizeof(Vertex2D));
+      DrawFilledEllipse(dev, cx, cy, rx, ry, color);
       break;
     }
 
@@ -382,15 +387,7 @@ static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
       p += 24;
       if (t < 1.0f)
         t = 1.0f;
-      // MVP: draw the stroke as a closed line strip at the mid-radius.
-      // D3DRS_ANTIALIASEDLINEENABLE improves visual quality for thin strokes.
-      const int BUF = 128;
-      Vertex2D vbuf[BUF];
-      float half = t * 0.5f;
-      int n = TessellateEllipse(vbuf, BUF, cx, cy, rx - half, ry - half, color,
-                                false);
-      if (n >= 2)
-        dev->DrawPrimitiveUP(D3DPT_LINESTRIP, n - 1, vbuf, sizeof(Vertex2D));
+      DrawStrokeEllipse(dev, cx, cy, rx - t * 0.5f, ry - t * 0.5f, color);
       break;
     }
 
@@ -436,7 +433,7 @@ static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
     }
 
     default:
-      // Unknown command ¡ª abort decoding to avoid misalignment
+      // Unknown command ï¿½ï¿½ abort decoding to avoid misalignment
       goto done;
     }
   }
@@ -493,6 +490,7 @@ __declspec(dllexport) void __cdecl FDV_DestroyRenderer(void *renderer) {
     s->d3d9 = nullptr;
   }
 
+  DeleteCriticalSection(&s->cs);
   delete s;
 }
 
@@ -543,11 +541,14 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
     if (!ResetDeviceAndSurface(s))
       return false;
   } else if (FAILED(hr)) {
-    return false; // D3DERR_DEVICELOST ¨C wait for next call
+    return false; // D3DERR_DEVICELOST ï¿½C wait for next call
   }
 
-  return ExecuteCommands(s, static_cast<const uint8_t *>(commands),
-                         commandBytes);
+  EnterCriticalSection(&s->cs);
+  bool result =
+      ExecuteCommands(s, static_cast<const uint8_t *>(commands), commandBytes);
+  LeaveCriticalSection(&s->cs);
+  return result;
 }
 
 // -----------------------------------------------------------------------
@@ -561,20 +562,21 @@ __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
   auto *s = static_cast<BridgeRenderer *>(renderer);
   *outSurface9 = nullptr;
 
-  if (!s->device || !s->renderTarget ||
-      !s->surfaceReady.load(std::memory_order_acquire))
-    return false;
-
-  // WPF just needs the raw pointer; it does NOT AddRef here.
-  // NativeD3D9Renderer keeps the BridgeRenderer alive for the duration.
-  *outSurface9 = s->renderTarget;
-  return true;
+  // Lock to prevent the worker thread from rendering while WPF reads the
+  // surface.
+  EnterCriticalSection(&s->cs);
+  bool ok = s->device && s->renderTarget &&
+            s->surfaceReady.load(std::memory_order_acquire);
+  if (ok)
+    *outSurface9 = s->renderTarget;
+  LeaveCriticalSection(&s->cs);
+  return ok;
 }
 
 // -----------------------------------------------------------------------
 // Called after WPF has consumed the surface (D3DImage.Unlock).
 __declspec(dllexport) void __cdecl FDV_OnSurfacePresented(void *renderer) {
-  // Nothing to do for an offscreen surface ¡ª the same surface is reused
+  // Nothing to do for an offscreen surface ï¿½ï¿½ the same surface is reused
   // for the next frame.  A future double-buffered implementation would
   // swap front/back here.
   (void)renderer;
@@ -589,7 +591,7 @@ __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
   s->frontBufferAvailable = available;
 
   if (!available) {
-    // Surface is going away ¨C mark as not ready so TryAcquirePresentSurface
+    // Surface is going away ï¿½C mark as not ready so TryAcquirePresentSurface
     // returns false until the device is recovered.
     s->surfaceReady.store(false, std::memory_order_release);
   } else if (s->device) {
