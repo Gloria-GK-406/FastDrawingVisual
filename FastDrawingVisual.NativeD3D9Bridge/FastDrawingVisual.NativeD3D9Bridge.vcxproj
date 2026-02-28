@@ -165,6 +165,21 @@
     <ClInclude Include="NativeD3D9BridgeProxy.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="PixelShader.hlsl">
+      <FileType>Document</FileType>
+    </None>
+    <FxCompile Include="PixelShaderEllipse.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <ShaderModel>2.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <ObjectFileOutput>$(OutDir)PixelShader_ellipse.cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="PixelShaderLine.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <ShaderModel>2.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <ObjectFileOutput>$(OutDir)PixelShader_line.cso</ObjectFileOutput>
+    </FxCompile>
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

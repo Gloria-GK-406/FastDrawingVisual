@@ -2,8 +2,8 @@
 // Native D3D9 implementation + exported C ABI entry points.
 // Compiled as unmanaged code for the hot rendering path.
 
-#include <math.h> // ceilf
 #include <new>
+#include <stdio.h> // _snprintf_s
 #include <stdint.h>
 #include <string.h> // memcpy
 #include "BridgeNativeExports.h"
@@ -77,6 +77,8 @@ struct SurfaceSlot {
 struct BridgeRenderer {
   IDirect3D9 *d3d9 = nullptr;
   IDirect3DDevice9 *device = nullptr;
+  IDirect3DPixelShader9 *sdfEllipseShader = nullptr;
+  IDirect3DPixelShader9 *sdfLineShader = nullptr;
   SurfaceSlot slots[kFrameCount];
 
   HWND hwnd = nullptr;
@@ -96,6 +98,8 @@ struct BridgeRenderer {
 static bool CreateDeviceAndSurface(BridgeRenderer *s);
 static void ReleaseDeviceResources(BridgeRenderer *s);
 static bool ResetDeviceAndSurface(BridgeRenderer *s);
+static bool CreateSdfShaders(BridgeRenderer *s);
+static void ReleaseSdfShaders(BridgeRenderer *s);
 static bool CreateFrameResources(BridgeRenderer *s);
 static void ReleaseFrameResources(BridgeRenderer *s);
 static int FindSlotByState(const BridgeRenderer *s, SurfaceState state);
@@ -189,6 +193,183 @@ static void RecycleStalePresentingSlots(BridgeRenderer *s) {
   }
 }
 
+static void ReleaseSdfShaders(BridgeRenderer *s) {
+  if (!s)
+    return;
+
+  if (s->sdfEllipseShader) {
+    s->sdfEllipseShader->Release();
+    s->sdfEllipseShader = nullptr;
+  }
+  if (s->sdfLineShader) {
+    s->sdfLineShader->Release();
+    s->sdfLineShader = nullptr;
+  }
+}
+
+static bool FileExistsA(const char *path) {
+  if (!path || path[0] == '\0')
+    return false;
+  DWORD attrs = GetFileAttributesA(path);
+  return attrs != INVALID_FILE_ATTRIBUTES &&
+         (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+static bool JoinPathA(const char *base, const char *leaf, char *out,
+                      size_t outCount) {
+  if (!base || !leaf || !out || outCount == 0)
+    return false;
+
+  size_t baseLen = strlen(base);
+  bool needSep = baseLen > 0 && base[baseLen - 1] != '\\' &&
+                 base[baseLen - 1] != '/';
+
+  int written = _snprintf_s(out, outCount, _TRUNCATE, "%s%s%s", base,
+                            needSep ? "\\" : "", leaf);
+  return written > 0;
+}
+
+static bool GetModuleDirectoryA(char *out, size_t outCount) {
+  if (!out || outCount == 0)
+    return false;
+
+  HMODULE module = nullptr;
+  if (!GetModuleHandleExA(
+          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+          reinterpret_cast<LPCSTR>(&GetModuleDirectoryA), &module) ||
+      !module) {
+    return false;
+  }
+
+  char fullPath[MAX_PATH] = {};
+  DWORD len = GetModuleFileNameA(module, fullPath, MAX_PATH);
+  if (len == 0 || len >= MAX_PATH)
+    return false;
+
+  char *slash = strrchr(fullPath, '\\');
+  if (!slash)
+    slash = strrchr(fullPath, '/');
+  if (!slash)
+    return false;
+  *slash = '\0';
+
+  return strcpy_s(out, outCount, fullPath) == 0;
+}
+
+static bool ResolveShaderCsoPathA(const char *fileName, char *out,
+                                  size_t outCount) {
+  if (!fileName || !out || outCount == 0)
+    return false;
+
+  char currentDir[MAX_PATH] = {};
+  DWORD cwdLen = GetCurrentDirectoryA(_countof(currentDir), currentDir);
+  if (cwdLen > 0 && cwdLen < _countof(currentDir)) {
+    char candidate[MAX_PATH] = {};
+    if (JoinPathA(currentDir, fileName, candidate, _countof(candidate)) &&
+        FileExistsA(candidate)) {
+      return strcpy_s(out, outCount, candidate) == 0;
+    }
+  }
+
+  char moduleDir[MAX_PATH] = {};
+  if (!GetModuleDirectoryA(moduleDir, _countof(moduleDir)))
+    return false;
+
+  char candidate[MAX_PATH] = {};
+  if (JoinPathA(moduleDir, fileName, candidate, _countof(candidate)) &&
+      FileExistsA(candidate)) {
+    return strcpy_s(out, outCount, candidate) == 0;
+  }
+
+  return false;
+}
+
+static bool ReadFileToBufferA(const char *path, ID3DXBuffer **outBuffer) {
+  if (!path || !outBuffer)
+    return false;
+
+  *outBuffer = nullptr;
+  HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE)
+    return false;
+
+  DWORD fileSize = GetFileSize(h, nullptr);
+  if (fileSize == INVALID_FILE_SIZE || fileSize == 0 || (fileSize % 4) != 0) {
+    CloseHandle(h);
+    return false;
+  }
+
+  ID3DXBuffer *buffer = nullptr;
+  if (FAILED(D3DXCreateBuffer(fileSize, &buffer)) || !buffer) {
+    CloseHandle(h);
+    return false;
+  }
+
+  DWORD bytesRead = 0;
+  BOOL ok = ReadFile(h, buffer->GetBufferPointer(), fileSize, &bytesRead, nullptr);
+  CloseHandle(h);
+  if (!ok || bytesRead != fileSize) {
+    buffer->Release();
+    return false;
+  }
+
+  *outBuffer = buffer;
+  return true;
+}
+
+static bool CompileShaderVariant(IDirect3DDevice9 *dev, const char *csoFileName,
+                                 IDirect3DPixelShader9 **outShader) {
+  if (!dev || !csoFileName || !outShader)
+    return false;
+
+  *outShader = nullptr;
+
+  char csoPath[MAX_PATH] = {};
+  if (!ResolveShaderCsoPathA(csoFileName, csoPath, _countof(csoPath))) {
+    OutputDebugStringA("FDV: shader cso not found: ");
+    OutputDebugStringA(csoFileName);
+    OutputDebugStringA("\n");
+    return false;
+  }
+
+  ID3DXBuffer *bytecode = nullptr;
+  if (!ReadFileToBufferA(csoPath, &bytecode) || !bytecode) {
+    OutputDebugStringA("FDV: failed to read shader cso: ");
+    OutputDebugStringA(csoPath);
+    OutputDebugStringA("\n");
+    return false;
+  }
+
+  HRESULT hr = dev->CreatePixelShader(
+      static_cast<const DWORD *>(bytecode->GetBufferPointer()), outShader);
+  bytecode->Release();
+
+  return SUCCEEDED(hr) && *outShader != nullptr;
+}
+
+static bool CreateSdfShaders(BridgeRenderer *s) {
+  if (!s || !s->device)
+    return false;
+
+  ReleaseSdfShaders(s);
+
+  if (!CompileShaderVariant(s->device, "PixelShader_ellipse.cso",
+                            &s->sdfEllipseShader)) {
+    ReleaseSdfShaders(s);
+    return false;
+  }
+
+  if (!CompileShaderVariant(s->device, "PixelShader_line.cso",
+                            &s->sdfLineShader)) {
+    ReleaseSdfShaders(s);
+    return false;
+  }
+
+  return true;
+}
+
 // ==========================================================================
 //  Internal: device / surface creation
 // ==========================================================================
@@ -235,7 +416,14 @@ static bool CreateDeviceAndSurface(BridgeRenderer *s) {
   if (FAILED(hr))
     return false;
 
+  if (!CreateSdfShaders(s)) {
+    s->device->Release();
+    s->device = nullptr;
+    return false;
+  }
+
   if (!CreateFrameResources(s)) {
+    ReleaseSdfShaders(s);
     s->device->Release();
     s->device = nullptr;
     return false;
@@ -245,6 +433,7 @@ static bool CreateDeviceAndSurface(BridgeRenderer *s) {
 
 static void ReleaseDeviceResources(BridgeRenderer *s) {
   ReleaseFrameResources(s);
+  ReleaseSdfShaders(s);
   if (s->device) {
     s->device->Release();
     s->device = nullptr;
@@ -254,6 +443,7 @@ static void ReleaseDeviceResources(BridgeRenderer *s) {
 
 static bool ResetDeviceAndSurface(BridgeRenderer *s) {
   ReleaseFrameResources(s);
+  ReleaseSdfShaders(s);
 
   D3DPRESENT_PARAMETERS pp = {};
   pp.Windowed = TRUE;
@@ -270,12 +460,35 @@ static bool ResetDeviceAndSurface(BridgeRenderer *s) {
   if (FAILED(hr))
     return false;
 
+  if (!CreateSdfShaders(s))
+    return false;
+
   return CreateFrameResources(s);
 }
 
 // ==========================================================================
 //  Render-state setup for 2-D drawing
 // ==========================================================================
+static constexpr DWORD kLegacyFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
+static constexpr DWORD kSdfFvf = D3DFVF_XYZRHW | D3DFVF_TEX1;
+static constexpr float kSdfAaWidthPx = 1.0f;
+
+static inline float Maxf(float a, float b) { return a > b ? a : b; }
+static inline float Minf(float a, float b) { return a < b ? a : b; }
+
+static void SetLegacyPipeline(IDirect3DDevice9 *dev) {
+  dev->SetPixelShader(nullptr);
+  dev->SetFVF(kLegacyFvf);
+}
+
+static bool SetSdfPipeline(IDirect3DDevice9 *dev, IDirect3DPixelShader9 *shader) {
+  if (!dev || !shader)
+    return false;
+  dev->SetPixelShader(shader);
+  dev->SetFVF(kSdfFvf);
+  return true;
+}
+
 static void SetupRenderState(IDirect3DDevice9 *dev) {
   // Vertices use D3DFVF_XYZRHW (pre-transformed screen-space coordinates).
   // The T&L pipeline is completely bypassed, so SetTransform calls would be
@@ -288,9 +501,14 @@ static void SetupRenderState(IDirect3DDevice9 *dev) {
   dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
   dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
   dev->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, FALSE);
-  dev->SetRenderState(D3DRS_ANTIALIASEDLINEENABLE, TRUE);
+  dev->SetRenderState(D3DRS_ANTIALIASEDLINEENABLE, FALSE);
+  dev->SetTexture(0, nullptr);
+  dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+  dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+  dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+  dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
 
-  dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+  SetLegacyPipeline(dev);
 }
 
 // ==========================================================================
@@ -301,42 +519,22 @@ struct Vertex2D {
   D3DCOLOR color;
 };
 
-// Draw a filled ellipse using D3DPT_TRIANGLELIST.
-// D3DPT_TRIANGLEFAN is deprecated/broken on some D3D9-on-D3D11 wrappers.
-static void DrawFilledEllipse(IDirect3DDevice9 *dev, float cx, float cy,
-                              float rx, float ry, D3DCOLOR color) {
-  const int SEGS = 64;
-  Vertex2D perim[SEGS + 1];
-  for (int i = 0; i <= SEGS; ++i) {
-    float a = (float)(i * 2.0f * D3DX_PI / SEGS);
-    perim[i] = {cx + cosf(a) * rx, cy + sinf(a) * ry, 0.5f, 1.0f, color};
-  }
-  // 64 triangles * 3 verts = 192 verts
-  Vertex2D verts[SEGS * 3];
-  Vertex2D center = {cx, cy, 0.5f, 1.0f, color};
-  for (int i = 0; i < SEGS; ++i) {
-    verts[i * 3 + 0] = center;
-    verts[i * 3 + 1] = perim[i];
-    verts[i * 3 + 2] = perim[i + 1];
-  }
-  dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, SEGS, verts, sizeof(Vertex2D));
-}
+struct VertexSdf {
+  float x, y, z, rhw;
+  float u, v;
+};
 
-// Draw a stroked ellipse outline via closed LINESTRIP.
-static void DrawStrokeEllipse(IDirect3DDevice9 *dev, float cx, float cy,
-                              float rx, float ry, D3DCOLOR color) {
-  const int SEGS = 64;
-  Vertex2D verts[SEGS + 1];
-  for (int i = 0; i <= SEGS; ++i) {
-    float a = (float)(i * 2.0f * D3DX_PI / SEGS);
-    verts[i] = {cx + cosf(a) * rx, cy + sinf(a) * ry, 0.5f, 1.0f, color};
-  }
-  dev->DrawPrimitiveUP(D3DPT_LINESTRIP, SEGS, verts, sizeof(Vertex2D));
+static void WriteColorConstant(D3DCOLOR color, float out[4]) {
+  out[0] = (float)((color >> 16) & 0xFF) / 255.0f;
+  out[1] = (float)((color >> 8) & 0xFF) / 255.0f;
+  out[2] = (float)(color & 0xFF) / 255.0f;
+  out[3] = (float)((color >> 24) & 0xFF) / 255.0f;
 }
 
 // Helper: draw a solid filled quad (two triangles)
 static void DrawFilledRect(IDirect3DDevice9 *dev, float x, float y, float w,
                            float h, D3DCOLOR color) {
+  SetLegacyPipeline(dev);
   Vertex2D verts[6] = {
       {x, y, 0.5f, 1.0f, color},         {x + w, y, 0.5f, 1.0f, color},
       {x, y + h, 0.5f, 1.0f, color},     {x + w, y, 0.5f, 1.0f, color},
@@ -356,6 +554,77 @@ static void DrawStrokeRect(IDirect3DDevice9 *dev, float x, float y, float w,
   DrawFilledRect(dev, x, y + t, t, h - 2 * t, color);
   // Right
   DrawFilledRect(dev, x + w - t, y + t, t, h - 2 * t, color);
+}
+
+static bool DrawSdfQuad(IDirect3DDevice9 *dev, float left, float top,
+                        float right, float bottom) {
+  VertexSdf verts[6] = {
+      {left, top, 0.5f, 1.0f, left, top},
+      {right, top, 0.5f, 1.0f, right, top},
+      {left, bottom, 0.5f, 1.0f, left, bottom},
+      {right, top, 0.5f, 1.0f, right, top},
+      {right, bottom, 0.5f, 1.0f, right, bottom},
+      {left, bottom, 0.5f, 1.0f, left, bottom},
+  };
+
+  return SUCCEEDED(
+      dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 2, verts, sizeof(VertexSdf)));
+}
+
+static bool DrawSdfEllipse(BridgeRenderer *s, float cx, float cy, float rx,
+                           float ry, float thickness, bool stroke,
+                           D3DCOLOR color) {
+  if (!s || !s->device || !s->sdfEllipseShader)
+    return false;
+
+  IDirect3DDevice9 *dev = s->device;
+  if (!SetSdfPipeline(dev, s->sdfEllipseShader))
+    return false;
+
+  float halfStroke = stroke ? Maxf(thickness * 0.5f, 0.0f) : 0.0f;
+  float safeRx = Maxf(rx, 0.0001f);
+  float safeRy = Maxf(ry, 0.0001f);
+  float padding = halfStroke + kSdfAaWidthPx + 1.0f;
+
+  float color4[4] = {};
+  float params[4] = {halfStroke, kSdfAaWidthPx, 0.0f, 0.0f};
+  float data0[4] = {cx, cy, safeRx, safeRy};
+  WriteColorConstant(color, color4);
+
+  dev->SetPixelShaderConstantF(0, color4, 1);
+  dev->SetPixelShaderConstantF(1, params, 1);
+  dev->SetPixelShaderConstantF(2, data0, 1);
+
+  return DrawSdfQuad(dev, cx - safeRx - padding, cy - safeRy - padding,
+                     cx + safeRx + padding, cy + safeRy + padding);
+}
+
+static bool DrawSdfLine(BridgeRenderer *s, float x0, float y0, float x1,
+                        float y1, float thickness, D3DCOLOR color) {
+  if (!s || !s->device || !s->sdfLineShader)
+    return false;
+
+  IDirect3DDevice9 *dev = s->device;
+  if (!SetSdfPipeline(dev, s->sdfLineShader))
+    return false;
+
+  float halfStroke = Maxf(thickness * 0.5f, 0.0f);
+  float padding = halfStroke + kSdfAaWidthPx + 1.0f;
+
+  float color4[4] = {};
+  float params[4] = {halfStroke, kSdfAaWidthPx, 0.0f, 0.0f};
+  float data0[4] = {x0, y0, x1, y1};
+  WriteColorConstant(color, color4);
+
+  dev->SetPixelShaderConstantF(0, color4, 1);
+  dev->SetPixelShaderConstantF(1, params, 1);
+  dev->SetPixelShaderConstantF(2, data0, 1);
+
+  float left = Minf(x0, x1) - padding;
+  float top = Minf(y0, y1) - padding;
+  float right = Maxf(x0, x1) + padding;
+  float bottom = Maxf(y0, y1) + padding;
+  return DrawSdfQuad(dev, left, top, right, bottom);
 }
 
 // ==========================================================================
@@ -378,6 +647,7 @@ static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
 
   SetupRenderState(dev);
 
+  bool commandOk = true;
   const uint8_t *p = data;
   const uint8_t *end = data + bytes;
 
@@ -444,7 +714,10 @@ static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
       float ry = ReadF32(p + 12);
       D3DCOLOR color = ReadColor(p + 16);
       p += 20;
-      DrawFilledEllipse(dev, cx, cy, rx, ry, color);
+      if (!DrawSdfEllipse(s, cx, cy, rx, ry, 0.0f, false, color)) {
+        commandOk = false;
+        goto done;
+      }
       break;
     }
 
@@ -460,9 +733,10 @@ static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
       float t = ReadF32(p + 16);
       D3DCOLOR color = ReadColor(p + 20);
       p += 24;
-      if (t < 1.0f)
-        t = 1.0f;
-      DrawStrokeEllipse(dev, cx, cy, rx - t * 0.5f, ry - t * 0.5f, color);
+      if (!DrawSdfEllipse(s, cx, cy, rx, ry, t, true, color)) {
+        commandOk = false;
+        goto done;
+      }
       break;
     }
 
@@ -479,30 +753,9 @@ static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
       D3DCOLOR color = ReadColor(p + 20);
       p += 24;
 
-      if (t <= 1.5f) {
-        // Thin line: use D3DPT_LINELIST
-        Vertex2D verts[2] = {
-            {x0, y0, 0.5f, 1.0f, color},
-            {x1, y1, 0.5f, 1.0f, color},
-        };
-        dev->DrawPrimitiveUP(D3DPT_LINELIST, 1, verts, sizeof(Vertex2D));
-      } else {
-        // Thick line: expand into a quad
-        float dx = x1 - x0, dy = y1 - y0;
-        float len = sqrtf(dx * dx + dy * dy);
-        if (len < 0.001f)
-          break;
-        float nx = -dy / len * (t * 0.5f);
-        float ny = dx / len * (t * 0.5f);
-        Vertex2D verts[6] = {
-            {x0 + nx, y0 + ny, 0.5f, 1.0f, color},
-            {x1 + nx, y1 + ny, 0.5f, 1.0f, color},
-            {x0 - nx, y0 - ny, 0.5f, 1.0f, color},
-            {x1 + nx, y1 + ny, 0.5f, 1.0f, color},
-            {x1 - nx, y1 - ny, 0.5f, 1.0f, color},
-            {x0 - nx, y0 - ny, 0.5f, 1.0f, color},
-        };
-        dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 2, verts, sizeof(Vertex2D));
+      if (!DrawSdfLine(s, x0, y0, x1, y1, t, color)) {
+        commandOk = false;
+        goto done;
       }
       break;
     }
@@ -516,6 +769,8 @@ static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
 done:
   hr = dev->EndScene();
   if (FAILED(hr))
+    return false;
+  if (!commandOk)
     return false;
 
   // ---- CPU-GPU synchronization ----------------------------------------
