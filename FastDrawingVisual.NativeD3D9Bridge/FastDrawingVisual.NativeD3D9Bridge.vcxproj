@@ -155,7 +155,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="BridgeExports.cpp" />
+    <ClCompile Include="BridgeExports.cpp">
+      <CompileAsManaged>false</CompileAsManaged>
+    </ClCompile>
+    <ClCompile Include="NativeD3D9BridgeProxy.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="BridgeNativeExports.h" />
+    <ClInclude Include="NativeD3D9BridgeProxy.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

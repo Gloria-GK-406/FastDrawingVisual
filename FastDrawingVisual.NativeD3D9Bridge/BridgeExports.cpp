@@ -1,13 +1,13 @@
 // BridgeExports.cpp
-// C++/CLI mixed-mode DLL.
-// The managed part exposes BridgeMetadata and NativeD3D9BridgeProxy for direct
-// C# calls. The unmanaged part keeps a flat C ABI for compatibility.
+// Native D3D9 implementation + exported C ABI entry points.
+// Compiled as unmanaged code for the hot rendering path.
 
 #include <atomic>
 #include <math.h> // ceilf
 #include <new>
 #include <stdint.h>
 #include <string.h> // memcpy
+#include "BridgeNativeExports.h"
 
 // ---- Windows / Direct3D 9 headers ----------------------------------------
 #define WIN32_LEAN_AND_MEAN
@@ -32,16 +32,7 @@
 // but list them explicitly so an IDE-only build also links correctly.
 #pragma comment(lib, "d3d9.lib")
 
-// ---- Managed metadata exposed to C# --------------------------------------
-using namespace System;
-
-namespace FastDrawingVisual::NativeD3D9Bridge {
-public
-ref class BridgeMetadata abstract sealed {
-public:
-  literal int ApiVersion = 1;
-};
-} // namespace FastDrawingVisual::NativeD3D9Bridge
+FDV_NATIVE_REGION_BEGIN
 
 // ==========================================================================
 //  Command stream constants (must match NativeCommandType.cs)
@@ -645,43 +636,4 @@ __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
 }
 }
 
-namespace FastDrawingVisual::NativeD3D9Bridge {
-public
-ref class NativeD3D9BridgeProxy abstract sealed {
-public:
-  static bool IsBridgeReady() { return FDV_IsBridgeReady(); }
-
-  static IntPtr CreateRenderer(IntPtr hwnd, int width, int height) {
-    return IntPtr(FDV_CreateRenderer(hwnd.ToPointer(), width, height));
-  }
-
-  static void DestroyRenderer(IntPtr renderer) {
-    FDV_DestroyRenderer(renderer.ToPointer());
-  }
-
-  static bool Resize(IntPtr renderer, int width, int height) {
-    return FDV_Resize(renderer.ToPointer(), width, height);
-  }
-
-  static bool SubmitCommands(IntPtr renderer, IntPtr commands,
-                             int commandBytes) {
-    return FDV_SubmitCommands(renderer.ToPointer(), commands.ToPointer(),
-                              commandBytes);
-  }
-
-  static bool TryAcquirePresentSurface(IntPtr renderer, IntPtr % surface9) {
-    void *surface = nullptr;
-    bool ok = FDV_TryAcquirePresentSurface(renderer.ToPointer(), &surface);
-    surface9 = IntPtr(surface);
-    return ok;
-  }
-
-  static void OnSurfacePresented(IntPtr renderer) {
-    FDV_OnSurfacePresented(renderer.ToPointer());
-  }
-
-  static void OnFrontBufferAvailable(IntPtr renderer, bool available) {
-    FDV_OnFrontBufferAvailable(renderer.ToPointer(), available);
-  }
-};
-} // namespace FastDrawingVisual::NativeD3D9Bridge
+FDV_NATIVE_REGION_END
