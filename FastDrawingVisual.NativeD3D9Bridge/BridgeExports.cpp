@@ -514,7 +514,9 @@ static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
   }
 
 done:
-  dev->EndScene();
+  hr = dev->EndScene();
+  if (FAILED(hr))
+    return false;
 
   // ---- CPU-GPU synchronization ----------------------------------------
   // EndScene() only flushes CPU-side command recording; the GPU executes
@@ -522,11 +524,21 @@ done:
   // to the render target before letting the UI thread read it via D3DImage.
   // D3DQUERYTYPE_EVENT acts as a lightweight GPU fence for this purpose.
   if (slot->renderDoneQuery) {
-    slot->renderDoneQuery->Issue(D3DISSUE_END);
+    hr = slot->renderDoneQuery->Issue(D3DISSUE_END);
+    if (FAILED(hr))
+      return false;
+
     // Poll with D3DGETDATA_FLUSH to ensure commands are flushed to the GPU.
-    while (slot->renderDoneQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH) ==
-           S_FALSE)
-      YieldProcessor(); // back-off to avoid burning a full CPU core
+    while (true) {
+      hr = slot->renderDoneQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+      if (hr == S_OK)
+        break;
+      if (hr == S_FALSE) {
+        YieldProcessor(); // back-off to avoid burning a full CPU core
+        continue;
+      }
+      return false;
+    }
   }
 
   return true;
