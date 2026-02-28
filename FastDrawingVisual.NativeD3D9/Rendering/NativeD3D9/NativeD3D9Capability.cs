@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using NativeD3D9BridgeProxy = FastDrawingVisual.NativeD3D9Bridge.NativeD3D9BridgeProxy;
 
 namespace FastDrawingVisual.Rendering.NativeD3D9
 {
@@ -32,7 +33,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
         {
             try
             {
-                return NativeD3D9Bridge.IsBridgeReady();
+                return NativeD3D9BridgeProxy.IsBridgeReady();
             }
             catch
             {

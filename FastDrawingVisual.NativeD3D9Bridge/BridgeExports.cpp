@@ -1,8 +1,7 @@
 // BridgeExports.cpp
 // C++/CLI mixed-mode DLL.
-// The managed part exposes BridgeMetadata (API version constant consumed by the
-// C# capability-check layer).  The unmanaged part implements the flat C ABI
-// that NativeD3D9Bridge.cs P/Invokes into.
+// The managed part exposes BridgeMetadata and NativeD3D9BridgeProxy for direct
+// C# calls. The unmanaged part keeps a flat C ABI for compatibility.
 
 #include <atomic>
 #include <math.h> // ceilf
@@ -16,6 +15,18 @@
 #include <d3d9.h>
 #include <d3dx9.h>
 #include <windows.h>
+
+#if !defined(YieldProcessor)
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64) || defined(_M_AMD64))
+#include <intrin.h>
+#define YieldProcessor() _mm_pause()
+#elif defined(_WIN32)
+#include <windows.h>
+#define YieldProcessor() SwitchToThread()
+#else
+#define YieldProcessor() ((void)0)
+#endif
+#endif
 
 // The DXSDK NuGet package injects the correct lib via its .targets file,
 // but list them explicitly so an IDE-only build also links correctly.
@@ -61,9 +72,11 @@ static inline D3DCOLOR ReadColor(const uint8_t *p) {
 struct BridgeRenderer {
   IDirect3D9 *d3d9 = nullptr;
   IDirect3DDevice9 *device = nullptr;
-  IDirect3DSurface9 *renderTarget = nullptr; // ARGB offscreen surface
-  IDirect3DSurface9 *depthStencil =
-      nullptr; // optional Z-buffer (not strictly needed for 2-D)
+  IDirect3DSurface9 *renderTarget = nullptr; // ARGB render target surface
+  IDirect3DSurface9 *depthStencil = nullptr;
+  // GPU fence: used to wait for rendering completion after EndScene().
+  // D3DQUERYTYPE_EVENT signals when all preceding GPU commands are done.
+  IDirect3DQuery9 *renderDoneQuery = nullptr;
 
   HWND hwnd = nullptr;
   int width = 0;
@@ -145,12 +158,20 @@ static bool CreateDeviceAndSurface(BridgeRenderer *s) {
     return false;
   }
 
+  // Create the GPU event query used for CPU-GPU synchronization.
+  // If creation fails (some very old HW), we fall back to no-sync (tolerable).
+  s->device->CreateQuery(D3DQUERYTYPE_EVENT, &s->renderDoneQuery);
+
   InitializeCriticalSectionAndSpinCount(&s->cs, 1000);
   s->surfaceReady.store(false, std::memory_order_release);
   return true;
 }
 
 static void ReleaseDeviceResources(BridgeRenderer *s) {
+  if (s->renderDoneQuery) {
+    s->renderDoneQuery->Release();
+    s->renderDoneQuery = nullptr;
+  }
   if (s->renderTarget) {
     s->renderTarget->Release();
     s->renderTarget = nullptr;
@@ -164,9 +185,14 @@ static void ReleaseDeviceResources(BridgeRenderer *s) {
     s->device = nullptr;
   }
   s->surfaceReady.store(false, std::memory_order_release);
+  // NOTE: cs lifetime is managed by FDV_CreateRenderer/FDV_DestroyRenderer.
 }
 
 static bool ResetDeviceAndSurface(BridgeRenderer *s) {
+  if (s->renderDoneQuery) {
+    s->renderDoneQuery->Release();
+    s->renderDoneQuery = nullptr;
+  }
   if (s->renderTarget) {
     s->renderTarget->Release();
     s->renderTarget = nullptr;
@@ -197,6 +223,9 @@ static bool ResetDeviceAndSurface(BridgeRenderer *s) {
                                      FALSE, &s->renderTarget, nullptr);
 
   bool ok = SUCCEEDED(hr);
+  if (ok) {
+    s->device->CreateQuery(D3DQUERYTYPE_EVENT, &s->renderDoneQuery);
+  }
   s->surfaceReady.store(ok, std::memory_order_release);
   return ok;
 }
@@ -440,6 +469,19 @@ static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
 
 done:
   dev->EndScene();
+
+  // ---- CPU-GPU synchronization ----------------------------------------
+  // EndScene() only flushes CPU-side command recording; the GPU executes
+  // asynchronously. We must wait until the GPU has actually finished writing
+  // to the render target before letting the UI thread read it via D3DImage.
+  // D3DQUERYTYPE_EVENT acts as a lightweight GPU fence for this purpose.
+  if (s->renderDoneQuery) {
+    s->renderDoneQuery->Issue(D3DISSUE_END);
+    // Poll with D3DGETDATA_FLUSH to ensure commands are flushed to the GPU.
+    while (s->renderDoneQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH) == S_FALSE)
+      YieldProcessor(); // back-off to avoid burning a full CPU core
+  }
+
   s->surfaceReady.store(true, std::memory_order_release);
   return true;
 }
@@ -602,3 +644,44 @@ __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
   }
 }
 }
+
+namespace FastDrawingVisual::NativeD3D9Bridge {
+public
+ref class NativeD3D9BridgeProxy abstract sealed {
+public:
+  static bool IsBridgeReady() { return FDV_IsBridgeReady(); }
+
+  static IntPtr CreateRenderer(IntPtr hwnd, int width, int height) {
+    return IntPtr(FDV_CreateRenderer(hwnd.ToPointer(), width, height));
+  }
+
+  static void DestroyRenderer(IntPtr renderer) {
+    FDV_DestroyRenderer(renderer.ToPointer());
+  }
+
+  static bool Resize(IntPtr renderer, int width, int height) {
+    return FDV_Resize(renderer.ToPointer(), width, height);
+  }
+
+  static bool SubmitCommands(IntPtr renderer, IntPtr commands,
+                             int commandBytes) {
+    return FDV_SubmitCommands(renderer.ToPointer(), commands.ToPointer(),
+                              commandBytes);
+  }
+
+  static bool TryAcquirePresentSurface(IntPtr renderer, IntPtr % surface9) {
+    void *surface = nullptr;
+    bool ok = FDV_TryAcquirePresentSurface(renderer.ToPointer(), &surface);
+    surface9 = IntPtr(surface);
+    return ok;
+  }
+
+  static void OnSurfacePresented(IntPtr renderer) {
+    FDV_OnSurfacePresented(renderer.ToPointer());
+  }
+
+  static void OnFrontBufferAvailable(IntPtr renderer, bool available) {
+    FDV_OnFrontBufferAvailable(renderer.ToPointer(), available);
+  }
+};
+} // namespace FastDrawingVisual::NativeD3D9Bridge
