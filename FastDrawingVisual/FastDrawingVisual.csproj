@@ -6,14 +6,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>FastDrawingVisual</RootNamespace>
+    <Platforms>AnyCPU;x86</Platforms>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 契约接口层 -->
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
-    <!-- WPF 降级实现（直接引用，无 D3D/Skia 依赖，无需 NoInlining 保护） -->
     <ProjectReference Include="..\FastDrawingVisual.WpfRenderer\FastDrawingVisual.WpfRenderer.csproj" />
-    <!-- SkiaSharp 加速实现（编译时引用；[NoInlining] 保护确保 Win7 下不触发加载） -->
+    <ProjectReference Include="..\FastDrawingVisual.NativeD3D9\FastDrawingVisual.NativeD3D9.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.SkiaSharp\FastDrawingVisual.SkiaSharp.csproj" />
   </ItemGroup>
 </Project>

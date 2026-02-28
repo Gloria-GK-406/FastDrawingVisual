@@ -1,7 +1,9 @@
 using FastDrawingVisual.Rendering;
+using FastDrawingVisual.Rendering.NativeD3D9;
 using FastDrawingVisual.WpfRenderer;
 using System.Runtime.CompilerServices;
 using D3DSkiaRenderer = FastDrawingVisual.SkiaSharp.D3DSkiaRenderer;
+using NativeD3D9Renderer = FastDrawingVisual.Rendering.NativeD3D9.NativeD3D9Renderer;
 
 namespace FastDrawingVisual.Controls
 {
@@ -26,6 +28,12 @@ namespace FastDrawingVisual.Controls
     {
         internal static IRenderer Create()
         {
+            if (NativeD3D9Capability.IsAvailable)
+            {
+                var native = TryCreateNativeD3D9();
+                if (native != null) return native;
+            }
+
             if (RendererCapability.IsAcceleratedAvailable)
             {
                 var r = TryCreateSkia();
@@ -43,6 +51,19 @@ namespace FastDrawingVisual.Controls
         /// [NoInlining] 确保此方法的 JIT 编译（以及 D3DSkiaRenderer 类型解析/SharpDX+Skia 程序集加载）
         /// 被推迟到本方法第一次被实际调用时，而非在外层方法编译时发生。
         /// </remarks>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static IRenderer? TryCreateNativeD3D9()
+        {
+            try
+            {
+                return new NativeD3D9Renderer();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static IRenderer? TryCreateSkia()
         {
