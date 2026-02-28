@@ -2,7 +2,6 @@
 // Native D3D9 implementation + exported C ABI entry points.
 // Compiled as unmanaged code for the hot rendering path.
 
-#include <atomic>
 #include <math.h> // ceilf
 #include <new>
 #include <stdint.h>
@@ -60,21 +59,32 @@ static inline D3DCOLOR ReadColor(const uint8_t *p) {
 // ==========================================================================
 //  D3D9 device + surface state
 // ==========================================================================
+static constexpr int kFrameCount = 3;
+
+enum class SurfaceState : uint8_t {
+  Ready = 0,
+  Drawing = 1,
+  ReadyForPresent = 2,
+  Presenting = 3,
+};
+
+struct SurfaceSlot {
+  IDirect3DSurface9 *renderTarget = nullptr;
+  IDirect3DQuery9 *renderDoneQuery = nullptr;
+  SurfaceState state = SurfaceState::Ready;
+};
+
 struct BridgeRenderer {
   IDirect3D9 *d3d9 = nullptr;
   IDirect3DDevice9 *device = nullptr;
-  IDirect3DSurface9 *renderTarget = nullptr; // ARGB render target surface
-  IDirect3DSurface9 *depthStencil = nullptr;
-  // GPU fence: used to wait for rendering completion after EndScene().
-  // D3DQUERYTYPE_EVENT signals when all preceding GPU commands are done.
-  IDirect3DQuery9 *renderDoneQuery = nullptr;
+  SurfaceSlot slots[kFrameCount];
 
   HWND hwnd = nullptr;
   int width = 0;
   int height = 0;
   bool frontBufferAvailable = true;
-  // Written by worker thread, read by UI thread -- must be atomic.
-  std::atomic<bool> surfaceReady{false};
+  int currentPresentingSlot = -1;
+  bool csInitialized = false;
   // Guards D3D9 device access between the worker render thread
   // (FDV_SubmitCommands) and the WPF UI thread (FDV_TryAcquirePresentSurface).
   CRITICAL_SECTION cs;
@@ -86,8 +96,98 @@ struct BridgeRenderer {
 static bool CreateDeviceAndSurface(BridgeRenderer *s);
 static void ReleaseDeviceResources(BridgeRenderer *s);
 static bool ResetDeviceAndSurface(BridgeRenderer *s);
-static void SetupRenderState(IDirect3DDevice9 *dev, int w, int h);
-static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes);
+static bool CreateFrameResources(BridgeRenderer *s);
+static void ReleaseFrameResources(BridgeRenderer *s);
+static int FindSlotByState(const BridgeRenderer *s, SurfaceState state);
+static void DemoteReadyForPresentSlots(BridgeRenderer *s, int keepIndex);
+static void RecycleStalePresentingSlots(BridgeRenderer *s);
+static void SetupRenderState(IDirect3DDevice9 *dev);
+static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
+                            const uint8_t *data, int bytes);
+
+static void ReleaseFrameResources(BridgeRenderer *s) {
+  if (!s)
+    return;
+
+  for (int i = 0; i < kFrameCount; i++) {
+    if (s->slots[i].renderDoneQuery) {
+      s->slots[i].renderDoneQuery->Release();
+      s->slots[i].renderDoneQuery = nullptr;
+    }
+    if (s->slots[i].renderTarget) {
+      s->slots[i].renderTarget->Release();
+      s->slots[i].renderTarget = nullptr;
+    }
+    s->slots[i].state = SurfaceState::Ready;
+  }
+  s->currentPresentingSlot = -1;
+}
+
+static bool CreateFrameResources(BridgeRenderer *s) {
+  if (!s || !s->device || s->width <= 0 || s->height <= 0)
+    return false;
+
+  ReleaseFrameResources(s);
+
+  for (int i = 0; i < kFrameCount; i++) {
+    HRESULT hr = s->device->CreateRenderTarget(
+        (UINT)s->width, (UINT)s->height, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0,
+        FALSE, // lockable=FALSE -- D3DImage does not need CPU lock
+        &s->slots[i].renderTarget, nullptr);
+    if (FAILED(hr)) {
+      ReleaseFrameResources(s);
+      return false;
+    }
+
+    // If query creation fails, rendering still works but loses explicit GPU wait.
+    s->device->CreateQuery(D3DQUERYTYPE_EVENT, &s->slots[i].renderDoneQuery);
+    s->slots[i].state = SurfaceState::Ready;
+  }
+
+  return true;
+}
+
+static int FindSlotByState(const BridgeRenderer *s, SurfaceState state) {
+  if (!s)
+    return -1;
+
+  for (int i = 0; i < kFrameCount; i++) {
+    if (s->slots[i].state == state)
+      return i;
+  }
+  return -1;
+}
+
+static void DemoteReadyForPresentSlots(BridgeRenderer *s, int keepIndex) {
+  if (!s)
+    return;
+
+  for (int i = 0; i < kFrameCount; i++) {
+    if (i == keepIndex)
+      continue;
+    if (s->slots[i].state == SurfaceState::ReadyForPresent)
+      s->slots[i].state = SurfaceState::Ready;
+  }
+}
+
+static void RecycleStalePresentingSlots(BridgeRenderer *s) {
+  if (!s)
+    return;
+
+  int current = s->currentPresentingSlot;
+  if (current < 0 || current >= kFrameCount ||
+      s->slots[current].state != SurfaceState::Presenting) {
+    current = -1;
+  }
+  s->currentPresentingSlot = current;
+
+  for (int i = 0; i < kFrameCount; i++) {
+    if (i == current)
+      continue;
+    if (s->slots[i].state == SurfaceState::Presenting)
+      s->slots[i].state = SurfaceState::Ready;
+  }
+}
 
 // ==========================================================================
 //  Internal: device / surface creation
@@ -135,64 +235,25 @@ static bool CreateDeviceAndSurface(BridgeRenderer *s) {
   if (FAILED(hr))
     return false;
 
-  // ---- ARGB render target surface ---------------------------------------
-  // D3DImage.SetBackBuffer(IDirect3DSurface9) requires the surface to be a
-  // proper render target (not an offscreen plain surface).
-  hr = s->device->CreateRenderTarget(
-      (UINT)s->width, (UINT)s->height, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0,
-      FALSE, // lockable=FALSE -- D3DImage does not need CPU lock
-      &s->renderTarget, nullptr);
-
-  if (FAILED(hr)) {
+  if (!CreateFrameResources(s)) {
     s->device->Release();
     s->device = nullptr;
     return false;
   }
-
-  // Create the GPU event query used for CPU-GPU synchronization.
-  // If creation fails (some very old HW), we fall back to no-sync (tolerable).
-  s->device->CreateQuery(D3DQUERYTYPE_EVENT, &s->renderDoneQuery);
-
-  InitializeCriticalSectionAndSpinCount(&s->cs, 1000);
-  s->surfaceReady.store(false, std::memory_order_release);
   return true;
 }
 
 static void ReleaseDeviceResources(BridgeRenderer *s) {
-  if (s->renderDoneQuery) {
-    s->renderDoneQuery->Release();
-    s->renderDoneQuery = nullptr;
-  }
-  if (s->renderTarget) {
-    s->renderTarget->Release();
-    s->renderTarget = nullptr;
-  }
-  if (s->depthStencil) {
-    s->depthStencil->Release();
-    s->depthStencil = nullptr;
-  }
+  ReleaseFrameResources(s);
   if (s->device) {
     s->device->Release();
     s->device = nullptr;
   }
-  s->surfaceReady.store(false, std::memory_order_release);
   // NOTE: cs lifetime is managed by FDV_CreateRenderer/FDV_DestroyRenderer.
 }
 
 static bool ResetDeviceAndSurface(BridgeRenderer *s) {
-  if (s->renderDoneQuery) {
-    s->renderDoneQuery->Release();
-    s->renderDoneQuery = nullptr;
-  }
-  if (s->renderTarget) {
-    s->renderTarget->Release();
-    s->renderTarget = nullptr;
-  }
-  if (s->depthStencil) {
-    s->depthStencil->Release();
-    s->depthStencil = nullptr;
-  }
-  s->surfaceReady.store(false, std::memory_order_release);
+  ReleaseFrameResources(s);
 
   D3DPRESENT_PARAMETERS pp = {};
   pp.Windowed = TRUE;
@@ -209,16 +270,7 @@ static bool ResetDeviceAndSurface(BridgeRenderer *s) {
   if (FAILED(hr))
     return false;
 
-  hr = s->device->CreateRenderTarget((UINT)s->width, (UINT)s->height,
-                                     D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0,
-                                     FALSE, &s->renderTarget, nullptr);
-
-  bool ok = SUCCEEDED(hr);
-  if (ok) {
-    s->device->CreateQuery(D3DQUERYTYPE_EVENT, &s->renderDoneQuery);
-  }
-  s->surfaceReady.store(ok, std::memory_order_release);
-  return ok;
+  return CreateFrameResources(s);
 }
 
 // ==========================================================================
@@ -309,11 +361,14 @@ static void DrawStrokeRect(IDirect3DDevice9 *dev, float x, float y, float w,
 // ==========================================================================
 //  Command decoder
 // ==========================================================================
-static bool ExecuteCommands(BridgeRenderer *s, const uint8_t *data, int bytes) {
+static bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
+                            const uint8_t *data, int bytes) {
   IDirect3DDevice9 *dev = s->device;
+  if (!dev || !slot || !slot->renderTarget)
+    return false;
 
   // Set the offscreen surface as the current render target
-  HRESULT hr = dev->SetRenderTarget(0, s->renderTarget);
+  HRESULT hr = dev->SetRenderTarget(0, slot->renderTarget);
   if (FAILED(hr))
     return false;
 
@@ -466,14 +521,14 @@ done:
   // asynchronously. We must wait until the GPU has actually finished writing
   // to the render target before letting the UI thread read it via D3DImage.
   // D3DQUERYTYPE_EVENT acts as a lightweight GPU fence for this purpose.
-  if (s->renderDoneQuery) {
-    s->renderDoneQuery->Issue(D3DISSUE_END);
+  if (slot->renderDoneQuery) {
+    slot->renderDoneQuery->Issue(D3DISSUE_END);
     // Poll with D3DGETDATA_FLUSH to ensure commands are flushed to the GPU.
-    while (s->renderDoneQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH) == S_FALSE)
+    while (slot->renderDoneQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH) ==
+           S_FALSE)
       YieldProcessor(); // back-off to avoid burning a full CPU core
   }
 
-  s->surfaceReady.store(true, std::memory_order_release);
   return true;
 }
 
@@ -501,8 +556,12 @@ __declspec(dllexport) void *__cdecl FDV_CreateRenderer(void *hwnd, int width,
   s->hwnd = static_cast<HWND>(hwnd);
   s->width = width;
   s->height = height;
+  InitializeCriticalSectionAndSpinCount(&s->cs, 1000);
+  s->csInitialized = true;
 
   if (!CreateDeviceAndSurface(s)) {
+    DeleteCriticalSection(&s->cs);
+    s->csInitialized = false;
     delete s;
     return nullptr;
   }
@@ -523,7 +582,10 @@ __declspec(dllexport) void __cdecl FDV_DestroyRenderer(void *renderer) {
     s->d3d9 = nullptr;
   }
 
-  DeleteCriticalSection(&s->cs);
+  if (s->csInitialized) {
+    DeleteCriticalSection(&s->cs);
+    s->csInitialized = false;
+  }
   delete s;
 }
 
@@ -534,28 +596,22 @@ __declspec(dllexport) bool __cdecl FDV_Resize(void *renderer, int width,
   if (!s || width <= 0 || height <= 0)
     return false;
 
-  if (s->width == width && s->height == height)
-    return true;
+  EnterCriticalSection(&s->cs);
 
-  s->width = width;
-  s->height = height;
-
-  if (!s->device)
-    return CreateDeviceAndSurface(s);
-
-  // Release the old surface and recreate it at the new size.
-  // A full device Reset is not needed just for an offscreen surface resize.
-  if (s->renderTarget) {
-    s->renderTarget->Release();
-    s->renderTarget = nullptr;
+  bool ok = false;
+  if (s->width == width && s->height == height) {
+    ok = true;
+  } else {
+    s->width = width;
+    s->height = height;
+    if (!s->device)
+      ok = CreateDeviceAndSurface(s);
+    else
+      ok = CreateFrameResources(s);
   }
-  s->surfaceReady.store(false, std::memory_order_release);
 
-  HRESULT hr = s->device->CreateRenderTarget(
-      (UINT)width, (UINT)height, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE,
-      &s->renderTarget, nullptr);
-
-  return SUCCEEDED(hr);
+  LeaveCriticalSection(&s->cs);
+  return ok;
 }
 
 // -----------------------------------------------------------------------
@@ -565,21 +621,38 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
   auto *s = static_cast<BridgeRenderer *>(renderer);
   if (!s || !commands || commandBytes <= 0)
     return false;
-  if (!s->device || !s->renderTarget)
+  if (!s->device)
     return false;
 
-  // Handle device-lost
+  EnterCriticalSection(&s->cs);
   HRESULT hr = s->device->TestCooperativeLevel();
   if (hr == D3DERR_DEVICENOTRESET) {
-    if (!ResetDeviceAndSurface(s))
+    if (!ResetDeviceAndSurface(s)) {
+      LeaveCriticalSection(&s->cs);
       return false;
+    }
   } else if (FAILED(hr)) {
-    return false; // D3DERR_DEVICELOST �C wait for next call
+    LeaveCriticalSection(&s->cs);
+    return false;
   }
 
-  EnterCriticalSection(&s->cs);
-  bool result =
-      ExecuteCommands(s, static_cast<const uint8_t *>(commands), commandBytes);
+  int drawSlotIndex = FindSlotByState(s, SurfaceState::Ready);
+  if (drawSlotIndex < 0) {
+    LeaveCriticalSection(&s->cs);
+    return false;
+  }
+
+  SurfaceSlot *drawSlot = &s->slots[drawSlotIndex];
+  drawSlot->state = SurfaceState::Drawing;
+  bool result = ExecuteCommands(s, drawSlot, static_cast<const uint8_t *>(commands),
+                                commandBytes);
+  if (result) {
+    DemoteReadyForPresentSlots(s, drawSlotIndex);
+    drawSlot->state = SurfaceState::ReadyForPresent;
+  } else {
+    drawSlot->state = SurfaceState::Ready;
+  }
+
   LeaveCriticalSection(&s->cs);
   return result;
 }
@@ -595,13 +668,17 @@ __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
   auto *s = static_cast<BridgeRenderer *>(renderer);
   *outSurface9 = nullptr;
 
-  // Lock to prevent the worker thread from rendering while WPF reads the
-  // surface.
   EnterCriticalSection(&s->cs);
-  bool ok = s->device && s->renderTarget &&
-            s->surfaceReady.load(std::memory_order_acquire);
-  if (ok)
-    *outSurface9 = s->renderTarget;
+  bool ok = false;
+  if (s->device) {
+    int readySlotIndex = FindSlotByState(s, SurfaceState::ReadyForPresent);
+    if (readySlotIndex >= 0 && s->slots[readySlotIndex].renderTarget) {
+      s->slots[readySlotIndex].state = SurfaceState::Presenting;
+      s->currentPresentingSlot = readySlotIndex;
+      *outSurface9 = s->slots[readySlotIndex].renderTarget;
+      ok = true;
+    }
+  }
   LeaveCriticalSection(&s->cs);
   return ok;
 }
@@ -609,10 +686,14 @@ __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
 // -----------------------------------------------------------------------
 // Called after WPF has consumed the surface (D3DImage.Unlock).
 __declspec(dllexport) void __cdecl FDV_OnSurfacePresented(void *renderer) {
-  // Nothing to do for an offscreen surface �� the same surface is reused
-  // for the next frame.  A future double-buffered implementation would
-  // swap front/back here.
-  (void)renderer;
+  // Recycle stale presenting slots after the UI has switched back-buffer.
+  auto *s = static_cast<BridgeRenderer *>(renderer);
+  if (!s)
+    return;
+
+  EnterCriticalSection(&s->cs);
+  RecycleStalePresentingSlots(s);
+  LeaveCriticalSection(&s->cs);
 }
 
 // -----------------------------------------------------------------------
@@ -621,18 +702,22 @@ __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
   auto *s = static_cast<BridgeRenderer *>(renderer);
   if (!s)
     return;
+  EnterCriticalSection(&s->cs);
   s->frontBufferAvailable = available;
 
   if (!available) {
     // Surface is going away �C mark as not ready so TryAcquirePresentSurface
     // returns false until the device is recovered.
-    s->surfaceReady.store(false, std::memory_order_release);
+    for (int i = 0; i < kFrameCount; i++)
+      s->slots[i].state = SurfaceState::Ready;
+    s->currentPresentingSlot = -1;
   } else if (s->device) {
     // Front buffer became available again; try to recover if needed.
     HRESULT hr = s->device->TestCooperativeLevel();
     if (hr == D3DERR_DEVICENOTRESET)
       ResetDeviceAndSurface(s);
   }
+  LeaveCriticalSection(&s->cs);
 }
 }
 

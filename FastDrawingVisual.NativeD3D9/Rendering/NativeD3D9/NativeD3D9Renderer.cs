@@ -181,24 +181,9 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             if (_nativeRenderer == IntPtr.Zero || !_isInitialized || _isDeviceLost || _isDisposed)
                 return;
 
-            var surface = IntPtr.Zero;
-            try
-            {
-                if (!NativeD3D9BridgeProxy.TryAcquirePresentSurface(_nativeRenderer, ref surface) || surface == IntPtr.Zero)
-                {
-                    _retryTimer.Stop();
-                    return;
-                }
-            }
-            catch
-            {
-                _isDeviceLost = true;
-                return;
-            }
-
             if (!_d3dImage.TryLock(new Duration(TimeSpan.Zero)))
             {
-                // Known WPF behavior: TryLock(false) may still need a balancing Unlock.
+                // Known WPF bug:D3DImage TryLock(false) still need a balancing Unlock.
                 _d3dImage.Unlock();
                 if (!_retryTimer.IsEnabled) _retryTimer.Start();
                 return;
@@ -207,6 +192,10 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             _retryTimer.Stop();
             try
             {
+                var surface = IntPtr.Zero;
+                if (!NativeD3D9BridgeProxy.TryAcquirePresentSurface(_nativeRenderer, ref surface) || surface == IntPtr.Zero)
+                    return;
+
                 _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface);
                 _d3dImage.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
                 NativeD3D9BridgeProxy.OnSurfacePresented(_nativeRenderer);

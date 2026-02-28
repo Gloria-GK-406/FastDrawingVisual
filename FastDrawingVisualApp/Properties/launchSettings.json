@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "FastDrawingVisualApp": {
+      "commandName": "Project",
+      "nativeDebugging": true
+    }
+  }
+}
