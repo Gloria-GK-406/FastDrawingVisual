@@ -17,6 +17,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
         private readonly Dispatcher _uiDispatcher;
         private readonly DispatcherTimer _retryTimer;
         private readonly object _workerLock = new();
+        private IVisualHostElement? _attachedHost;
 
         private volatile Action<IDrawingContext>? _pendingDrawAction;
         private CancellationTokenSource? _workerCts;
@@ -32,8 +33,6 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
 
-        public DrawingVisual Visual => _visual;
-
         public NativeD3D9Renderer()
         {
             _d3dImage = new D3DImage();
@@ -45,6 +44,25 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             };
             _retryTimer.Tick += (_, _) => TrySubmitFrame();
             _d3dImage.IsFrontBufferAvailableChanged += OnFrontBufferAvailableChanged;
+        }
+
+        public bool AttachToElement(FrameworkElement element)
+        {
+            if (_isDisposed) throw new ObjectDisposedException(nameof(NativeD3D9Renderer));
+            if (element == null) throw new ArgumentNullException(nameof(element));
+
+            if (element is not IVisualHostElement host)
+                return false;
+
+            if (ReferenceEquals(_attachedHost, host))
+                return true;
+
+            DetachFromHost();
+            if (!host.AttachVisual(_visual))
+                return false;
+
+            _attachedHost = host;
+            return true;
         }
 
         public bool Initialize(int width, int height)
@@ -111,6 +129,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             DestroyNativeRenderer();
             _fallbackHwndSource?.Dispose();
             _fallbackHwndSource = null;
+            DetachFromHost();
         }
 
         private void BindD3DImageToVisual(int width, int height)
@@ -418,6 +437,15 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             }
 
             return _fallbackHwndSource.Handle;
+        }
+
+        private void DetachFromHost()
+        {
+            if (_attachedHost == null)
+                return;
+
+            _attachedHost.DetachVisual(_visual);
+            _attachedHost = null;
         }
     }
 }

@@ -33,6 +33,7 @@ namespace FastDrawingVisual.SkiaSharp
         private readonly D3DDeviceManager _deviceManager;
         private readonly RenderFramePool  _pool;
         private readonly Dispatcher       _uiDispatcher;
+        private IVisualHostElement? _attachedHost;
 
         // ── 单槽 Replace 队列 ────────────────────────────────────────────────
         private volatile Action<IDrawingContext>? _pendingDrawAction;
@@ -54,9 +55,6 @@ namespace FastDrawingVisual.SkiaSharp
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
 
-        /// <inheritdoc/>
-        public DrawingVisual Visual => _visual;
-
         public D3DSkiaRenderer()
         {
             _d3dImage     = new D3DImage();
@@ -75,6 +73,25 @@ namespace FastDrawingVisual.SkiaSharp
         }
 
         #region IRenderer
+
+        public bool AttachToElement(FrameworkElement element)
+        {
+            if (_isDisposed) throw new ObjectDisposedException(nameof(D3DSkiaRenderer));
+            if (element == null) throw new ArgumentNullException(nameof(element));
+
+            if (element is not IVisualHostElement host)
+                return false;
+
+            if (ReferenceEquals(_attachedHost, host))
+                return true;
+
+            DetachFromHost();
+            if (!host.AttachVisual(_visual))
+                return false;
+
+            _attachedHost = host;
+            return true;
+        }
 
         /// <inheritdoc/>
         public bool Initialize(int width, int height)
@@ -337,6 +354,16 @@ namespace FastDrawingVisual.SkiaSharp
             UnbindBackBuffer();
             _pool.Dispose();
             _deviceManager.Dispose();
+            DetachFromHost();
+        }
+
+        private void DetachFromHost()
+        {
+            if (_attachedHost == null)
+                return;
+
+            _attachedHost.DetachVisual(_visual);
+            _attachedHost = null;
         }
     }
 }
