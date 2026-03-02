@@ -29,6 +29,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
         private int _height;
         private bool _isInitialized;
         private bool _isDeviceLost;
+        private bool _isBackBufferBound;
         private bool _isDisposed;
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
@@ -79,6 +80,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             _height = height;
             _isInitialized = true;
             _isDeviceLost = false;
+            _isBackBufferBound = false;
 
             BindD3DImageToVisual(width, height);
             StartDrawingWorker();
@@ -98,6 +100,8 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                 _height = height;
                 return;
             }
+
+            UnbindBackBuffer();
 
             if (!SafeResizeNative(width, height))
                 return;
@@ -211,13 +215,13 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             _retryTimer.Stop();
             try
             {
-                var surface = IntPtr.Zero;
-                if (!NativeD3D9BridgeProxy.TryAcquirePresentSurface(_nativeRenderer, ref surface) || surface == IntPtr.Zero)
+                if (!EnsureBackBufferBound())
                     return;
 
-                _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface);
+                if (!NativeD3D9BridgeProxy.CopyReadyToPresentSurface(_nativeRenderer))
+                    return;
+
                 _d3dImage.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
-                NativeD3D9BridgeProxy.OnSurfacePresented(_nativeRenderer);
             }
             catch
             {
@@ -263,10 +267,25 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
                     _isDeviceLost = false;
                     _isInitialized = true;
+                    _isBackBufferBound = false;
                     BindD3DImageToVisual(_width, _height);
                     StartDrawingWorker();
                 });
             }
+        }
+
+        private bool EnsureBackBufferBound()
+        {
+            if (_isBackBufferBound)
+                return true;
+
+            var surface = IntPtr.Zero;
+            if (!NativeD3D9BridgeProxy.TryAcquirePresentSurface(_nativeRenderer, ref surface) || surface == IntPtr.Zero)
+                return false;
+
+            _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface);
+            _isBackBufferBound = true;
+            return true;
         }
 
         private void UnbindBackBuffer()
@@ -275,6 +294,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             try
             {
                 _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
+                _isBackBufferBound = false;
             }
             finally
             {
@@ -373,6 +393,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                     _isDeviceLost = true;
                     return false;
                 }
+                _isBackBufferBound = false;
                 return true;
             }
             catch

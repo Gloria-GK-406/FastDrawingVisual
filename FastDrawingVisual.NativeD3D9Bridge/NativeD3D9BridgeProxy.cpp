@@ -33,8 +33,8 @@ bool NativeD3D9BridgeProxy::TryAcquirePresentSurface(System::IntPtr renderer,
   return ok;
 }
 
-void NativeD3D9BridgeProxy::OnSurfacePresented(System::IntPtr renderer) {
-  FDV_OnSurfacePresented(renderer.ToPointer());
+bool NativeD3D9BridgeProxy::CopyReadyToPresentSurface(System::IntPtr renderer) {
+  return FDV_CopyReadyToPresentSurface(renderer.ToPointer());
 }
 
 void NativeD3D9BridgeProxy::OnFrontBufferAvailable(System::IntPtr renderer,

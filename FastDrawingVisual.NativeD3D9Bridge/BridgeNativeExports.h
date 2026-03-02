@@ -20,7 +20,7 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
                                                       int commandBytes);
 __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
     void *renderer, void **outSurface9);
-__declspec(dllexport) void __cdecl FDV_OnSurfacePresented(void *renderer);
+__declspec(dllexport) bool __cdecl FDV_CopyReadyToPresentSurface(void *renderer);
 __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
                                                               bool available);
 }

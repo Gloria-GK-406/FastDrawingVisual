@@ -143,11 +143,11 @@ __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
 
   bool ok = false;
   if (s->device) {
-    int readySlotIndex = FindSlotByState(s, SurfaceState::ReadyForPresent);
-    if (readySlotIndex >= 0 && s->slots[readySlotIndex].renderTarget) {
-      s->slots[readySlotIndex].state = SurfaceState::Presenting;
-      s->currentPresentingSlot = readySlotIndex;
-      *outSurface9 = s->slots[readySlotIndex].renderTarget;
+    const int presentingSlotIndex = s->currentPresentingSlot;
+    if (presentingSlotIndex >= 0 && presentingSlotIndex < kFrameCount &&
+        s->slots[presentingSlotIndex].renderTarget) {
+      s->slots[presentingSlotIndex].state = SurfaceState::Presenting;
+      *outSurface9 = s->slots[presentingSlotIndex].renderTarget;
       ok = true;
     }
   }
@@ -156,14 +156,34 @@ __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
   return ok;
 }
 
-__declspec(dllexport) void __cdecl FDV_OnSurfacePresented(void *renderer) {
+__declspec(dllexport) bool __cdecl FDV_CopyReadyToPresentSurface(void *renderer) {
   auto *s = static_cast<BridgeRenderer *>(renderer);
   if (!s)
-    return;
+    return false;
 
   EnterCriticalSection(&s->cs);
-  RecycleStalePresentingSlots(s);
+
+  bool ok = false;
+  if (s->device) {
+    const int presentingSlotIndex = s->currentPresentingSlot;
+    const int readySlotIndex = FindSlotByState(s, SurfaceState::ReadyForPresent);
+
+    if (presentingSlotIndex >= 0 && presentingSlotIndex < kFrameCount &&
+        readySlotIndex >= 0 &&
+        s->slots[presentingSlotIndex].renderTarget &&
+        s->slots[readySlotIndex].renderTarget) {
+      HRESULT hr = s->device->StretchRect(
+          s->slots[readySlotIndex].renderTarget, nullptr,
+          s->slots[presentingSlotIndex].renderTarget, nullptr, D3DTEXF_NONE);
+      if (SUCCEEDED(hr)) {
+        s->slots[readySlotIndex].state = SurfaceState::Ready;
+        ok = true;
+      }
+    }
+  }
+
   LeaveCriticalSection(&s->cs);
+  return ok;
 }
 
 __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,

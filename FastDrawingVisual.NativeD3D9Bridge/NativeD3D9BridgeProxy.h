@@ -19,7 +19,7 @@ public:
                              int commandBytes);
   static bool TryAcquirePresentSurface(System::IntPtr renderer,
                                        System::IntPtr % surface9);
-  static void OnSurfacePresented(System::IntPtr renderer);
+  static bool CopyReadyToPresentSurface(System::IntPtr renderer);
   static void OnFrontBufferAvailable(System::IntPtr renderer, bool available);
 };
 } // namespace FastDrawingVisual::NativeD3D9Bridge

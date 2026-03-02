@@ -111,6 +111,10 @@ bool CreateFrameResources(BridgeRenderer *s) {
     s->slots[i].state = SurfaceState::Ready;
   }
 
+  const int presentingSlotIndex = kFrameCount - 1;
+  s->slots[presentingSlotIndex].state = SurfaceState::Presenting;
+  s->currentPresentingSlot = presentingSlotIndex;
+
   return true;
 }
 
