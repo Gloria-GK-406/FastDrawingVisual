@@ -143,11 +143,8 @@ __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
 
   bool ok = false;
   if (s->device) {
-    const int presentingSlotIndex = s->currentPresentingSlot;
-    if (presentingSlotIndex >= 0 && presentingSlotIndex < kFrameCount &&
-        s->slots[presentingSlotIndex].renderTarget) {
-      s->slots[presentingSlotIndex].state = SurfaceState::Presenting;
-      *outSurface9 = s->slots[presentingSlotIndex].renderTarget;
+    if (s->presentingSurface) {
+      *outSurface9 = s->presentingSurface;
       ok = true;
     }
   }
@@ -165,16 +162,13 @@ __declspec(dllexport) bool __cdecl FDV_CopyReadyToPresentSurface(void *renderer)
 
   bool ok = false;
   if (s->device) {
-    const int presentingSlotIndex = s->currentPresentingSlot;
     const int readySlotIndex = FindSlotByState(s, SurfaceState::ReadyForPresent);
 
-    if (presentingSlotIndex >= 0 && presentingSlotIndex < kFrameCount &&
-        readySlotIndex >= 0 &&
-        s->slots[presentingSlotIndex].renderTarget &&
+    if (readySlotIndex >= 0 && s->presentingSurface &&
         s->slots[readySlotIndex].renderTarget) {
       HRESULT hr = s->device->StretchRect(
           s->slots[readySlotIndex].renderTarget, nullptr,
-          s->slots[presentingSlotIndex].renderTarget, nullptr, D3DTEXF_NONE);
+          s->presentingSurface, nullptr, D3DTEXF_NONE);
       if (SUCCEEDED(hr)) {
         s->slots[readySlotIndex].state = SurfaceState::Ready;
         ok = true;
@@ -198,7 +192,6 @@ __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
   if (!available) {
     for (int i = 0; i < kFrameCount; i++)
       s->slots[i].state = SurfaceState::Ready;
-    s->currentPresentingSlot = -1;
   } else if (s->device) {
     HRESULT hr = s->device->TestCooperativeLevel();
     if (hr == D3DERR_DEVICENOTRESET)

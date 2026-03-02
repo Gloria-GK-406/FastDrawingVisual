@@ -72,6 +72,11 @@ void ReleaseFrameResources(BridgeRenderer *s) {
   if (!s)
     return;
 
+  if (s->presentingSurface) {
+    s->presentingSurface->Release();
+    s->presentingSurface = nullptr;
+  }
+
   for (int i = 0; i < kFrameCount; i++) {
     if (s->slots[i].renderDoneQuery) {
       s->slots[i].renderDoneQuery->Release();
@@ -85,8 +90,6 @@ void ReleaseFrameResources(BridgeRenderer *s) {
 
     s->slots[i].state = SurfaceState::Ready;
   }
-
-  s->currentPresentingSlot = -1;
 }
 
 bool CreateFrameResources(BridgeRenderer *s) {
@@ -111,9 +114,13 @@ bool CreateFrameResources(BridgeRenderer *s) {
     s->slots[i].state = SurfaceState::Ready;
   }
 
-  const int presentingSlotIndex = kFrameCount - 1;
-  s->slots[presentingSlotIndex].state = SurfaceState::Presenting;
-  s->currentPresentingSlot = presentingSlotIndex;
+  HRESULT hr = s->device->CreateRenderTarget(
+      static_cast<UINT>(s->width), static_cast<UINT>(s->height), D3DFMT_A8R8G8B8,
+      D3DMULTISAMPLE_NONE, 0, FALSE, &s->presentingSurface, nullptr);
+  if (FAILED(hr)) {
+    ReleaseFrameResources(s);
+    return false;
+  }
 
   return true;
 }
@@ -139,27 +146,6 @@ void DemoteReadyForPresentSlots(BridgeRenderer *s, int keepIndex) {
       continue;
 
     if (s->slots[i].state == SurfaceState::ReadyForPresent)
-      s->slots[i].state = SurfaceState::Ready;
-  }
-}
-
-void RecycleStalePresentingSlots(BridgeRenderer *s) {
-  if (!s)
-    return;
-
-  int current = s->currentPresentingSlot;
-  if (current < 0 || current >= kFrameCount ||
-      s->slots[current].state != SurfaceState::Presenting) {
-    current = -1;
-  }
-
-  s->currentPresentingSlot = current;
-
-  for (int i = 0; i < kFrameCount; i++) {
-    if (i == current)
-      continue;
-
-    if (s->slots[i].state == SurfaceState::Presenting)
       s->slots[i].state = SurfaceState::Ready;
   }
 }

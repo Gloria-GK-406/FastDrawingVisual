@@ -180,6 +180,22 @@ namespace FastDrawingVisual.Rendering.D3D
             }
         }
 
+        public bool CopySurface(Surface9 source, Surface9 destination)
+        {
+            if (_d3d9Device == null || source == null || destination == null)
+                return false;
+
+            try
+            {
+                _d3d9Device.StretchRectangle(source, destination, TextureFilter.None);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private IntPtr GetOrCreateDeviceHwnd()
         {
             var mainWindow = Application.Current?.MainWindow;

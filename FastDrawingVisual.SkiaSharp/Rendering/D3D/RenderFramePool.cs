@@ -1,25 +1,24 @@
 using System;
+using Texture2D11 = SharpDX.Direct3D11.Texture2D;
+using Texture9 = SharpDX.Direct3D9.Texture;
+using Surface9 = SharpDX.Direct3D9.Surface;
 
 namespace FastDrawingVisual.Rendering.D3D
 {
     /// <summary>
-    /// 渲染帧池。管理三个 <see cref="RenderFrame"/>，
-    /// 通过状态协调实现三重缓冲：
-    ///   - 一帧供渲染线程绘制（Drawing）
-    ///   - 一帧等待 WPF 呈现（ReadyForPresent）
-    ///   - 一帧正被 WPF 引用（Presenting）
+    /// 渲染帧池。管理两个绘制帧（Drawing / ReadyForPresent）和一个独立的 Presenting 表面。
     /// </summary>
     internal sealed class RenderFramePool : IDisposable
     {
-        private const int FrameCount = 3;
+        private const int FrameCount = 2;
 
+        private readonly D3DDeviceManager _deviceManager;
         private readonly RenderFrame[] _frames;
+        private Texture2D11? _presentingD3D11Texture;
+        private Texture9? _presentingD3D9Texture;
+        private Surface9? _presentingSurface;
 
-        // 用于保护 ReadyForPresent 唯一性 和 Presenting 交换的锁
-        // 两个方法都很短，不会形成竞争瓶颈
         private readonly object _lock = new object();
-
-        // 快速路径标志：避免 Rendering 回调在无新帧时进入锁
         private volatile bool _hasReadyFrame;
 
         private bool _isDisposed;
@@ -27,6 +26,8 @@ namespace FastDrawingVisual.Rendering.D3D
         public RenderFramePool(D3DDeviceManager deviceManager)
         {
             if (deviceManager == null) throw new ArgumentNullException(nameof(deviceManager));
+
+            _deviceManager = deviceManager;
 
             _frames = new RenderFrame[FrameCount];
             for (int i = 0; i < FrameCount; i++)
@@ -43,7 +44,15 @@ namespace FastDrawingVisual.Rendering.D3D
             {
                 _hasReadyFrame = false;
                 foreach (var frame in _frames)
+                {
                     frame.CreateResources(width, height);
+                    frame.ForceSetState(FrameState.Ready);
+                }
+
+                _presentingD3D11Texture = _deviceManager.CreateSharedTexture(width, height);
+                var sharedHandle = _deviceManager.GetSharedHandle(_presentingD3D11Texture);
+                _presentingD3D9Texture = _deviceManager.FromSharedHandle(sharedHandle, width, height, out var surface);
+                _presentingSurface = surface;
             }
         }
 
@@ -55,6 +64,15 @@ namespace FastDrawingVisual.Rendering.D3D
                 _hasReadyFrame = false;
                 foreach (var frame in _frames)
                     frame.ReleaseResources();
+
+                _presentingSurface?.Dispose();
+                _presentingSurface = null;
+
+                _presentingD3D9Texture?.Dispose();
+                _presentingD3D9Texture = null;
+
+                _presentingD3D11Texture?.Dispose();
+                _presentingD3D11Texture = null;
             }
         }
 
@@ -64,7 +82,6 @@ namespace FastDrawingVisual.Rendering.D3D
         /// </summary>
         public RenderFrame? AcquireForDrawing()
         {
-            // 无需锁：TryTransitionTo 使用 CAS，天然原子
             foreach (var frame in _frames)
             {
                 if (frame.TryTransitionTo(FrameState.Ready, FrameState.Drawing))
@@ -82,7 +99,6 @@ namespace FastDrawingVisual.Rendering.D3D
         {
             lock (_lock)
             {
-                // 将其他 ReadyForPresent 帧抢占回 Ready（最多只有一个）
                 foreach (var frame in _frames)
                 {
                     if (frame != completedFrame && frame.State == FrameState.ReadyForPresent)
@@ -98,55 +114,50 @@ namespace FastDrawingVisual.Rendering.D3D
             }
         }
 
-        public void MarkPresentedFrameAsReady(RenderFrame presentingFrame)
+        public IntPtr GetPresentingSurfacePointer()
         {
             lock (_lock)
             {
-                //当前可能有两个presenting帧，一个是正在present的，一个是上次present但还未被抢占回ready的
-                //实际上这里需要操作修改的可能只有一个，但为了保险起见，还是遍历所有帧进行状态检查和修改
-                _frames.Where(frame=>frame != presentingFrame && frame.State == FrameState.Presenting)
-                    .ToList()
-                    .ForEach(frame => frame.ForceSetState(FrameState.Ready));
+                return _presentingSurface?.NativePointer ?? IntPtr.Zero;
             }
         }
 
-        public void ResetToReadyForPresent(RenderFrame frame)
+        public bool CopyReadyToPresenting()
         {
-            frame.ForceSetState(FrameState.ReadyForPresent);
-             _hasReadyFrame = true;
-        }
-
-        /// <summary>
-        /// 尝试获取一个待呈现的帧（ReadyForPresent → Presenting）。
-        /// 同时将上一个 Presenting 帧归还为 Ready（因为 SetBackBuffer 后 WPF 会释放旧表面引用）。
-        /// 无新帧时返回 null。
-        /// 仅应在 UI 线程（CompositionTarget.Rendering 回调）调用。
-        /// </summary>
-        public RenderFrame? TryAcquireForPresent()
-        {
-            // 快速路径：无新帧，不进锁
             if (!_hasReadyFrame)
-                return null;
+                return false;
 
             lock (_lock)
             {
-                // 双重检查
                 if (!_hasReadyFrame)
-                    return null;
+                    return false;
 
-                RenderFrame? readyFrame = _frames.Where(frame => frame.State == FrameState.ReadyForPresent).FirstOrDefault();
+                RenderFrame? readyFrame = null;
+                foreach (var frame in _frames)
+                {
+                    if (frame.State == FrameState.ReadyForPresent)
+                    {
+                        readyFrame = frame;
+                        break;
+                    }
+                }
 
                 if (readyFrame == null)
                 {
                     _hasReadyFrame = false;
-                    return null;
+                    return false;
                 }
 
-                // 新帧进入 Presenting
-                readyFrame.ForceSetState(FrameState.Presenting);
+                if (readyFrame.D3D9Surface == null || _presentingSurface == null)
+                    return false;
+
+                if (!_deviceManager.CopySurface(readyFrame.D3D9Surface, _presentingSurface))
+                    return false;
+
+                readyFrame.ForceSetState(FrameState.Ready);
                 _hasReadyFrame = false;
 
-                return readyFrame;
+                return true;
             }
         }
 

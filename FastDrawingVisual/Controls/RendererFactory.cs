@@ -28,6 +28,12 @@ namespace FastDrawingVisual.Controls
     {
         internal static IRenderer Create()
         {
+            if (RendererCapability.IsAcceleratedAvailable)
+            {
+                var r = TryCreateSkia();
+                if (r != null) return r;
+            }
+
             if (NativeD3D9Capability.IsAvailable)
             {
                 var native = TryCreateNativeD3D9();

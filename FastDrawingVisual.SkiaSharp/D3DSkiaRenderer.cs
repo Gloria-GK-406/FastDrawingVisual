@@ -51,6 +51,7 @@ namespace FastDrawingVisual.SkiaSharp
         private int  _height;
         private bool _isInitialized;
         private bool _isDeviceLost;
+        private bool _isBackBufferBound;
         private bool _isDisposed;
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
@@ -107,6 +108,7 @@ namespace FastDrawingVisual.SkiaSharp
             _height = height;
             _isInitialized = true;
             _isDeviceLost  = false;
+            _isBackBufferBound = false;
 
             // 将 D3DImage 放入 DrawingVisual（只需设置一次，后续只更新 D3DImage 本身）
             BindD3DImageToVisual(width, height);
@@ -131,8 +133,6 @@ namespace FastDrawingVisual.SkiaSharp
         public void SubmitDrawing(Action<IDrawingContext> drawAction)
         {
             if (_isDisposed) throw new ObjectDisposedException(nameof(D3DSkiaRenderer));
-            if (!_isInitialized) throw new InvalidOperationException("请先调用 Initialize。");
-            if (_isDeviceLost) return;
             if (drawAction == null) throw new ArgumentNullException(nameof(drawAction));
 
             Interlocked.Exchange(ref _pendingDrawAction, drawAction);
@@ -203,13 +203,9 @@ namespace FastDrawingVisual.SkiaSharp
         {
             if (_isDisposed || _isDeviceLost || !_isInitialized) return;
 
-            var frame = _pool.TryAcquireForPresent();
-            if (frame == null) { _retryTimer.Stop(); return; }
-
             if (!_d3dImage.TryLock(new Duration(TimeSpan.Zero)))
             {
                 _d3dImage.Unlock(); // WPF D3DImage TryLock 失败时仍需 Unlock（已知 WPF bug）
-                _pool.ResetToReadyForPresent(frame);
                 if (!_retryTimer.IsEnabled) _retryTimer.Start();
                 return;
             }
@@ -217,15 +213,32 @@ namespace FastDrawingVisual.SkiaSharp
             _retryTimer.Stop();
             try
             {
-                _pool.MarkPresentedFrameAsReady(frame);
-                _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, frame.D3D9SurfacePointer);
+                if (!EnsureBackBufferBound())
+                    return;
+
+                if (!_pool.CopyReadyToPresenting())
+                    return;
+
                 _d3dImage.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
-                frame.ForceSetState(FrameState.Presenting);
             }
             finally
             {
                 _d3dImage.Unlock();
             }
+        }
+
+        private bool EnsureBackBufferBound()
+        {
+            if (_isBackBufferBound)
+                return true;
+
+            var surface = _pool.GetPresentingSurfacePointer();
+            if (surface == IntPtr.Zero)
+                return false;
+
+            _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface);
+            _isBackBufferBound = true;
+            return true;
         }
 
         #endregion
@@ -265,7 +278,11 @@ namespace FastDrawingVisual.SkiaSharp
         private void UnbindBackBuffer()
         {
             _d3dImage.Lock();
-            try { _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero); }
+            try
+            {
+                _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
+                _isBackBufferBound = false;
+            }
             finally { _d3dImage.Unlock(); }
         }
 
@@ -287,6 +304,7 @@ namespace FastDrawingVisual.SkiaSharp
             _height = height;
             _isInitialized = true;
             _isDeviceLost  = false;
+            _isBackBufferBound = false;
 
             BindD3DImageToVisual(width, height);
             StartDrawingWorker();

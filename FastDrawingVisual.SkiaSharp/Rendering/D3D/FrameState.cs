@@ -13,8 +13,5 @@ namespace FastDrawingVisual.Rendering.D3D
 
         /// <summary>绘制已完成，等待被 WPF 呈现。</summary>
         ReadyForPresent = 2,
-
-        /// <summary>正在被 WPF D3DImage 引用，不可用于绘制。</summary>
-        Presenting = 3,
     }
 }

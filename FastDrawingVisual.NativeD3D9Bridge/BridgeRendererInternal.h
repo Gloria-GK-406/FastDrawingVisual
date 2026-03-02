@@ -8,13 +8,12 @@
 #include <d3dx9.h>
 #include <windows.h>
 
-constexpr int kFrameCount = 3;
+constexpr int kFrameCount = 2;
 
 enum class SurfaceState : uint8_t {
   Ready = 0,
   Drawing = 1,
   ReadyForPresent = 2,
-  Presenting = 3,
 };
 
 struct SurfaceSlot {
@@ -29,12 +28,12 @@ struct BridgeRenderer {
   IDirect3DPixelShader9 *sdfEllipseShader = nullptr;
   IDirect3DPixelShader9 *sdfLineShader = nullptr;
   SurfaceSlot slots[kFrameCount];
+  IDirect3DSurface9 *presentingSurface = nullptr;
 
   HWND hwnd = nullptr;
   int width = 0;
   int height = 0;
   bool frontBufferAvailable = true;
-  int currentPresentingSlot = -1;
   bool csInitialized = false;
   CRITICAL_SECTION cs;
 };
@@ -48,7 +47,6 @@ bool CreateFrameResources(BridgeRenderer *s);
 
 int FindSlotByState(const BridgeRenderer *s, SurfaceState state);
 void DemoteReadyForPresentSlots(BridgeRenderer *s, int keepIndex);
-void RecycleStalePresentingSlots(BridgeRenderer *s);
 
 void SetupRenderState(IDirect3DDevice9 *dev);
 bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,

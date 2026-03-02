@@ -48,6 +48,7 @@ namespace FastDrawingVisual.Rendering.D3D
 
         /// <summary>D3D9Ex 表面的 COM 指针，供 D3DImage.SetBackBuffer 使用。</summary>
         public IntPtr D3D9SurfacePointer => _d3d9Surface?.NativePointer ?? IntPtr.Zero;
+        internal Surface9? D3D9Surface => _d3d9Surface;
 
         public int Width => _width;
         public int Height => _height;
