@@ -1,4 +1,4 @@
-﻿using FastDrawingVisual.Rendering;
+using FastDrawingVisual.Rendering;
 using System;
 using System.Threading;
 using System.Windows;

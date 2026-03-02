@@ -1,0 +1,12 @@
+[*]
+# 编码格式：utf-8 (不带BOM)
+charset = utf-8
+# 换行符：LF (Unix)
+end_of_line = lf
+# 在文件末尾插入新行
+insert_final_newline = true
+# 删除行尾多余空格
+trim_trailing_whitespace = true
+
+[*.{cs,cpp,h,hpp,c,py,js,json}]
+charset = utf-8

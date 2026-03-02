@@ -13,4 +13,8 @@
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.NativeD3D9Bridge\FastDrawingVisual.NativeD3D9Bridge.vcxproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <EditorConfigFiles Remove="D:\Projects\FastDrawingVisual\FastDrawingVisual.NativeD3D9\.editorconfig" />
+  </ItemGroup>
 </Project>
