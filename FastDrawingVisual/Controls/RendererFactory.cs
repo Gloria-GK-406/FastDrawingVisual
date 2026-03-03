@@ -1,7 +1,9 @@
 using FastDrawingVisual.Rendering;
 using FastDrawingVisual.Rendering.NativeD3D9;
 using FastDrawingVisual.WpfRenderer;
+using System;
 using System.Runtime.CompilerServices;
+using DCompD3D11Renderer = FastDrawingVisual.DCompD3D11.DCompD3D11Renderer;
 using D3DSkiaRenderer = FastDrawingVisual.SkiaSharp.D3DSkiaRenderer;
 using NativeD3D9Renderer = FastDrawingVisual.Rendering.NativeD3D9.NativeD3D9Renderer;
 
@@ -28,6 +30,12 @@ namespace FastDrawingVisual.Controls
     {
         internal static IRenderer Create()
         {
+            if (string.Equals(Environment.GetEnvironmentVariable("FDV_RENDERER"), "DCompD3D11", StringComparison.OrdinalIgnoreCase))
+            {
+                var dcomp = TryCreateDCompD3D11();
+                if (dcomp != null) return dcomp;
+            }
+
             if (RendererCapability.IsAcceleratedAvailable)
             {
                 var r = TryCreateSkia();
@@ -81,6 +89,20 @@ namespace FastDrawingVisual.Controls
             catch
             {
                 // GPU 设备初始化失败（驱动异常、TDR 等）→ 降级
+                return null;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static IRenderer? TryCreateDCompD3D11()
+        {
+            try
+            {
+                //return new DCompD3D11Renderer();
+                return null; 
+            }
+            catch
+            {
                 return null;
             }
         }
