@@ -7,7 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
-using NativeD3D9BridgeProxy = FastDrawingVisual.NativeD3D9Bridge.NativeD3D9BridgeProxy;
+using Proxy = FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.Rendering.NativeD3D9
 {
@@ -183,7 +183,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                 var span = commandData.Span;
                 fixed (byte* ptr = span)
                 {
-                    NativeD3D9BridgeProxy.SubmitCommands(_nativeRenderer, (IntPtr)ptr, span.Length);
+                    Proxy.SubmitCommands(_nativeRenderer, (IntPtr)ptr, span.Length);
                 }
             }
             catch
@@ -219,7 +219,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                 if (!EnsureBackBufferBound())
                     return;
 
-                if (!NativeD3D9BridgeProxy.CopyReadyToPresentSurface(_nativeRenderer))
+                if (!Proxy.CopyReadyToPresentSurface(_nativeRenderer))
                     return;
 
                 _d3dImage.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
@@ -281,7 +281,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                 return true;
 
             var surface = IntPtr.Zero;
-            if (!NativeD3D9BridgeProxy.TryAcquirePresentSurface(_nativeRenderer, ref surface) || surface == IntPtr.Zero)
+            if (!Proxy.TryAcquirePresentSurface(_nativeRenderer, ref surface) || surface == IntPtr.Zero)
                 return false;
 
             _d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface);
@@ -374,7 +374,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
             try
             {
-                return NativeD3D9BridgeProxy.CreateRenderer(hwnd, width, height);
+                return Proxy.CreateRenderer(hwnd, width, height);
             }
             catch
             {
@@ -389,7 +389,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
             try
             {
-                if (!NativeD3D9BridgeProxy.Resize(_nativeRenderer, width, height))
+                if (!Proxy.Resize(_nativeRenderer, width, height))
                 {
                     _isDeviceLost = true;
                     return false;
@@ -411,7 +411,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
             try
             {
-                NativeD3D9BridgeProxy.OnFrontBufferAvailable(_nativeRenderer, available);
+                Proxy.OnFrontBufferAvailable(_nativeRenderer, available);
             }
             catch
             {
@@ -426,7 +426,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
             try
             {
-                NativeD3D9BridgeProxy.DestroyRenderer(_nativeRenderer);
+                Proxy.DestroyRenderer(_nativeRenderer);
             }
             catch
             {

@@ -12,7 +12,7 @@
 - `FastDrawingVisual`
 - `FastDrawingVisual.SkiaSharp`
 - `FastDrawingVisual.NativeD3D9`
-- `FastDrawingVisual.NativeD3D9Bridge`
+- `FastDrawingVisual.NativeProxy.D3D9`
 - `FastDrawingVisual.WpfRenderer`
 - `FastDrawingVisualApp` (demo host)
 
@@ -54,7 +54,7 @@ Evidence:
   - `NativeCommandType`
   - `NativeCommandBuffer`
   must be mirrored in native parser:
-  - `FastDrawingVisual.NativeD3D9Bridge/BridgeDrawing.cpp`
+  - `FastDrawingVisual.NativeProxy.D3D9/BridgeDrawing.cpp`
 - Keep `FastDrawingVisual/Document/NativeD3D9Bridge-MVP.md` in sync when protocol bytes/signatures change.
 - MVP intentionally allows partial coverage (text/image/complex geometry may be no-op), but behavior must be explicit in comments.
 

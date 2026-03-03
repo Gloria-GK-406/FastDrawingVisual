@@ -6,12 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>FastDrawingVisual</RootNamespace>
-    <Platforms>AnyCPU;x86</Platforms>
+    <Platforms>AnyCPU;x86;x64</Platforms>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
-    <ProjectReference Include="..\FastDrawingVisual.NativeD3D9Bridge\FastDrawingVisual.NativeD3D9Bridge.vcxproj" />
+    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.D3D9\FastDrawingVisual.NativeProxy.D3D9.vcxproj" />
   </ItemGroup>
 
   <ItemGroup>

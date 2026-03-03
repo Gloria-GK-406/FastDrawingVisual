@@ -22,7 +22,7 @@
     <VCProjectVersion>17.0</VCProjectVersion>
     <ProjectGuid>{5C5209A3-C6E5-49D9-9BF0-751F9F6EAC4D}</ProjectGuid>
     <Keyword>ManagedCProj</Keyword>
-    <RootNamespace>FastDrawingVisualNativeD3D9Bridge</RootNamespace>
+    <RootNamespace>FastDrawingVisualNativeProxy</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <TargetFramework>net6.0</TargetFramework>
     <WindowsTargetPlatformMinVersion>7.0</WindowsTargetPlatformMinVersion>
@@ -77,22 +77,22 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeD3D9Bridge</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeD3D9Bridge</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeD3D9Bridge</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeD3D9Bridge</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -167,13 +167,13 @@
     <ClCompile Include="BridgePathUtils.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
-    <ClCompile Include="NativeD3D9BridgeProxy.cpp" />
+    <ClCompile Include="NativeProxy.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="BridgeNativeExports.h" />
     <ClInclude Include="BridgePathUtils.h" />
     <ClInclude Include="BridgeRendererInternal.h" />
-    <ClInclude Include="NativeD3D9BridgeProxy.h" />
+    <ClInclude Include="NativeProxy.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="PixelShader.hlsl">

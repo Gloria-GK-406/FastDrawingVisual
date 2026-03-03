@@ -10,6 +10,7 @@
 
 extern "C" {
 __declspec(dllexport) bool __cdecl FDV_IsBridgeReady();
+__declspec(dllexport) int __cdecl FDV_GetBridgeCapabilities();
 __declspec(dllexport) void *__cdecl FDV_CreateRenderer(void *hwnd, int width,
                                                        int height);
 __declspec(dllexport) void __cdecl FDV_DestroyRenderer(void *renderer);

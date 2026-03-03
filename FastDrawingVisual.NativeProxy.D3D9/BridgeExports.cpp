@@ -12,9 +12,20 @@
 
 FDV_NATIVE_REGION_BEGIN
 
+namespace {
+constexpr int kCapabilityCommandStream = 1 << 0;
+constexpr int kCapabilityPresentSurface = 1 << 1;
+constexpr int kCapabilityFrontBufferNotifications = 1 << 2;
+} // namespace
+
 extern "C" {
 __declspec(dllexport) bool __cdecl FDV_IsBridgeReady() {
   return true;
+}
+
+__declspec(dllexport) int __cdecl FDV_GetBridgeCapabilities() {
+  return kCapabilityCommandStream | kCapabilityPresentSurface |
+         kCapabilityFrontBufferNotifications;
 }
 
 __declspec(dllexport) void *__cdecl FDV_CreateRenderer(void *hwnd, int width,

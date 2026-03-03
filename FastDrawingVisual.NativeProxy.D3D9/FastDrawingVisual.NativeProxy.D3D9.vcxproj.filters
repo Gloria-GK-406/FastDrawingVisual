@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="NativeD3D9BridgeProxy.cpp">
+    <ClCompile Include="NativeProxy.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="BridgeExports.cpp">
@@ -27,7 +27,7 @@
     <ClInclude Include="BridgeRendererInternal.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="NativeD3D9BridgeProxy.h">
+    <ClInclude Include="NativeProxy.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

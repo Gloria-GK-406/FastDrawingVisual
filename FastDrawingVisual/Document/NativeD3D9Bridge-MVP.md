@@ -4,16 +4,17 @@ This document defines the minimum native bridge contract used by `NativeD3D9Rend
 
 ## Native DLL
 
-- File name: `FastDrawingVisual.NativeD3D9Bridge.dll`
+- File name: `FastDrawingVisual.NativeProxy.dll`
 - Calling convention: `cdecl`
 - Export names:
   - `FDV_IsBridgeReady`
+  - `FDV_GetBridgeCapabilities`
   - `FDV_CreateRenderer`
   - `FDV_DestroyRenderer`
   - `FDV_Resize`
   - `FDV_SubmitCommands`
   - `FDV_TryAcquirePresentSurface`
-  - `FDV_OnSurfacePresented`
+  - `FDV_CopyReadyToPresentSurface`
   - `FDV_OnFrontBufferAvailable`
 
 ## Export Signatures
@@ -21,17 +22,23 @@ This document defines the minimum native bridge contract used by `NativeD3D9Rend
 ```cpp
 extern "C" {
     bool  FDV_IsBridgeReady();
+    int   FDV_GetBridgeCapabilities();
     void* FDV_CreateRenderer(void* hwnd, int width, int height);
     void  FDV_DestroyRenderer(void* renderer);
     bool  FDV_Resize(void* renderer, int width, int height);
     bool  FDV_SubmitCommands(void* renderer, const void* commands, int commandBytes);
     bool  FDV_TryAcquirePresentSurface(void* renderer, void** outSurface9);
-    void  FDV_OnSurfacePresented(void* renderer);
+    bool  FDV_CopyReadyToPresentSurface(void* renderer);
     void  FDV_OnFrontBufferAvailable(void* renderer, bool available);
 }
 ```
 
 `FDV_IsBridgeReady` is a lightweight capability probe and should return `true` only when the bridge is actually usable.
+
+`FDV_GetBridgeCapabilities` returns a bitmask. Current D3D9 bridge sets:
+- bit0: command stream submission
+- bit1: D3DImage-compatible present surface
+- bit2: front-buffer availability notifications
 
 `FDV_TryAcquirePresentSurface` must return `IDirect3DSurface9*` suitable for `D3DImage.SetBackBuffer`.
 
