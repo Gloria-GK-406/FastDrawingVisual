@@ -2,6 +2,7 @@ using FastDrawingVisual.Rendering;
 using System;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -27,7 +28,7 @@ namespace FastDrawingVisual.WpfRenderer
             _visual = new DrawingVisual();
         }
 
-        public bool AttachToElement(FrameworkElement element)
+        public bool AttachToElement(ContentControl element)
         {
             if (_isDisposed) throw new ObjectDisposedException(nameof(WpfFallbackRenderer));
             if (element == null) throw new ArgumentNullException(nameof(element));

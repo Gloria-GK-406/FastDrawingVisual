@@ -1,6 +1,7 @@
 using FastDrawingVisual.Rendering;
 using System;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 
 namespace FastDrawingVisual.Controls
@@ -8,23 +9,15 @@ namespace FastDrawingVisual.Controls
     /// <summary>
     /// High performance WPF drawing control.
     /// </summary>
-    public class FastDrawingVisual : FrameworkElement, IVisualHostElement, IDisposable
+    public class FastDrawingVisual : ContentControl, IVisualHostElement, IDisposable
     {
         private IRenderer? _renderer;
         private Visual? _attachedVisual;
+        private SingleVisualHost? _visualHost;
         private bool _isAttached;
         private bool _isDisposed;
 
         public bool IsReady => _renderer != null && _isAttached && !_isDisposed;
-
-        protected override int VisualChildrenCount => _attachedVisual != null ? 1 : 0;
-
-        protected override Visual GetVisualChild(int index)
-        {
-            if (index != 0 || _attachedVisual == null)
-                throw new ArgumentOutOfRangeException(nameof(index));
-            return _attachedVisual;
-        }
 
         public FastDrawingVisual()
         {
@@ -78,14 +71,6 @@ namespace FastDrawingVisual.Controls
             _renderer!.SubmitDrawing(drawAction);
         }
 
-        protected override Size MeasureOverride(Size availableSize)
-            => availableSize;
-
-        protected override Size ArrangeOverride(Size finalSize)
-        {
-            return finalSize;
-        }
-
         private (int width, int height) GetPixelSize()
         {
             var dpi = VisualTreeHelper.GetDpi(this);
@@ -102,28 +87,27 @@ namespace FastDrawingVisual.Controls
             if (ReferenceEquals(_attachedVisual, visual))
                 return true;
 
-            if (_attachedVisual != null)
-                RemoveVisualChild(_attachedVisual);
+            if (_visualHost != null && ReferenceEquals(Content, _visualHost))
+                Content = null;
 
+            _visualHost = new SingleVisualHost(visual);
             _attachedVisual = visual;
-            AddVisualChild(visual);
-            InvalidateMeasure();
-            InvalidateArrange();
-            InvalidateVisual();
+            Content = _visualHost;
             return true;
         }
 
         public bool DetachVisual(Visual visual)
         {
-            if (!ReferenceEquals(_attachedVisual, visual) || _attachedVisual == null)
+            if (!ReferenceEquals(_attachedVisual, visual))
                 return false;
 
-            RemoveVisualChild(_attachedVisual);
+            if (_visualHost != null && ReferenceEquals(Content, _visualHost))
+                Content = null;
+
+            _visualHost?.ClearVisual();
+            _visualHost = null;
             _attachedVisual = null;
             _isAttached = false;
-            InvalidateMeasure();
-            InvalidateArrange();
-            InvalidateVisual();
             return true;
         }
 
@@ -139,13 +123,47 @@ namespace FastDrawingVisual.Controls
             _renderer?.Dispose();
             _renderer = null;
 
-            if (_attachedVisual != null)
+            if (_visualHost != null && ReferenceEquals(Content, _visualHost))
+                Content = null;
+
+            _visualHost?.ClearVisual();
+            _visualHost = null;
+            _attachedVisual = null;
+            _isAttached = false;
+        }
+
+        private sealed class SingleVisualHost : FrameworkElement
+        {
+            private Visual? _visual;
+
+            internal SingleVisualHost(Visual visual)
             {
-                RemoveVisualChild(_attachedVisual);
-                _attachedVisual = null;
+                _visual = visual ?? throw new ArgumentNullException(nameof(visual));
+                AddVisualChild(_visual);
             }
 
-            _isAttached = false;
+            internal void ClearVisual()
+            {
+                if (_visual == null)
+                    return;
+
+                RemoveVisualChild(_visual);
+                _visual = null;
+            }
+
+            protected override int VisualChildrenCount => _visual != null ? 1 : 0;
+
+            protected override Visual GetVisualChild(int index)
+            {
+                if (index != 0 || _visual == null)
+                    throw new ArgumentOutOfRangeException(nameof(index));
+
+                return _visual;
+            }
+
+            protected override Size MeasureOverride(Size availableSize) => availableSize;
+
+            protected override Size ArrangeOverride(Size finalSize) => finalSize;
         }
     }
 }

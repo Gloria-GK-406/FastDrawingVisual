@@ -1,6 +1,7 @@
 using FastDrawingVisual.Rendering;
 using System;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace FastDrawingVisual.DCompD3D12
 {
@@ -11,10 +12,9 @@ namespace FastDrawingVisual.DCompD3D12
     {
         private bool _isDisposed;
 
-        public bool AttachToElement(FrameworkElement element)
+        public bool AttachToElement(ContentControl element)
         {
-            if (_isDisposed) throw new ObjectDisposedException(nameof(DCompD3D12Renderer));
-            return false;
+            throw new NotImplementedException();
         }
 
         public bool Initialize(int width, int height)

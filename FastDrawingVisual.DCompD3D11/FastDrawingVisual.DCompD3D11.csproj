@@ -1,12 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net6.0-windows10.0.18362.0</TargetFramework>
+    <TargetFramework>net6.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>FastDrawingVisual</RootNamespace>
-    <Platforms>AnyCPU;x86</Platforms>
+    <Platforms>AnyCPU;x86;x64</Platforms>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,13 +19,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="Microsoft.Windows.SDK.NET">
-      <HintPath>$(UserProfile)\.nuget\packages\microsoft.windows.sdk.net.ref\10.0.19041.55\lib\net6.0\Microsoft.Windows.SDK.NET.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
-    <Reference Include="WinRT.Runtime">
-      <HintPath>$(UserProfile)\.nuget\packages\microsoft.windows.sdk.net.ref\10.0.19041.55\lib\net6.0\WinRT.Runtime.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
+    <Content Include="lib\x86\FastDrawingVisual.WINRTProxy.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>lib\x86\FastDrawingVisual.WINRTProxy.dll</TargetPath>
+    </Content>
+    <Content Include="lib\x64\FastDrawingVisual.WINRTProxy.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>lib\x64\FastDrawingVisual.WINRTProxy.dll</TargetPath>
+    </Content>
   </ItemGroup>
 </Project>

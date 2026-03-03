@@ -1,5 +1,6 @@
 using System;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace FastDrawingVisual.Rendering
 {
@@ -11,7 +12,7 @@ namespace FastDrawingVisual.Rendering
         /// <summary>
         /// Attach renderer output to a host element.
         /// </summary>
-        bool AttachToElement(FrameworkElement element);
+        bool AttachToElement(ContentControl element);
 
         /// <summary>
         /// Initialize renderer resources.

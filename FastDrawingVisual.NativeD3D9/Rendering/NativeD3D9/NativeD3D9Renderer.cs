@@ -3,6 +3,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -47,7 +48,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             _d3dImage.IsFrontBufferAvailableChanged += OnFrontBufferAvailableChanged;
         }
 
-        public bool AttachToElement(FrameworkElement element)
+        public bool AttachToElement(ContentControl element)
         {
             if (_isDisposed) throw new ObjectDisposedException(nameof(NativeD3D9Renderer));
             if (element == null) throw new ArgumentNullException(nameof(element));

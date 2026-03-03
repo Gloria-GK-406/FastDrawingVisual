@@ -4,6 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -75,7 +76,7 @@ namespace FastDrawingVisual.SkiaSharp
 
         #region IRenderer
 
-        public bool AttachToElement(FrameworkElement element)
+        public bool AttachToElement(ContentControl element)
         {
             if (_isDisposed) throw new ObjectDisposedException(nameof(D3DSkiaRenderer));
             if (element == null) throw new ArgumentNullException(nameof(element));

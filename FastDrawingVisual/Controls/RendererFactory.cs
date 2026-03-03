@@ -98,8 +98,7 @@ namespace FastDrawingVisual.Controls
         {
             try
             {
-                //return new DCompD3D11Renderer();
-                return null; 
+                return new DCompD3D11Renderer();
             }
             catch
             {
