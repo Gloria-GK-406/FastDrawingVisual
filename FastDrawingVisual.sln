@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FastDrawingVisual.NativeD3D
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FastDrawingVisual.NativeProxy.D3D9", "FastDrawingVisual.NativeProxy.D3D9\FastDrawingVisual.NativeProxy.D3D9.vcxproj", "{5C5209A3-C6E5-49D9-9BF0-751F9F6EAC4D}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FastDrawingVisual.NativeProxy.D3D11", "FastDrawingVisual.NativeProxy.D3D11\FastDrawingVisual.NativeProxy.D3D11.vcxproj", "{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FastDrawingVisual.WINRTProxy", "FastDrawingVisual.WINRTProxy\FastDrawingVisual.WINRTProxy.vcxproj", "{D95ABAB4-4311-4B24-B728-7C9050E8BE6B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FastDrawingVisual.DCompD3D11", "FastDrawingVisual.DCompD3D11\FastDrawingVisual.DCompD3D11.csproj", "{1F3357B8-2E4B-404E-A6B6-4D040B3FD70A}"
@@ -121,6 +123,18 @@ Global
 		{5C5209A3-C6E5-49D9-9BF0-751F9F6EAC4D}.Release|x64.Build.0 = Release|x64
 		{5C5209A3-C6E5-49D9-9BF0-751F9F6EAC4D}.Release|x86.ActiveCfg = Release|Win32
 		{5C5209A3-C6E5-49D9-9BF0-751F9F6EAC4D}.Release|x86.Build.0 = Release|Win32
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Debug|Any CPU.Build.0 = Debug|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Debug|x64.ActiveCfg = Debug|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Debug|x64.Build.0 = Debug|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Debug|x86.ActiveCfg = Debug|Win32
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Debug|x86.Build.0 = Debug|Win32
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Release|Any CPU.ActiveCfg = Release|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Release|Any CPU.Build.0 = Release|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Release|x64.ActiveCfg = Release|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Release|x64.Build.0 = Release|x64
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Release|x86.ActiveCfg = Release|Win32
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE}.Release|x86.Build.0 = Release|Win32
 		{D95ABAB4-4311-4B24-B728-7C9050E8BE6B}.Debug|Any CPU.ActiveCfg = Debug|x64
 		{D95ABAB4-4311-4B24-B728-7C9050E8BE6B}.Debug|Any CPU.Build.0 = Debug|x64
 		{D95ABAB4-4311-4B24-B728-7C9050E8BE6B}.Debug|x64.ActiveCfg = Debug|x64
@@ -163,6 +177,7 @@ Global
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{5C5209A3-C6E5-49D9-9BF0-751F9F6EAC4D} = {C8EC5F17-F732-4C14-A068-9D87902332A4}
+		{2060F08D-F2CA-41EC-8405-C0DC69E8AFBE} = {C8EC5F17-F732-4C14-A068-9D87902332A4}
 		{D95ABAB4-4311-4B24-B728-7C9050E8BE6B} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution

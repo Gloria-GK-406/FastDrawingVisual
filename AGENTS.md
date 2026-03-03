@@ -69,6 +69,7 @@ Evidence:
   - `dotnet build FastDrawingVisual.WpfRenderer/FastDrawingVisual.WpfRenderer.csproj -v minimal`
 - Package-based projects fail offline with `NU1301`; do not treat that as code regression.
 - Full mixed managed/native solution build should be done via Visual Studio solution build.
+- If compile validation is required, directly ask the user for build assistance/output in this environment instead of assuming local CLI validation is sufficient.
 
 ## Change Priority Policy
 - Fix primary path first (`Skia`, `NativeD3D9`, `WPF fallback`).

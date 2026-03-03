@@ -1,40 +1,23 @@
 using FastDrawingVisual.Rendering;
-using Silk.NET.Core.Native;
-using Silk.NET.Direct3D11;
-using Silk.NET.DXGI;
 using System;
-using System.ComponentModel;
 using System.Diagnostics;
-using System.IO;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Interop;
 using System.Windows.Media;
+using Proxy = FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.DCompD3D11
 {
-    public sealed unsafe class DCompD3D11Renderer : IRenderer
+    public sealed class DCompD3D11Renderer : IRenderer
     {
-        private const uint BufferCount = 3;
-        private const uint BgraSupportFlag = 0x20; // D3D11_CREATE_DEVICE_BGRA_SUPPORT
-        private const uint DxgiUsageRenderTargetOutput = 0x20; // DXGI_USAGE_RENDER_TARGET_OUTPUT
-
         private ContentControl? _hostElement;
         private DCompHostHwnd? _hwndHost;
         private object? _previousContent;
         private bool _contentInjected;
         private IntPtr _boundHwnd;
 
-        private D3D11? _d3d11Api;
-        private DXGI? _dxgiApi;
-        private ComPtr<ID3D11Device> _d3d11Device;
-        private ComPtr<ID3D11DeviceContext> _d3d11Context;
-        private ComPtr<IDXGIFactory2> _dxgiFactory;
-        private ComPtr<IDXGISwapChain1> _swapChain;
-        private ComPtr<ID3D11RenderTargetView> _rtv0;
-
+        private IntPtr _nativeRenderer;
         private IntPtr _proxyHandle;
         private bool _desktopTargetBound;
         private bool _swapChainBound;
@@ -86,7 +69,7 @@ namespace FastDrawingVisual.DCompD3D11
 
             try
             {
-                EnsureDeviceAndSwapChain();
+                EnsureNativeRenderer();
                 EnsureProxyCreated();
                 EnsureRenderLoop();
                 _isInitialized = true;
@@ -109,12 +92,11 @@ namespace FastDrawingVisual.DCompD3D11
             _width = width;
             _height = height;
 
-            if (!_isInitialized || _swapChain.Handle == null)
+            if (!_isInitialized || _nativeRenderer == IntPtr.Zero)
                 return;
 
-            ReleaseRenderTargets();
-            ThrowIfFailed(_swapChain.ResizeBuffers(BufferCount, (uint)_width, (uint)_height, (Format)87, 0), "IDXGISwapChain1.ResizeBuffers");
-            CreateRenderTargets();
+            if (!Proxy.Resize(_nativeRenderer, _width, _height))
+                ThrowNativeFailure("FDV_Resize");
 
             TryEnsurePresentationBinding();
             UpdateProxyRect();
@@ -140,20 +122,7 @@ namespace FastDrawingVisual.DCompD3D11
             UnhookHostElement();
 
             DestroyProxy();
-
-            ReleaseRenderTargets();
-            _swapChain.Dispose();
-            _swapChain = default;
-            _dxgiFactory.Dispose();
-            _dxgiFactory = default;
-            _d3d11Context.Dispose();
-            _d3d11Context = default;
-            _d3d11Device.Dispose();
-            _d3d11Device = default;
-            _d3d11Api?.Dispose();
-            _dxgiApi?.Dispose();
-            _d3d11Api = null;
-            _dxgiApi = null;
+            DestroyNativeRenderer();
         }
 
         private void EnsureRenderLoop()
@@ -165,67 +134,36 @@ namespace FastDrawingVisual.DCompD3D11
             _isRenderingHooked = true;
         }
 
-        private void EnsureDeviceAndSwapChain()
+        private void EnsureNativeRenderer()
         {
-            if (_d3d11Device.Handle != null && _swapChain.Handle != null)
+            if (_nativeRenderer != IntPtr.Zero)
                 return;
 
-            _d3d11Api ??= D3D11.GetApi();
-            _dxgiApi ??= DXGI.GetApi();
+            if (!Proxy.IsBridgeReady())
+                throw new InvalidOperationException("FDV_IsBridgeReady returned false.");
 
-            if (_d3d11Device.Handle == null)
+            _nativeRenderer = Proxy.CreateRenderer(IntPtr.Zero, _width, _height);
+            if (_nativeRenderer == IntPtr.Zero)
+                throw new InvalidOperationException("FDV_CreateRenderer returned null handle.");
+        }
+
+        private void DestroyNativeRenderer()
+        {
+            if (_nativeRenderer == IntPtr.Zero)
+                return;
+
+            try
             {
-                var newDevice = default(ComPtr<ID3D11Device>);
-                var newContext = default(ComPtr<ID3D11DeviceContext>);
-                ThrowIfFailed(
-                    _d3d11Api.CreateDevice(
-                        (IDXGIAdapter*)null,
-                        (D3DDriverType)1,
-                        IntPtr.Zero,
-                        BgraSupportFlag,
-                        (D3DFeatureLevel*)null,
-                        0,
-                        D3D11.SdkVersion,
-                        newDevice.GetAddressOf(),
-                        (D3DFeatureLevel*)null,
-                        newContext.GetAddressOf()),
-                    "D3D11.CreateDevice");
-
-                _d3d11Device = newDevice;
-                _d3d11Context = newContext;
+                Proxy.DestroyRenderer(_nativeRenderer);
             }
-
-            if (_dxgiFactory.Handle == null)
-                ThrowIfFailed(_dxgiApi.CreateDXGIFactory2(0, out _dxgiFactory), "DXGI.CreateDXGIFactory2");
-
-            if (_swapChain.Handle == null)
+            catch
             {
-                var swapDesc = new SwapChainDesc1
-                {
-                    Width = (uint)_width,
-                    Height = (uint)_height,
-                    Format = (Format)87, // DXGI_FORMAT_B8G8R8A8_UNORM
-                    Stereo = 0,
-                    SampleDesc = new SampleDesc(1, 0),
-                    BufferUsage = DxgiUsageRenderTargetOutput,
-                    BufferCount = BufferCount,
-                    Scaling = (Scaling)0, // DXGI_SCALING_STRETCH
-                    SwapEffect = (SwapEffect)3, // DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
-                    AlphaMode = (AlphaMode)1, // DXGI_ALPHA_MODE_PREMULTIPLIED
-                    Flags = 0
-                };
-
-                var newSwapChain = default(ComPtr<IDXGISwapChain1>);
-                ThrowIfFailed(
-                    _dxgiFactory.CreateSwapChainForComposition(
-                        (IUnknown*)_d3d11Device.Handle,
-                        &swapDesc,
-                        (IDXGIOutput*)null,
-                        newSwapChain.GetAddressOf()),
-                    "IDXGIFactory2.CreateSwapChainForComposition");
-
-                _swapChain = newSwapChain;
-                CreateRenderTargets();
+                // Suppress teardown errors.
+            }
+            finally
+            {
+                _nativeRenderer = IntPtr.Zero;
+                _swapChainBound = false;
             }
         }
 
@@ -271,7 +209,7 @@ namespace FastDrawingVisual.DCompD3D11
 
         private bool TryEnsurePresentationBinding()
         {
-            if (_isDisposed || !_isInitialized || _swapChain.Handle == null || _proxyHandle == IntPtr.Zero)
+            if (_isDisposed || !_isInitialized || _nativeRenderer == IntPtr.Zero || _proxyHandle == IntPtr.Zero)
                 return false;
 
             if (_hostElement == null || _hwndHost == null)
@@ -295,7 +233,11 @@ namespace FastDrawingVisual.DCompD3D11
 
                 if (!_swapChainBound)
                 {
-                    if (!WinRTProxyNative.FDV_WinRTProxy_BindSwapChain(_proxyHandle, (IntPtr)_swapChain.Handle))
+                    IntPtr swapChain = IntPtr.Zero;
+                    if (!Proxy.TryGetSwapChain(_nativeRenderer, ref swapChain) || swapChain == IntPtr.Zero)
+                        ThrowNativeFailure("FDV_TryGetSwapChain");
+
+                    if (!WinRTProxyNative.FDV_WinRTProxy_BindSwapChain(_proxyHandle, swapChain))
                         ThrowProxyFailure("FDV_WinRTProxy_BindSwapChain");
 
                     _swapChainBound = true;
@@ -325,65 +267,19 @@ namespace FastDrawingVisual.DCompD3D11
 
         private void OnCompositionTargetRendering(object? sender, EventArgs e)
         {
-            if (_isDisposed || !_isInitialized || _swapChain.Handle == null || _d3d11Context.Handle == null)
+            if (_isDisposed || !_isInitialized || _nativeRenderer == IntPtr.Zero)
                 return;
 
             if (!TryEnsurePresentationBinding())
                 return;
 
-            var rtv = GetCurrentRenderTarget();
-            if (rtv == null)
-                return;
-
             _phase += 0.015;
-            var clearColor = stackalloc float[4];
-            clearColor[0] = (float)(0.5 + 0.5 * Math.Sin(_phase));
-            clearColor[1] = (float)(0.5 + 0.5 * Math.Sin(_phase + 2.0));
-            clearColor[2] = (float)(0.5 + 0.5 * Math.Sin(_phase + 4.0));
-            clearColor[3] = 1.0f;
+            var red = (float)(0.5 + 0.5 * Math.Sin(_phase));
+            var green = (float)(0.5 + 0.5 * Math.Sin(_phase + 2.0));
+            var blue = (float)(0.5 + 0.5 * Math.Sin(_phase + 4.0));
 
-            _d3d11Context.OMSetRenderTargets(1, &rtv, (ID3D11DepthStencilView*)null);
-            _d3d11Context.ClearRenderTargetView(rtv, clearColor);
-
-            ThrowIfFailed(_swapChain.Present(1, 0), "IDXGISwapChain1.Present");
-        }
-
-        private void CreateRenderTargets()
-        {
-            const uint backBufferIndex = 0;
-            var backBuffer = default(ComPtr<ID3D11Resource>);
-            try
-            {
-                ThrowIfFailed(
-                    _swapChain.GetBuffer(backBufferIndex, out backBuffer),
-                    "IDXGISwapChain1.GetBuffer(bufferIndex=0)");
-
-                if (backBuffer.Handle == null)
-                    throw new InvalidOperationException("GetBuffer returned null handle for bufferIndex=0.");
-
-                var newRtv = default(ComPtr<ID3D11RenderTargetView>);
-                ThrowIfFailed(
-                    _d3d11Device.CreateRenderTargetView(backBuffer.Handle, (RenderTargetViewDesc*)null, newRtv.GetAddressOf()),
-                    "ID3D11Device.CreateRenderTargetView(bufferIndex=0)");
-
-                _rtv0.Dispose();
-                _rtv0 = newRtv;
-            }
-            finally
-            {
-                backBuffer.Dispose();
-            }
-        }
-
-        private void ReleaseRenderTargets()
-        {
-            _rtv0.Dispose();
-            _rtv0 = default;
-        }
-
-        private ID3D11RenderTargetView* GetCurrentRenderTarget()
-        {
-            return _rtv0.Handle;
+            if (!Proxy.ClearAndPresent(_nativeRenderer, red, green, blue, 1.0f, 1))
+                ThrowNativeFailure("FDV_ClearAndPresent");
         }
 
         private void OnHostLoaded(object? sender, RoutedEventArgs e)
@@ -437,10 +333,14 @@ namespace FastDrawingVisual.DCompD3D11
             throw new COMException($"{operation} failed with HRESULT=0x{hr:X8}", hr);
         }
 
-        private static void ThrowIfFailed(int hr, string operation)
+        private void ThrowNativeFailure(string operation)
         {
+            var hr = _nativeRenderer != IntPtr.Zero
+                ? Proxy.GetLastErrorHr(_nativeRenderer)
+                : unchecked((int)0x80004005);
+
             if (hr >= 0)
-                return;
+                hr = unchecked((int)0x80004005);
 
             throw new COMException($"{operation} failed with HRESULT=0x{hr:X8}", hr);
         }

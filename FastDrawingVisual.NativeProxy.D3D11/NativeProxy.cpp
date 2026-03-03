@@ -1,4 +1,5 @@
 #include "NativeProxy.h"
+
 #include "BridgeNativeExports.h"
 
 namespace FastDrawingVisual::NativeProxy {
@@ -28,10 +29,10 @@ bool NativeProxy::SubmitCommands(System::IntPtr renderer,
 }
 
 bool NativeProxy::TryAcquirePresentSurface(System::IntPtr renderer,
-                                           System::IntPtr % surface9) {
-  void *surface = nullptr;
-  bool ok = FDV_TryAcquirePresentSurface(renderer.ToPointer(), &surface);
-  surface9 = System::IntPtr(surface);
+                                           System::IntPtr% surface9) {
+  void* nativeSurface = nullptr;
+  bool ok = FDV_TryAcquirePresentSurface(renderer.ToPointer(), &nativeSurface);
+  surface9 = System::IntPtr(nativeSurface);
   return ok;
 }
 
@@ -45,8 +46,8 @@ void NativeProxy::OnFrontBufferAvailable(System::IntPtr renderer,
 }
 
 bool NativeProxy::TryGetSwapChain(System::IntPtr renderer,
-                                  System::IntPtr % swapChain) {
-  void *nativeSwapChain = nullptr;
+                                  System::IntPtr% swapChain) {
+  void* nativeSwapChain = nullptr;
   bool ok = FDV_TryGetSwapChain(renderer.ToPointer(), &nativeSwapChain);
   swapChain = System::IntPtr(nativeSwapChain);
   return ok;
@@ -63,3 +64,4 @@ int NativeProxy::GetLastErrorHr(System::IntPtr renderer) {
   return FDV_GetLastErrorHr(renderer.ToPointer());
 }
 } // namespace FastDrawingVisual::NativeProxy
+

@@ -11,11 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Silk.NET.Direct3D11" Version="2.22.0" />
-    <PackageReference Include="Silk.NET.DXGI" Version="2.22.0" />
+    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.D3D11\FastDrawingVisual.NativeProxy.D3D11.vcxproj" />
   </ItemGroup>
 
   <ItemGroup>

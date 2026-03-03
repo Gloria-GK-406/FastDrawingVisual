@@ -211,6 +211,31 @@ __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
 
   LeaveCriticalSection(&s->cs);
 }
+
+__declspec(dllexport) bool __cdecl FDV_TryGetSwapChain(
+    void *renderer, void **outSwapChain) {
+  (void)renderer;
+  if (outSwapChain)
+    *outSwapChain = nullptr;
+  return false;
+}
+
+__declspec(dllexport) bool __cdecl FDV_ClearAndPresent(
+    void *renderer, float red, float green, float blue, float alpha,
+    int syncInterval) {
+  (void)renderer;
+  (void)red;
+  (void)green;
+  (void)blue;
+  (void)alpha;
+  (void)syncInterval;
+  return false;
+}
+
+__declspec(dllexport) int32_t __cdecl FDV_GetLastErrorHr(void *renderer) {
+  (void)renderer;
+  return static_cast<int32_t>(E_NOTIMPL);
+}
 }
 
 FDV_NATIVE_REGION_END

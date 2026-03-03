@@ -13,25 +13,24 @@
 extern "C" {
 __declspec(dllexport) bool __cdecl FDV_IsBridgeReady();
 __declspec(dllexport) int __cdecl FDV_GetBridgeCapabilities();
-__declspec(dllexport) void *__cdecl FDV_CreateRenderer(void *hwnd, int width,
+__declspec(dllexport) void* __cdecl FDV_CreateRenderer(void* hwnd, int width,
                                                        int height);
-__declspec(dllexport) void __cdecl FDV_DestroyRenderer(void *renderer);
-__declspec(dllexport) bool __cdecl FDV_Resize(void *renderer, int width,
+__declspec(dllexport) void __cdecl FDV_DestroyRenderer(void* renderer);
+__declspec(dllexport) bool __cdecl FDV_Resize(void* renderer, int width,
                                               int height);
-__declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
-                                                      const void *commands,
+__declspec(dllexport) bool __cdecl FDV_SubmitCommands(void* renderer,
+                                                      const void* commands,
                                                       int commandBytes);
 __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
-    void *renderer, void **outSurface9);
-__declspec(dllexport) bool __cdecl FDV_CopyReadyToPresentSurface(void *renderer);
-__declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void *renderer,
+    void* renderer, void** outSurface9);
+__declspec(dllexport) bool __cdecl FDV_CopyReadyToPresentSurface(
+    void* renderer);
+__declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void* renderer,
                                                               bool available);
-
-// D3D11 surface path API placeholders in D3D9 bridge.
 __declspec(dllexport) bool __cdecl FDV_TryGetSwapChain(
-    void *renderer, void **outSwapChain);
+    void* renderer, void** outSwapChain);
 __declspec(dllexport) bool __cdecl FDV_ClearAndPresent(
-    void *renderer, float red, float green, float blue, float alpha,
+    void* renderer, float red, float green, float blue, float alpha,
     int syncInterval);
-__declspec(dllexport) int32_t __cdecl FDV_GetLastErrorHr(void *renderer);
+__declspec(dllexport) int32_t __cdecl FDV_GetLastErrorHr(void* renderer);
 }
