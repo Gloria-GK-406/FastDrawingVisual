@@ -2,9 +2,11 @@ using FastDrawingVisual.Rendering;
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
+using System.Windows.Threading;
 using Proxy = FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.DCompD3D11
@@ -19,15 +21,22 @@ namespace FastDrawingVisual.DCompD3D11
 
         private IntPtr _nativeRenderer;
         private IntPtr _proxyHandle;
-        private bool _desktopTargetBound;
-        private bool _swapChainBound;
+        private volatile bool _desktopTargetBound;
+        private volatile bool _swapChainBound;
+        private volatile bool _presentationReady;
+        private DispatcherTimer? _presentationRetryTimer;
 
         private int _width;
         private int _height;
-        private double _phase;
+        private readonly object _workerLock = new();
+        private volatile Action<IDrawingContext>? _pendingDrawAction;
+        private CancellationTokenSource? _workerCts;
+        private Task? _drawingWorkerTask;
         private bool _isInitialized;
-        private bool _isRenderingHooked;
+        private bool _isRenderFaulted;
         private bool _isDisposed;
+
+        private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
 
         public bool AttachToElement(ContentControl element)
         {
@@ -36,7 +45,7 @@ namespace FastDrawingVisual.DCompD3D11
 
             if (ReferenceEquals(_hostElement, element))
             {
-                TryEnsurePresentationBinding();
+                EnsurePresentationBindingOrScheduleRetry();
                 return true;
             }
 
@@ -55,7 +64,7 @@ namespace FastDrawingVisual.DCompD3D11
             _hostElement.Content = _hwndHost;
             _contentInjected = true;
 
-            TryEnsurePresentationBinding();
+            EnsurePresentationBindingOrScheduleRetry();
             return true;
         }
 
@@ -71,14 +80,17 @@ namespace FastDrawingVisual.DCompD3D11
             {
                 EnsureNativeRenderer();
                 EnsureProxyCreated();
-                EnsureRenderLoop();
+                _isRenderFaulted = false;
+                _presentationReady = false;
                 _isInitialized = true;
-                TryEnsurePresentationBinding();
+                StartDrawingWorker();
+                EnsurePresentationBindingOrScheduleRetry();
                 return true;
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[DCompD3D11] Initialize failed: {ex}");
+                StopDrawingWorker(WorkerShutdownTimeout);
                 _isInitialized = false;
                 return false;
             }
@@ -98,14 +110,17 @@ namespace FastDrawingVisual.DCompD3D11
             if (!Proxy.Resize(_nativeRenderer, _width, _height))
                 ThrowNativeFailure("FDV_Resize");
 
-            TryEnsurePresentationBinding();
+            EnsurePresentationBindingOrScheduleRetry();
             UpdateProxyRect();
         }
 
         public void SubmitDrawing(Action<IDrawingContext> drawAction)
         {
             if (_isDisposed) throw new ObjectDisposedException(nameof(DCompD3D11Renderer));
-            // Demo stage: keep a GPU clear animation to validate HwndHost + DComp proxy path.
+            if (!_isInitialized) throw new InvalidOperationException("Call Initialize first.");
+            if (_isRenderFaulted || drawAction == null) return;
+
+            Interlocked.Exchange(ref _pendingDrawAction, drawAction);
         }
 
         public void Dispose()
@@ -113,25 +128,13 @@ namespace FastDrawingVisual.DCompD3D11
             if (_isDisposed) return;
             _isDisposed = true;
 
-            if (_isRenderingHooked)
-            {
-                CompositionTarget.Rendering -= OnCompositionTargetRendering;
-                _isRenderingHooked = false;
-            }
+            StopDrawingWorker(Timeout.InfiniteTimeSpan);
+            DisposePresentationRetryTimer();
 
             UnhookHostElement();
 
             DestroyProxy();
             DestroyNativeRenderer();
-        }
-
-        private void EnsureRenderLoop()
-        {
-            if (_isRenderingHooked)
-                return;
-
-            CompositionTarget.Rendering += OnCompositionTargetRendering;
-            _isRenderingHooked = true;
         }
 
         private void EnsureNativeRenderer()
@@ -164,6 +167,7 @@ namespace FastDrawingVisual.DCompD3D11
             {
                 _nativeRenderer = IntPtr.Zero;
                 _swapChainBound = false;
+                _presentationReady = false;
             }
         }
 
@@ -203,6 +207,7 @@ namespace FastDrawingVisual.DCompD3D11
                 _proxyHandle = IntPtr.Zero;
                 _desktopTargetBound = false;
                 _swapChainBound = false;
+                _presentationReady = false;
                 _boundHwnd = IntPtr.Zero;
             }
         }
@@ -228,6 +233,7 @@ namespace FastDrawingVisual.DCompD3D11
 
                     _desktopTargetBound = true;
                     _swapChainBound = false;
+                    _presentationReady = false;
                     _boundHwnd = hwnd;
                 }
 
@@ -241,16 +247,77 @@ namespace FastDrawingVisual.DCompD3D11
                         ThrowProxyFailure("FDV_WinRTProxy_BindSwapChain");
 
                     _swapChainBound = true;
+                    _presentationReady = false;
                 }
 
                 UpdateProxyRect();
+                _presentationReady = true;
                 return true;
             }
             catch (Exception ex)
             {
+                _presentationReady = false;
                 Debug.WriteLine($"[DCompD3D11] Presentation binding failed: {ex}");
                 return false;
             }
+        }
+
+        private void EnsurePresentationBindingOrScheduleRetry()
+        {
+            if (TryEnsurePresentationBinding())
+            {
+                StopPresentationRetry();
+                return;
+            }
+
+            StartPresentationRetry();
+        }
+
+        private void EnsurePresentationRetryTimer()
+        {
+            if (_presentationRetryTimer != null)
+                return;
+
+            _presentationRetryTimer = new DispatcherTimer(DispatcherPriority.Render)
+            {
+                Interval = TimeSpan.FromMilliseconds(16)
+            };
+            _presentationRetryTimer.Tick += OnPresentationRetryTick;
+        }
+
+        private void StartPresentationRetry()
+        {
+            EnsurePresentationRetryTimer();
+            if (_presentationRetryTimer!.IsEnabled) return;
+            _presentationRetryTimer.Start();
+        }
+
+        private void StopPresentationRetry()
+        {
+            if (_presentationRetryTimer?.IsEnabled == true)
+                _presentationRetryTimer.Stop();
+        }
+
+        private void DisposePresentationRetryTimer()
+        {
+            if (_presentationRetryTimer == null)
+                return;
+
+            _presentationRetryTimer.Stop();
+            _presentationRetryTimer.Tick -= OnPresentationRetryTick;
+            _presentationRetryTimer = null;
+        }
+
+        private void OnPresentationRetryTick(object? sender, EventArgs e)
+        {
+            if (_isDisposed || !_isInitialized)
+            {
+                StopPresentationRetry();
+                return;
+            }
+
+            if (TryEnsurePresentationBinding())
+                StopPresentationRetry();
         }
 
         private void UpdateProxyRect()
@@ -265,26 +332,121 @@ namespace FastDrawingVisual.DCompD3D11
                 ThrowProxyFailure("FDV_WinRTProxy_UpdateSpriteRect");
         }
 
-        private void OnCompositionTargetRendering(object? sender, EventArgs e)
+        private void StartDrawingWorker()
         {
-            if (_isDisposed || !_isInitialized || _nativeRenderer == IntPtr.Zero)
+            if (_isDisposed || !_isInitialized || _nativeRenderer == IntPtr.Zero || _isRenderFaulted)
                 return;
 
-            if (!TryEnsurePresentationBinding())
+            lock (_workerLock)
+            {
+                if (_drawingWorkerTask is { IsCompleted: false }) return;
+
+                _workerCts?.Dispose();
+                _workerCts = new CancellationTokenSource();
+                _drawingWorkerTask = Task.Run(() => DrawingWorkerLoopAsync(_workerCts.Token));
+            }
+        }
+
+        private bool StopDrawingWorker(TimeSpan timeout)
+        {
+            Task? workerTask;
+            CancellationTokenSource? workerCts;
+            lock (_workerLock)
+            {
+                workerTask = _drawingWorkerTask;
+                workerCts = _workerCts;
+            }
+
+            if (workerTask == null && workerCts == null)
+                return true;
+
+            workerCts?.Cancel();
+
+            if (workerTask != null)
+            {
+                try
+                {
+                    if (timeout == Timeout.InfiniteTimeSpan) workerTask.Wait();
+                    else if (!workerTask.Wait(timeout)) return false;
+                }
+                catch (AggregateException ex) when (IsCancellationOnly(ex))
+                {
+                }
+            }
+
+            lock (_workerLock)
+            {
+                if (ReferenceEquals(_drawingWorkerTask, workerTask)) _drawingWorkerTask = null;
+                if (ReferenceEquals(_workerCts, workerCts))
+                {
+                    _workerCts?.Dispose();
+                    _workerCts = null;
+                }
+            }
+
+            return true;
+        }
+
+        private async Task DrawingWorkerLoopAsync(CancellationToken token)
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1));
+
+            try
+            {
+                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                {
+                    if (_isDisposed || !_isInitialized || _nativeRenderer == IntPtr.Zero || _isRenderFaulted)
+                        continue;
+
+                    // Keep latest-wins action pending until swapchain is actually bound to DComp target.
+                    if (!_desktopTargetBound || !_swapChainBound || !_presentationReady)
+                        continue;
+
+                    var action = Interlocked.Exchange(ref _pendingDrawAction, null);
+                    if (action == null) continue;
+
+                    try
+                    {
+                        using var context = new DCompDrawingContext(_width, _height, SubmitCommandsToNative);
+                        action(context);
+                    }
+                    catch (Exception ex)
+                    {
+                        _isRenderFaulted = true;
+                        Debug.WriteLine($"[DCompD3D11] Draw worker failed: {ex}");
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        private unsafe void SubmitCommandsToNative(ReadOnlyMemory<byte> commandData)
+        {
+            if (_nativeRenderer == IntPtr.Zero || commandData.Length == 0)
                 return;
 
-            _phase += 0.015;
-            var red = (float)(0.5 + 0.5 * Math.Sin(_phase));
-            var green = (float)(0.5 + 0.5 * Math.Sin(_phase + 2.0));
-            var blue = (float)(0.5 + 0.5 * Math.Sin(_phase + 4.0));
+            var span = commandData.Span;
+            fixed (byte* ptr = span)
+            {
+                if (!Proxy.SubmitCommands(_nativeRenderer, (IntPtr)ptr, span.Length))
+                    ThrowNativeFailure("FDV_SubmitCommands");
+            }
+        }
 
-            if (!Proxy.ClearAndPresent(_nativeRenderer, red, green, blue, 1.0f, 1))
-                ThrowNativeFailure("FDV_ClearAndPresent");
+        private static bool IsCancellationOnly(AggregateException ex)
+        {
+            foreach (var inner in ex.Flatten().InnerExceptions)
+                if (inner is not OperationCanceledException)
+                    return false;
+            return true;
         }
 
         private void OnHostLoaded(object? sender, RoutedEventArgs e)
         {
-            TryEnsurePresentationBinding();
+            EnsurePresentationBindingOrScheduleRetry();
+            StartDrawingWorker();
         }
 
         private void OnHostUnloaded(object? sender, RoutedEventArgs e)
@@ -319,6 +481,8 @@ namespace FastDrawingVisual.DCompD3D11
             _boundHwnd = IntPtr.Zero;
             _desktopTargetBound = false;
             _swapChainBound = false;
+            _presentationReady = false;
+            StopPresentationRetry();
         }
 
         private void ThrowProxyFailure(string operation)

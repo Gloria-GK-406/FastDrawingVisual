@@ -18,6 +18,13 @@ struct BridgeRendererD3D11 {
   IDXGIFactory2* dxgiFactory = nullptr;
   IDXGISwapChain1* swapChain = nullptr;
   ID3D11RenderTargetView* rtv0 = nullptr;
+  ID3D11VertexShader* vertexShader = nullptr;
+  ID3D11PixelShader* pixelShader = nullptr;
+  ID3D11InputLayout* inputLayout = nullptr;
+  ID3D11BlendState* blendState = nullptr;
+  ID3D11RasterizerState* rasterizerState = nullptr;
+  ID3D11Buffer* dynamicVertexBuffer = nullptr;
+  UINT dynamicVertexCapacityBytes = 0;
 
   int width = 0;
   int height = 0;
@@ -30,6 +37,5 @@ struct BridgeRendererD3D11 {
 bool CreateDeviceAndSwapChain(BridgeRendererD3D11* s);
 void ReleaseRendererResources(BridgeRendererD3D11* s);
 bool ResizeSwapChain(BridgeRendererD3D11* s, int width, int height);
-bool ClearAndPresent(BridgeRendererD3D11* s, float red, float green, float blue,
-                     float alpha, int syncInterval);
-
+bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
+                              int commandBytes);

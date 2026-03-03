@@ -9,7 +9,6 @@ enum class NativeProxyCapability : int {
   PresentSurface = 1 << 1,
   FrontBufferNotifications = 1 << 2,
   SwapChain = 1 << 3,
-  ClearPresent = 1 << 4,
   Resize = 1 << 5,
 };
 
@@ -28,7 +27,7 @@ public:
   static void DestroyRenderer(System::IntPtr renderer);
   static bool Resize(System::IntPtr renderer, int width, int height);
 
-  // D3D9 command-stream API placeholders for signature compatibility.
+  // Unified command-stream API.
   static bool SubmitCommands(System::IntPtr renderer, System::IntPtr commands,
                              int commandBytes);
   static bool TryAcquirePresentSurface(System::IntPtr renderer,
@@ -39,8 +38,6 @@ public:
   // D3D11-specific API; D3D9 side keeps placeholders.
   static bool TryGetSwapChain(System::IntPtr renderer,
                               System::IntPtr% swapChain);
-  static bool ClearAndPresent(System::IntPtr renderer, float red, float green,
-                              float blue, float alpha, int syncInterval);
   static int GetLastErrorHr(System::IntPtr renderer);
 };
 } // namespace FastDrawingVisual::NativeProxy

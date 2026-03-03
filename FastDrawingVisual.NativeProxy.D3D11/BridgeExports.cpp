@@ -9,8 +9,8 @@
 FDV_NATIVE_REGION_BEGIN
 
 namespace {
+constexpr int kCapabilityCommandStream = 1 << 0;
 constexpr int kCapabilitySwapChain = 1 << 3;
-constexpr int kCapabilityClearPresent = 1 << 4;
 constexpr int kCapabilityResize = 1 << 5;
 } // namespace
 
@@ -18,7 +18,7 @@ extern "C" {
 __declspec(dllexport) bool __cdecl FDV_IsBridgeReady() { return true; }
 
 __declspec(dllexport) int __cdecl FDV_GetBridgeCapabilities() {
-  return kCapabilitySwapChain | kCapabilityResize | kCapabilityClearPresent;
+  return kCapabilityCommandStream | kCapabilitySwapChain | kCapabilityResize;
 }
 
 __declspec(dllexport) void* __cdecl FDV_CreateRenderer(void* hwnd, int width,
@@ -81,10 +81,14 @@ __declspec(dllexport) bool __cdecl FDV_Resize(void* renderer, int width,
 __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void* renderer,
                                                       const void* commands,
                                                       int commandBytes) {
-  (void)renderer;
-  (void)commands;
-  (void)commandBytes;
-  return false;
+  auto* s = static_cast<BridgeRendererD3D11*>(renderer);
+  if (!s)
+    return false;
+
+  EnterCriticalSection(&s->cs);
+  bool ok = SubmitCommandsAndPresent(s, commands, commandBytes);
+  LeaveCriticalSection(&s->cs);
+  return ok;
 }
 
 __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
@@ -125,19 +129,6 @@ __declspec(dllexport) bool __cdecl FDV_TryGetSwapChain(void* renderer,
   }
   LeaveCriticalSection(&s->cs);
 
-  return ok;
-}
-
-__declspec(dllexport) bool __cdecl
-FDV_ClearAndPresent(void* renderer, float red, float green, float blue,
-                    float alpha, int syncInterval) {
-  auto* s = static_cast<BridgeRendererD3D11*>(renderer);
-  if (!s)
-    return false;
-
-  EnterCriticalSection(&s->cs);
-  bool ok = ClearAndPresent(s, red, green, blue, alpha, syncInterval);
-  LeaveCriticalSection(&s->cs);
   return ok;
 }
 

@@ -53,15 +53,7 @@ bool NativeProxy::TryGetSwapChain(System::IntPtr renderer,
   return ok;
 }
 
-bool NativeProxy::ClearAndPresent(System::IntPtr renderer, float red,
-                                  float green, float blue, float alpha,
-                                  int syncInterval) {
-  return FDV_ClearAndPresent(renderer.ToPointer(), red, green, blue, alpha,
-                             syncInterval);
-}
-
 int NativeProxy::GetLastErrorHr(System::IntPtr renderer) {
   return FDV_GetLastErrorHr(renderer.ToPointer());
 }
 } // namespace FastDrawingVisual::NativeProxy
-

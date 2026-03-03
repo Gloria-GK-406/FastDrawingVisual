@@ -29,8 +29,5 @@ __declspec(dllexport) void __cdecl FDV_OnFrontBufferAvailable(void* renderer,
                                                               bool available);
 __declspec(dllexport) bool __cdecl FDV_TryGetSwapChain(
     void* renderer, void** outSwapChain);
-__declspec(dllexport) bool __cdecl FDV_ClearAndPresent(
-    void* renderer, float red, float green, float blue, float alpha,
-    int syncInterval);
 __declspec(dllexport) int32_t __cdecl FDV_GetLastErrorHr(void* renderer);
 }
