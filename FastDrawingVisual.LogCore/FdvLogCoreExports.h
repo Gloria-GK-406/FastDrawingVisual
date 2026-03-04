@@ -1,0 +1,48 @@
+#pragma once
+
+#include <stdint.h>
+
+#if defined(FDVLOGCORE_EXPORTS)
+#define FDVLOG_API __declspec(dllexport)
+#else
+#define FDVLOG_API __declspec(dllimport)
+#endif
+
+extern "C" {
+enum FDVLOG_Level {
+  FDVLOG_LevelTrace = 0,
+  FDVLOG_LevelDebug = 1,
+  FDVLOG_LevelInfo = 2,
+  FDVLOG_LevelWarn = 3,
+  FDVLOG_LevelError = 4,
+  FDVLOG_LevelFatal = 5
+};
+
+enum FDVLOG_Aggregation {
+  FDVLOG_AggregationRate = 0,
+  FDVLOG_AggregationAverage = 1,
+  FDVLOG_AggregationSum = 2,
+  FDVLOG_AggregationMin = 3,
+  FDVLOG_AggregationMax = 4
+};
+
+typedef struct FDVLOG_Config {
+  int ringBufferCapacity;
+  int flushIntervalMs;
+  bool enableFileSink;
+  const wchar_t *filePath;
+  int fileMaxBytes;
+  int fileMaxFiles;
+  bool enableDebugOutput;
+  bool enableEtw;
+} FDVLOG_Config;
+
+FDVLOG_API bool __cdecl FDVLOG_Initialize(const FDVLOG_Config *config);
+FDVLOG_API void __cdecl FDVLOG_Shutdown(int flushTimeoutMs);
+FDVLOG_API void __cdecl FDVLOG_Flush(int flushTimeoutMs);
+FDVLOG_API void __cdecl FDVLOG_Log(int level, const wchar_t *category,
+                                   const wchar_t *message, bool direct);
+FDVLOG_API void __cdecl FDVLOG_Metric(uint32_t metricId, int64_t value,
+                                      uint32_t windowMs, int aggregation);
+FDVLOG_API uint64_t __cdecl FDVLOG_GetDroppedTotal();
+}
