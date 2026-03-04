@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Windows;
 using System.Windows.Media;
+using FastDrawingVisual.CommandProtocol;
 
 namespace FastDrawingVisual.Rendering.NativeD3D9
 {
@@ -16,63 +17,63 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
         public void WriteClear(Color color)
         {
-            var span = _writer.GetSpan(1 + 4);
-            span[0] = (byte)NativeCommandType.Clear;
-            WriteColor(span.Slice(1), color);
-            _writer.Advance(5);
+            var span = _writer.GetSpan(BridgeCommandLayout.ClearCommandBytes);
+            span[0] = (byte)BridgeCommandType.Clear;
+            WriteColor(span.Slice(1 + BridgeCommandLayout.ClearColorOffset), color);
+            _writer.Advance(BridgeCommandLayout.ClearCommandBytes);
         }
 
         public void WriteFillRect(Rect rect, Color color)
         {
-            var span = _writer.GetSpan(1 + 16 + 4);
-            span[0] = (byte)NativeCommandType.FillRect;
-            WriteRect(span.Slice(1), rect);
-            WriteColor(span.Slice(17), color);
-            _writer.Advance(21);
+            var span = _writer.GetSpan(BridgeCommandLayout.FillRectCommandBytes);
+            span[0] = (byte)BridgeCommandType.FillRect;
+            WriteRect(span.Slice(1 + BridgeCommandLayout.FillRectXOffset), rect);
+            WriteColor(span.Slice(1 + BridgeCommandLayout.FillRectColorOffset), color);
+            _writer.Advance(BridgeCommandLayout.FillRectCommandBytes);
         }
 
         public void WriteStrokeRect(Rect rect, float thickness, Color color)
         {
-            var span = _writer.GetSpan(1 + 16 + 4 + 4);
-            span[0] = (byte)NativeCommandType.StrokeRect;
-            WriteRect(span.Slice(1), rect);
-            WriteSingle(span.Slice(17), thickness);
-            WriteColor(span.Slice(21), color);
-            _writer.Advance(25);
+            var span = _writer.GetSpan(BridgeCommandLayout.StrokeRectCommandBytes);
+            span[0] = (byte)BridgeCommandType.StrokeRect;
+            WriteRect(span.Slice(1 + BridgeCommandLayout.StrokeRectXOffset), rect);
+            WriteSingle(span.Slice(1 + BridgeCommandLayout.StrokeRectThicknessOffset), thickness);
+            WriteColor(span.Slice(1 + BridgeCommandLayout.StrokeRectColorOffset), color);
+            _writer.Advance(BridgeCommandLayout.StrokeRectCommandBytes);
         }
 
         public void WriteFillEllipse(Point center, float radiusX, float radiusY, Color color)
         {
-            var span = _writer.GetSpan(1 + 16 + 4);
-            span[0] = (byte)NativeCommandType.FillEllipse;
-            WritePoint(span.Slice(1), center);
-            WriteSingle(span.Slice(9), radiusX);
-            WriteSingle(span.Slice(13), radiusY);
-            WriteColor(span.Slice(17), color);
-            _writer.Advance(21);
+            var span = _writer.GetSpan(BridgeCommandLayout.FillEllipseCommandBytes);
+            span[0] = (byte)BridgeCommandType.FillEllipse;
+            WritePoint(span.Slice(1 + BridgeCommandLayout.FillEllipseCenterXOffset), center);
+            WriteSingle(span.Slice(1 + BridgeCommandLayout.FillEllipseRadiusXOffset), radiusX);
+            WriteSingle(span.Slice(1 + BridgeCommandLayout.FillEllipseRadiusYOffset), radiusY);
+            WriteColor(span.Slice(1 + BridgeCommandLayout.FillEllipseColorOffset), color);
+            _writer.Advance(BridgeCommandLayout.FillEllipseCommandBytes);
         }
 
         public void WriteStrokeEllipse(Point center, float radiusX, float radiusY, float thickness, Color color)
         {
-            var span = _writer.GetSpan(1 + 16 + 4 + 4);
-            span[0] = (byte)NativeCommandType.StrokeEllipse;
-            WritePoint(span.Slice(1), center);
-            WriteSingle(span.Slice(9), radiusX);
-            WriteSingle(span.Slice(13), radiusY);
-            WriteSingle(span.Slice(17), thickness);
-            WriteColor(span.Slice(21), color);
-            _writer.Advance(25);
+            var span = _writer.GetSpan(BridgeCommandLayout.StrokeEllipseCommandBytes);
+            span[0] = (byte)BridgeCommandType.StrokeEllipse;
+            WritePoint(span.Slice(1 + BridgeCommandLayout.StrokeEllipseCenterXOffset), center);
+            WriteSingle(span.Slice(1 + BridgeCommandLayout.StrokeEllipseRadiusXOffset), radiusX);
+            WriteSingle(span.Slice(1 + BridgeCommandLayout.StrokeEllipseRadiusYOffset), radiusY);
+            WriteSingle(span.Slice(1 + BridgeCommandLayout.StrokeEllipseThicknessOffset), thickness);
+            WriteColor(span.Slice(1 + BridgeCommandLayout.StrokeEllipseColorOffset), color);
+            _writer.Advance(BridgeCommandLayout.StrokeEllipseCommandBytes);
         }
 
         public void WriteLine(Point p0, Point p1, float thickness, Color color)
         {
-            var span = _writer.GetSpan(1 + 20 + 4);
-            span[0] = (byte)NativeCommandType.Line;
-            WritePoint(span.Slice(1), p0);
-            WritePoint(span.Slice(9), p1);
-            WriteSingle(span.Slice(17), thickness);
-            WriteColor(span.Slice(21), color);
-            _writer.Advance(25);
+            var span = _writer.GetSpan(BridgeCommandLayout.LineCommandBytes);
+            span[0] = (byte)BridgeCommandType.Line;
+            WritePoint(span.Slice(1 + BridgeCommandLayout.LineX0Offset), p0);
+            WritePoint(span.Slice(1 + BridgeCommandLayout.LineX1Offset), p1);
+            WriteSingle(span.Slice(1 + BridgeCommandLayout.LineThicknessOffset), thickness);
+            WriteColor(span.Slice(1 + BridgeCommandLayout.LineColorOffset), color);
+            _writer.Advance(BridgeCommandLayout.LineCommandBytes);
         }
 
         private static void WriteRect(Span<byte> target, Rect rect)

@@ -1,4 +1,5 @@
 #include "BridgeRendererInternal.h"
+#include "BridgeCommandProtocol.g.h"
 
 #include <string.h>
 
@@ -12,13 +13,6 @@
 #define YieldProcessor() ((void)0)
 #endif
 #endif
-
-static constexpr uint8_t CMD_CLEAR = 1;
-static constexpr uint8_t CMD_FILL_RECT = 2;
-static constexpr uint8_t CMD_STROKE_RECT = 3;
-static constexpr uint8_t CMD_FILL_ELLIPSE = 4;
-static constexpr uint8_t CMD_STROKE_ELLIPSE = 5;
-static constexpr uint8_t CMD_LINE = 6;
 
 static constexpr DWORD kLegacyFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
 static constexpr DWORD kSdfFvf = D3DFVF_XYZRHW | D3DFVF_TEX1;
@@ -201,12 +195,12 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
     uint8_t cmd = *p++;
 
     switch (cmd) {
-    case CMD_CLEAR: {
-      if (p + 4 > end)
+    case fdv::protocol::kCmdClear: {
+      if (p + fdv::protocol::kClearPayloadBytes > end)
         goto done;
 
-      D3DCOLOR color = ReadColor(p);
-      p += 4;
+      D3DCOLOR color = ReadColor(p + fdv::protocol::kClearColorOffset);
+      p += fdv::protocol::kClearPayloadBytes;
       DWORD argb = color;
       dev->Clear(0, nullptr, D3DCLEAR_TARGET,
                  D3DCOLOR_ARGB((argb >> 24) & 0xFF, (argb >> 16) & 0xFF,
@@ -215,47 +209,47 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
       break;
     }
 
-    case CMD_FILL_RECT: {
-      if (p + 20 > end)
+    case fdv::protocol::kCmdFillRect: {
+      if (p + fdv::protocol::kFillRectPayloadBytes > end)
         goto done;
 
-      float x = ReadF32(p);
-      float y = ReadF32(p + 4);
-      float w = ReadF32(p + 8);
-      float h = ReadF32(p + 12);
-      D3DCOLOR color = ReadColor(p + 16);
-      p += 20;
+      float x = ReadF32(p + fdv::protocol::kFillRectXOffset);
+      float y = ReadF32(p + fdv::protocol::kFillRectYOffset);
+      float w = ReadF32(p + fdv::protocol::kFillRectWidthOffset);
+      float h = ReadF32(p + fdv::protocol::kFillRectHeightOffset);
+      D3DCOLOR color = ReadColor(p + fdv::protocol::kFillRectColorOffset);
+      p += fdv::protocol::kFillRectPayloadBytes;
       DrawFilledRect(dev, x, y, w, h, color);
       break;
     }
 
-    case CMD_STROKE_RECT: {
-      if (p + 24 > end)
+    case fdv::protocol::kCmdStrokeRect: {
+      if (p + fdv::protocol::kStrokeRectPayloadBytes > end)
         goto done;
 
-      float x = ReadF32(p);
-      float y = ReadF32(p + 4);
-      float w = ReadF32(p + 8);
-      float h = ReadF32(p + 12);
-      float t = ReadF32(p + 16);
-      D3DCOLOR color = ReadColor(p + 20);
-      p += 24;
+      float x = ReadF32(p + fdv::protocol::kStrokeRectXOffset);
+      float y = ReadF32(p + fdv::protocol::kStrokeRectYOffset);
+      float w = ReadF32(p + fdv::protocol::kStrokeRectWidthOffset);
+      float h = ReadF32(p + fdv::protocol::kStrokeRectHeightOffset);
+      float t = ReadF32(p + fdv::protocol::kStrokeRectThicknessOffset);
+      D3DCOLOR color = ReadColor(p + fdv::protocol::kStrokeRectColorOffset);
+      p += fdv::protocol::kStrokeRectPayloadBytes;
       if (t < 1.0f)
         t = 1.0f;
       DrawStrokeRect(dev, x, y, w, h, t, color);
       break;
     }
 
-    case CMD_FILL_ELLIPSE: {
-      if (p + 20 > end)
+    case fdv::protocol::kCmdFillEllipse: {
+      if (p + fdv::protocol::kFillEllipsePayloadBytes > end)
         goto done;
 
-      float cx = ReadF32(p);
-      float cy = ReadF32(p + 4);
-      float rx = ReadF32(p + 8);
-      float ry = ReadF32(p + 12);
-      D3DCOLOR color = ReadColor(p + 16);
-      p += 20;
+      float cx = ReadF32(p + fdv::protocol::kFillEllipseCenterXOffset);
+      float cy = ReadF32(p + fdv::protocol::kFillEllipseCenterYOffset);
+      float rx = ReadF32(p + fdv::protocol::kFillEllipseRadiusXOffset);
+      float ry = ReadF32(p + fdv::protocol::kFillEllipseRadiusYOffset);
+      D3DCOLOR color = ReadColor(p + fdv::protocol::kFillEllipseColorOffset);
+      p += fdv::protocol::kFillEllipsePayloadBytes;
       if (!DrawSdfEllipse(s, cx, cy, rx, ry, 0.0f, false, color)) {
         commandOk = false;
         goto done;
@@ -263,17 +257,17 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
       break;
     }
 
-    case CMD_STROKE_ELLIPSE: {
-      if (p + 24 > end)
+    case fdv::protocol::kCmdStrokeEllipse: {
+      if (p + fdv::protocol::kStrokeEllipsePayloadBytes > end)
         goto done;
 
-      float cx = ReadF32(p);
-      float cy = ReadF32(p + 4);
-      float rx = ReadF32(p + 8);
-      float ry = ReadF32(p + 12);
-      float t = ReadF32(p + 16);
-      D3DCOLOR color = ReadColor(p + 20);
-      p += 24;
+      float cx = ReadF32(p + fdv::protocol::kStrokeEllipseCenterXOffset);
+      float cy = ReadF32(p + fdv::protocol::kStrokeEllipseCenterYOffset);
+      float rx = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusXOffset);
+      float ry = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusYOffset);
+      float t = ReadF32(p + fdv::protocol::kStrokeEllipseThicknessOffset);
+      D3DCOLOR color = ReadColor(p + fdv::protocol::kStrokeEllipseColorOffset);
+      p += fdv::protocol::kStrokeEllipsePayloadBytes;
       if (!DrawSdfEllipse(s, cx, cy, rx, ry, t, true, color)) {
         commandOk = false;
         goto done;
@@ -281,17 +275,17 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
       break;
     }
 
-    case CMD_LINE: {
-      if (p + 24 > end)
+    case fdv::protocol::kCmdLine: {
+      if (p + fdv::protocol::kLinePayloadBytes > end)
         goto done;
 
-      float x0 = ReadF32(p);
-      float y0 = ReadF32(p + 4);
-      float x1 = ReadF32(p + 8);
-      float y1 = ReadF32(p + 12);
-      float t = ReadF32(p + 16);
-      D3DCOLOR color = ReadColor(p + 20);
-      p += 24;
+      float x0 = ReadF32(p + fdv::protocol::kLineX0Offset);
+      float y0 = ReadF32(p + fdv::protocol::kLineY0Offset);
+      float x1 = ReadF32(p + fdv::protocol::kLineX1Offset);
+      float y1 = ReadF32(p + fdv::protocol::kLineY1Offset);
+      float t = ReadF32(p + fdv::protocol::kLineThicknessOffset);
+      D3DCOLOR color = ReadColor(p + fdv::protocol::kLineColorOffset);
+      p += fdv::protocol::kLinePayloadBytes;
 
       if (!DrawSdfLine(s, x0, y0, x1, y1, t, color)) {
         commandOk = false;

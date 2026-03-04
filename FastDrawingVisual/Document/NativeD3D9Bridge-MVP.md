@@ -46,6 +46,12 @@ extern "C" {
 
 Color layout is `A,R,G,B` bytes.
 
+Command schema single source of truth:
+- `FastDrawingVisual.CommandProtocol/command_protocol.schema.json`
+- Build generates:
+  - `artifacts/generated/protocol/BridgeCommandProtocol.g.cs`
+  - `artifacts/generated/protocol/BridgeCommandProtocol.g.h`
+
 - `1` Clear: `[u8 cmd][u8 A][u8 R][u8 G][u8 B]`
 - `2` FillRect: `[u8 cmd][f32 x][f32 y][f32 w][f32 h][A][R][G][B]`
 - `3` StrokeRect: `[u8 cmd][f32 x][f32 y][f32 w][f32 h][f32 thickness][A][R][G][B]`

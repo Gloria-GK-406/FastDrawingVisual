@@ -1,4 +1,5 @@
 #include "BridgeRendererInternal.h"
+#include "BridgeCommandProtocol.g.h"
 
 #include <d3dcompiler.h>
 
@@ -16,13 +17,6 @@ constexpr UINT kCreationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 constexpr DXGI_FORMAT kSwapChainFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr int kEllipseSegmentCount = 48;
-
-constexpr uint8_t kCmdClear = 1;
-constexpr uint8_t kCmdFillRect = 2;
-constexpr uint8_t kCmdStrokeRect = 3;
-constexpr uint8_t kCmdFillEllipse = 4;
-constexpr uint8_t kCmdStrokeEllipse = 5;
-constexpr uint8_t kCmdLine = 6;
 
 template <typename T> void SafeRelease(T** ptr) {
   if (ptr == nullptr || *ptr == nullptr)
@@ -683,31 +677,33 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
     const uint8_t cmd = *p++;
 
     switch (cmd) {
-    case kCmdClear: {
-      if (end - p < 4) {
+    case fdv::protocol::kCmdClear: {
+      if (end - p < fdv::protocol::kClearPayloadBytes) {
         SetLastError(s, E_INVALIDARG);
         return false;
       }
 
-      const ColorF color = ReadPremultipliedColor(p);
-      p += 4;
+      const ColorF color =
+          ReadPremultipliedColor(p + fdv::protocol::kClearColorOffset);
+      p += fdv::protocol::kClearPayloadBytes;
       const float clearColor[4] = {color.r, color.g, color.b, color.a};
       s->context->ClearRenderTargetView(currentRtv, clearColor);
       break;
     }
 
-    case kCmdFillRect: {
-      if (end - p < 20) {
+    case fdv::protocol::kCmdFillRect: {
+      if (end - p < fdv::protocol::kFillRectPayloadBytes) {
         SetLastError(s, E_INVALIDARG);
         return false;
       }
 
-      const float x = ReadF32(p);
-      const float y = ReadF32(p + 4);
-      const float w = ReadF32(p + 8);
-      const float h = ReadF32(p + 12);
-      const ColorF color = ReadPremultipliedColor(p + 16);
-      p += 20;
+      const float x = ReadF32(p + fdv::protocol::kFillRectXOffset);
+      const float y = ReadF32(p + fdv::protocol::kFillRectYOffset);
+      const float w = ReadF32(p + fdv::protocol::kFillRectWidthOffset);
+      const float h = ReadF32(p + fdv::protocol::kFillRectHeightOffset);
+      const ColorF color =
+          ReadPremultipliedColor(p + fdv::protocol::kFillRectColorOffset);
+      p += fdv::protocol::kFillRectPayloadBytes;
 
       vertices.clear();
       AppendFilledRect(s, vertices, x, y, w, h, color);
@@ -716,19 +712,20 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
       break;
     }
 
-    case kCmdStrokeRect: {
-      if (end - p < 24) {
+    case fdv::protocol::kCmdStrokeRect: {
+      if (end - p < fdv::protocol::kStrokeRectPayloadBytes) {
         SetLastError(s, E_INVALIDARG);
         return false;
       }
 
-      const float x = ReadF32(p);
-      const float y = ReadF32(p + 4);
-      const float w = ReadF32(p + 8);
-      const float h = ReadF32(p + 12);
-      const float t = ReadF32(p + 16);
-      const ColorF color = ReadPremultipliedColor(p + 20);
-      p += 24;
+      const float x = ReadF32(p + fdv::protocol::kStrokeRectXOffset);
+      const float y = ReadF32(p + fdv::protocol::kStrokeRectYOffset);
+      const float w = ReadF32(p + fdv::protocol::kStrokeRectWidthOffset);
+      const float h = ReadF32(p + fdv::protocol::kStrokeRectHeightOffset);
+      const float t = ReadF32(p + fdv::protocol::kStrokeRectThicknessOffset);
+      const ColorF color =
+          ReadPremultipliedColor(p + fdv::protocol::kStrokeRectColorOffset);
+      p += fdv::protocol::kStrokeRectPayloadBytes;
 
       vertices.clear();
       AppendStrokeRect(s, vertices, x, y, w, h, t, color);
@@ -737,18 +734,19 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
       break;
     }
 
-    case kCmdFillEllipse: {
-      if (end - p < 20) {
+    case fdv::protocol::kCmdFillEllipse: {
+      if (end - p < fdv::protocol::kFillEllipsePayloadBytes) {
         SetLastError(s, E_INVALIDARG);
         return false;
       }
 
-      const float cx = ReadF32(p);
-      const float cy = ReadF32(p + 4);
-      const float rx = ReadF32(p + 8);
-      const float ry = ReadF32(p + 12);
-      const ColorF color = ReadPremultipliedColor(p + 16);
-      p += 20;
+      const float cx = ReadF32(p + fdv::protocol::kFillEllipseCenterXOffset);
+      const float cy = ReadF32(p + fdv::protocol::kFillEllipseCenterYOffset);
+      const float rx = ReadF32(p + fdv::protocol::kFillEllipseRadiusXOffset);
+      const float ry = ReadF32(p + fdv::protocol::kFillEllipseRadiusYOffset);
+      const ColorF color =
+          ReadPremultipliedColor(p + fdv::protocol::kFillEllipseColorOffset);
+      p += fdv::protocol::kFillEllipsePayloadBytes;
 
       vertices.clear();
       AppendFilledEllipse(s, vertices, cx, cy, rx, ry, color);
@@ -757,19 +755,20 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
       break;
     }
 
-    case kCmdStrokeEllipse: {
-      if (end - p < 24) {
+    case fdv::protocol::kCmdStrokeEllipse: {
+      if (end - p < fdv::protocol::kStrokeEllipsePayloadBytes) {
         SetLastError(s, E_INVALIDARG);
         return false;
       }
 
-      const float cx = ReadF32(p);
-      const float cy = ReadF32(p + 4);
-      const float rx = ReadF32(p + 8);
-      const float ry = ReadF32(p + 12);
-      const float t = ReadF32(p + 16);
-      const ColorF color = ReadPremultipliedColor(p + 20);
-      p += 24;
+      const float cx = ReadF32(p + fdv::protocol::kStrokeEllipseCenterXOffset);
+      const float cy = ReadF32(p + fdv::protocol::kStrokeEllipseCenterYOffset);
+      const float rx = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusXOffset);
+      const float ry = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusYOffset);
+      const float t = ReadF32(p + fdv::protocol::kStrokeEllipseThicknessOffset);
+      const ColorF color =
+          ReadPremultipliedColor(p + fdv::protocol::kStrokeEllipseColorOffset);
+      p += fdv::protocol::kStrokeEllipsePayloadBytes;
 
       vertices.clear();
       AppendStrokeEllipse(s, vertices, cx, cy, rx, ry, t, color);
@@ -778,19 +777,20 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
       break;
     }
 
-    case kCmdLine: {
-      if (end - p < 24) {
+    case fdv::protocol::kCmdLine: {
+      if (end - p < fdv::protocol::kLinePayloadBytes) {
         SetLastError(s, E_INVALIDARG);
         return false;
       }
 
-      const float x0 = ReadF32(p);
-      const float y0 = ReadF32(p + 4);
-      const float x1 = ReadF32(p + 8);
-      const float y1 = ReadF32(p + 12);
-      const float t = ReadF32(p + 16);
-      const ColorF color = ReadPremultipliedColor(p + 20);
-      p += 24;
+      const float x0 = ReadF32(p + fdv::protocol::kLineX0Offset);
+      const float y0 = ReadF32(p + fdv::protocol::kLineY0Offset);
+      const float x1 = ReadF32(p + fdv::protocol::kLineX1Offset);
+      const float y1 = ReadF32(p + fdv::protocol::kLineY1Offset);
+      const float t = ReadF32(p + fdv::protocol::kLineThicknessOffset);
+      const ColorF color =
+          ReadPremultipliedColor(p + fdv::protocol::kLineColorOffset);
+      p += fdv::protocol::kLinePayloadBytes;
 
       vertices.clear();
       AppendLine(s, vertices, x0, y0, x1, y1, t, color);

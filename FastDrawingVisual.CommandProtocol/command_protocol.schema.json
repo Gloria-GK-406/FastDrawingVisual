@@ -1,0 +1,72 @@
+{
+  "name": "BridgeCommandProtocol",
+  "endianness": "little",
+  "colorLayout": "A,R,G,B",
+  "commands": [
+    {
+      "name": "Clear",
+      "id": 1,
+      "fields": [
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    },
+    {
+      "name": "FillRect",
+      "id": 2,
+      "fields": [
+        { "name": "X", "type": "f32" },
+        { "name": "Y", "type": "f32" },
+        { "name": "Width", "type": "f32" },
+        { "name": "Height", "type": "f32" },
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    },
+    {
+      "name": "StrokeRect",
+      "id": 3,
+      "fields": [
+        { "name": "X", "type": "f32" },
+        { "name": "Y", "type": "f32" },
+        { "name": "Width", "type": "f32" },
+        { "name": "Height", "type": "f32" },
+        { "name": "Thickness", "type": "f32" },
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    },
+    {
+      "name": "FillEllipse",
+      "id": 4,
+      "fields": [
+        { "name": "CenterX", "type": "f32" },
+        { "name": "CenterY", "type": "f32" },
+        { "name": "RadiusX", "type": "f32" },
+        { "name": "RadiusY", "type": "f32" },
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    },
+    {
+      "name": "StrokeEllipse",
+      "id": 5,
+      "fields": [
+        { "name": "CenterX", "type": "f32" },
+        { "name": "CenterY", "type": "f32" },
+        { "name": "RadiusX", "type": "f32" },
+        { "name": "RadiusY", "type": "f32" },
+        { "name": "Thickness", "type": "f32" },
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    },
+    {
+      "name": "Line",
+      "id": 6,
+      "fields": [
+        { "name": "X0", "type": "f32" },
+        { "name": "Y0", "type": "f32" },
+        { "name": "X1", "type": "f32" },
+        { "name": "Y1", "type": "f32" },
+        { "name": "Thickness", "type": "f32" },
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    }
+  ]
+}
