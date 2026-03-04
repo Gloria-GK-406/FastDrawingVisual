@@ -1,10 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Interop;
 
 namespace FastDrawingVisual
@@ -19,6 +15,8 @@ namespace FastDrawingVisual
         private IntPtr _hwnd;
 
         internal IntPtr HostHandle => _hwnd;
+        internal event Action<IntPtr>? HandleCreated;
+        internal event Action? HandleDestroyed;
 
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
@@ -39,11 +37,14 @@ namespace FastDrawingVisual
             if (_hwnd == IntPtr.Zero)
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateWindowEx for DCompHostHwnd failed.");
 
+            HandleCreated?.Invoke(_hwnd);
             return new HandleRef(this, _hwnd);
         }
 
         protected override void DestroyWindowCore(HandleRef hwnd)
         {
+            HandleDestroyed?.Invoke();
+
             if (hwnd.Handle != IntPtr.Zero)
                 NativeMethods.DestroyWindow(hwnd.Handle);
 
