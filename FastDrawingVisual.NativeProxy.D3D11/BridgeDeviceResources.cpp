@@ -5,11 +5,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
 
 namespace {
 constexpr UINT kBufferCount = 3;
@@ -17,6 +21,15 @@ constexpr UINT kCreationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 constexpr DXGI_FORMAT kSwapChainFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr int kEllipseSegmentCount = 48;
+// Experimental text command: [id][x][y][fontSize][argb][textLen][fontLen][textUtf8][fontUtf8].
+constexpr std::uint8_t kCmdDrawText = 7;
+constexpr int kDrawTextHeaderBytes = 24;
+constexpr int kDrawTextXOffset = 0;
+constexpr int kDrawTextYOffset = 4;
+constexpr int kDrawTextFontSizeOffset = 8;
+constexpr int kDrawTextColorOffset = 12;
+constexpr int kDrawTextTextLengthOffset = 16;
+constexpr int kDrawTextFontLengthOffset = 20;
 
 template <typename T> void SafeRelease(T** ptr) {
   if (ptr == nullptr || *ptr == nullptr)
@@ -56,6 +69,43 @@ ColorF ToPremultipliedColor(const fdv::protocol::ColorArgb8& color) {
       (static_cast<float>(color.b) / 255.0f) * a,
       a,
   };
+}
+
+D2D1_COLOR_F ToD2DColor(const fdv::protocol::ColorArgb8& color) {
+  return {
+      static_cast<float>(color.r) / 255.0f,
+      static_cast<float>(color.g) / 255.0f,
+      static_cast<float>(color.b) / 255.0f,
+      static_cast<float>(color.a) / 255.0f,
+  };
+}
+
+std::uint32_t ReadU32(const std::uint8_t* p) {
+  std::uint32_t value = 0;
+  std::memcpy(&value, p, sizeof(std::uint32_t));
+  return value;
+}
+
+bool Utf8ToWide(const std::uint8_t* bytes, std::uint32_t count,
+                std::wstring& out) {
+  out.clear();
+  if (count == 0)
+    return true;
+
+  const int wideCount = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<LPCCH>(bytes),
+      static_cast<int>(count), nullptr, 0);
+  if (wideCount <= 0)
+    return false;
+
+  out.resize(static_cast<std::size_t>(wideCount));
+  const int converted = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<LPCCH>(bytes),
+      static_cast<int>(count), out.data(), wideCount);
+  if (converted <= 0)
+    return false;
+
+  return true;
 }
 
 float ToNdcX(const BridgeRendererD3D11* s, float x) {
@@ -444,11 +494,95 @@ bool DrawTriangleList(BridgeRendererD3D11* s, const std::vector<ColorVertex>& v)
   return true;
 }
 
+void ReleaseRenderTargetResources(BridgeRendererD3D11* s) {
+  if (!s)
+    return;
+
+  if (s->d2dContext != nullptr)
+    s->d2dContext->SetTarget(nullptr);
+
+  SafeRelease(&s->d2dSolidBrush);
+  SafeRelease(&s->d2dTargetBitmap);
+  SafeRelease(&s->rtv0);
+}
+
+bool EnsureD2DAndDWrite(BridgeRendererD3D11* s) {
+  if (!s || !s->device) {
+    SetLastError(s, E_UNEXPECTED);
+    return false;
+  }
+
+  if (s->d2dFactory != nullptr && s->d2dDevice != nullptr &&
+      s->d2dContext != nullptr && s->dwriteFactory != nullptr) {
+    SetLastError(s, S_OK);
+    return true;
+  }
+
+  if (s->d2dFactory == nullptr) {
+    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                                   __uuidof(ID2D1Factory1), nullptr,
+                                   reinterpret_cast<void**>(&s->d2dFactory));
+    if (FAILED(hr) || s->d2dFactory == nullptr) {
+      SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+      return false;
+    }
+  }
+
+  if (s->dwriteFactory == nullptr) {
+    HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
+                                     __uuidof(IDWriteFactory),
+                                     reinterpret_cast<IUnknown**>(&s->dwriteFactory));
+    if (FAILED(hr) || s->dwriteFactory == nullptr) {
+      SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+      return false;
+    }
+  }
+
+  if (s->d2dDevice == nullptr || s->d2dContext == nullptr) {
+    IDXGIDevice* dxgiDevice = nullptr;
+    HRESULT hr = s->device->QueryInterface(__uuidof(IDXGIDevice),
+                                           reinterpret_cast<void**>(&dxgiDevice));
+    if (FAILED(hr) || dxgiDevice == nullptr) {
+      SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+      return false;
+    }
+
+    if (s->d2dDevice == nullptr) {
+      hr = s->d2dFactory->CreateDevice(dxgiDevice, &s->d2dDevice);
+      if (FAILED(hr) || s->d2dDevice == nullptr) {
+        dxgiDevice->Release();
+        SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+        return false;
+      }
+    }
+
+    if (s->d2dContext == nullptr) {
+      hr = s->d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                             &s->d2dContext);
+      if (FAILED(hr) || s->d2dContext == nullptr) {
+        dxgiDevice->Release();
+        SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+        return false;
+      }
+    }
+
+    dxgiDevice->Release();
+  }
+
+  SetLastError(s, S_OK);
+  return true;
+}
+
 bool CreateRenderTarget(BridgeRendererD3D11* s) {
   if (!s || !s->device || !s->swapChain) {
     SetLastError(s, E_UNEXPECTED);
     return false;
   }
+
+  if (!EnsureD2DAndDWrite(s))
+    return false;
+
+  ReleaseRenderTargetResources(s);
 
   ID3D11Texture2D* backBuffer = nullptr;
   HRESULT hr = s->swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D),
@@ -459,8 +593,43 @@ bool CreateRenderTarget(BridgeRendererD3D11* s) {
   }
 
   hr = s->device->CreateRenderTargetView(backBuffer, nullptr, &s->rtv0);
-  backBuffer->Release();
   if (FAILED(hr) || s->rtv0 == nullptr) {
+    backBuffer->Release();
+    SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+    return false;
+  }
+
+  IDXGISurface* dxgiSurface = nullptr;
+  hr = backBuffer->QueryInterface(__uuidof(IDXGISurface),
+                                  reinterpret_cast<void**>(&dxgiSurface));
+  backBuffer->Release();
+  if (FAILED(hr) || dxgiSurface == nullptr) {
+    SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+    return false;
+  }
+
+  D2D1_BITMAP_PROPERTIES1 bitmapProps = {};
+  bitmapProps.pixelFormat.format = kSwapChainFormat;
+  bitmapProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+  bitmapProps.dpiX = 96.0f;
+  bitmapProps.dpiY = 96.0f;
+  bitmapProps.bitmapOptions =
+      D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
+
+  hr = s->d2dContext->CreateBitmapFromDxgiSurface(dxgiSurface, &bitmapProps,
+                                                  &s->d2dTargetBitmap);
+  dxgiSurface->Release();
+  if (FAILED(hr) || s->d2dTargetBitmap == nullptr) {
+    SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+    return false;
+  }
+
+  s->d2dContext->SetTarget(s->d2dTargetBitmap);
+  s->d2dContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+
+  D2D1_COLOR_F white = {1.0f, 1.0f, 1.0f, 1.0f};
+  hr = s->d2dContext->CreateSolidColorBrush(white, &s->d2dSolidBrush);
+  if (FAILED(hr) || s->d2dSolidBrush == nullptr) {
     SetLastError(s, FAILED(hr) ? hr : E_FAIL);
     return false;
   }
@@ -543,6 +712,7 @@ void ReleaseRendererResources(BridgeRendererD3D11* s) {
   if (!s)
     return;
 
+  ReleaseRenderTargetResources(s);
   SafeRelease(&s->dynamicVertexBuffer);
   s->dynamicVertexCapacityBytes = 0;
   SafeRelease(&s->rasterizerState);
@@ -550,9 +720,12 @@ void ReleaseRendererResources(BridgeRendererD3D11* s) {
   SafeRelease(&s->inputLayout);
   SafeRelease(&s->pixelShader);
   SafeRelease(&s->vertexShader);
-  SafeRelease(&s->rtv0);
   SafeRelease(&s->swapChain);
   SafeRelease(&s->dxgiFactory);
+  SafeRelease(&s->d2dContext);
+  SafeRelease(&s->d2dDevice);
+  SafeRelease(&s->d2dFactory);
+  SafeRelease(&s->dwriteFactory);
   SafeRelease(&s->context);
   SafeRelease(&s->device);
   SetLastError(s, S_OK);
@@ -624,7 +797,7 @@ bool ResizeSwapChain(BridgeRendererD3D11* s, int width, int height) {
     return true;
   }
 
-  SafeRelease(&s->rtv0);
+  ReleaseRenderTargetResources(s);
 
   HRESULT hr = s->swapChain->ResizeBuffers(kBufferCount, static_cast<UINT>(width),
                                            static_cast<UINT>(height),
@@ -662,86 +835,303 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
   viewport.MaxDepth = 1.0f;
   s->context->RSSetViewports(1, &viewport);
 
-  fdv::protocol::CommandReader reader(commands, commandBytes);
-  fdv::protocol::Command command{};
+  const auto* cursor = static_cast<const std::uint8_t*>(commands);
+  const auto* end = cursor + commandBytes;
   std::vector<ColorVertex> vertices;
   vertices.reserve(6 * 8);
 
-  while (reader.TryReadNext(command)) {
-    switch (command.type) {
-    case fdv::protocol::CommandType::Clear: {
-      const auto& payload =
-          std::get<fdv::protocol::ClearPayload>(command.payload);
-      const ColorF color = ToPremultipliedColor(payload.color);
-      const float clearColor[4] = {color.r, color.g, color.b, color.a};
-      s->context->ClearRenderTargetView(currentRtv, clearColor);
+  bool d2dDrawActive = false;
+  auto endD2DDraw = [&]() -> bool {
+    if (!d2dDrawActive)
+      return true;
+
+    HRESULT hr = s->d2dContext->EndDraw();
+    d2dDrawActive = false;
+    if (FAILED(hr)) {
+      SetLastError(s, hr);
+      return false;
+    }
+
+    return true;
+  };
+
+  auto beginD2DDraw = [&]() -> bool {
+    if (d2dDrawActive)
+      return true;
+
+    if (!s->d2dContext || !s->d2dTargetBitmap || !s->d2dSolidBrush ||
+        !s->dwriteFactory) {
+      SetLastError(s, E_UNEXPECTED);
+      return false;
+    }
+
+    s->context->Flush();
+    s->d2dContext->BeginDraw();
+    d2dDrawActive = true;
+    return true;
+  };
+
+  while (cursor < end) {
+    const std::uint8_t cmd = *cursor++;
+
+    switch (cmd) {
+    case fdv::protocol::kCmdClear: {
+      if (cursor + fdv::protocol::kClearPayloadBytes > end) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      if (!endD2DDraw())
+        return false;
+
+      const auto color = fdv::protocol::ReadColorArgb8(
+          cursor + fdv::protocol::kClearColorOffset);
+      const ColorF clearPremultiplied = ToPremultipliedColor(color);
+      const float clearPremultipliedColor[4] = {clearPremultiplied.r,
+                                                clearPremultiplied.g,
+                                                clearPremultiplied.b,
+                                                clearPremultiplied.a};
+      s->context->ClearRenderTargetView(currentRtv, clearPremultipliedColor);
+      cursor += fdv::protocol::kClearPayloadBytes;
       break;
     }
 
-    case fdv::protocol::CommandType::FillRect: {
-      const auto& payload =
-          std::get<fdv::protocol::FillRectPayload>(command.payload);
+    case fdv::protocol::kCmdFillRect: {
+      if (cursor + fdv::protocol::kFillRectPayloadBytes > end) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      if (!endD2DDraw())
+        return false;
+
+      const float x =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kFillRectXOffset);
+      const float y =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kFillRectYOffset);
+      const float width =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kFillRectWidthOffset);
+      const float height = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kFillRectHeightOffset);
+      const auto color = fdv::protocol::ReadColorArgb8(
+          cursor + fdv::protocol::kFillRectColorOffset);
       vertices.clear();
-      AppendFilledRect(s, vertices, payload.x, payload.y, payload.width,
-                       payload.height, ToPremultipliedColor(payload.color));
+      AppendFilledRect(s, vertices, x, y, width, height,
+                       ToPremultipliedColor(color));
       if (!DrawTriangleList(s, vertices))
         return false;
+      cursor += fdv::protocol::kFillRectPayloadBytes;
       break;
     }
 
-    case fdv::protocol::CommandType::StrokeRect: {
-      const auto& payload =
-          std::get<fdv::protocol::StrokeRectPayload>(command.payload);
+    case fdv::protocol::kCmdStrokeRect: {
+      if (cursor + fdv::protocol::kStrokeRectPayloadBytes > end) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      if (!endD2DDraw())
+        return false;
+
+      const float x =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kStrokeRectXOffset);
+      const float y =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kStrokeRectYOffset);
+      const float width = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeRectWidthOffset);
+      const float height = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeRectHeightOffset);
+      const float thickness = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeRectThicknessOffset);
+      const auto color = fdv::protocol::ReadColorArgb8(
+          cursor + fdv::protocol::kStrokeRectColorOffset);
       vertices.clear();
-      AppendStrokeRect(s, vertices, payload.x, payload.y, payload.width,
-                       payload.height, payload.thickness,
-                       ToPremultipliedColor(payload.color));
+      AppendStrokeRect(s, vertices, x, y, width, height, thickness,
+                       ToPremultipliedColor(color));
       if (!DrawTriangleList(s, vertices))
         return false;
+      cursor += fdv::protocol::kStrokeRectPayloadBytes;
       break;
     }
 
-    case fdv::protocol::CommandType::FillEllipse: {
-      const auto& payload =
-          std::get<fdv::protocol::FillEllipsePayload>(command.payload);
+    case fdv::protocol::kCmdFillEllipse: {
+      if (cursor + fdv::protocol::kFillEllipsePayloadBytes > end) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      if (!endD2DDraw())
+        return false;
+
+      const float centerX = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kFillEllipseCenterXOffset);
+      const float centerY = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kFillEllipseCenterYOffset);
+      const float radiusX = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kFillEllipseRadiusXOffset);
+      const float radiusY = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kFillEllipseRadiusYOffset);
+      const auto color = fdv::protocol::ReadColorArgb8(
+          cursor + fdv::protocol::kFillEllipseColorOffset);
       vertices.clear();
-      AppendFilledEllipse(s, vertices, payload.centerX, payload.centerY,
-                          payload.radiusX, payload.radiusY,
-                          ToPremultipliedColor(payload.color));
+      AppendFilledEllipse(s, vertices, centerX, centerY, radiusX, radiusY,
+                          ToPremultipliedColor(color));
       if (!DrawTriangleList(s, vertices))
         return false;
+      cursor += fdv::protocol::kFillEllipsePayloadBytes;
       break;
     }
 
-    case fdv::protocol::CommandType::StrokeEllipse: {
-      const auto& payload =
-          std::get<fdv::protocol::StrokeEllipsePayload>(command.payload);
+    case fdv::protocol::kCmdStrokeEllipse: {
+      if (cursor + fdv::protocol::kStrokeEllipsePayloadBytes > end) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      if (!endD2DDraw())
+        return false;
+
+      const float centerX = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeEllipseCenterXOffset);
+      const float centerY = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeEllipseCenterYOffset);
+      const float radiusX = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeEllipseRadiusXOffset);
+      const float radiusY = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeEllipseRadiusYOffset);
+      const float thickness = fdv::protocol::ReadF32(
+          cursor + fdv::protocol::kStrokeEllipseThicknessOffset);
+      const auto color = fdv::protocol::ReadColorArgb8(
+          cursor + fdv::protocol::kStrokeEllipseColorOffset);
       vertices.clear();
-      AppendStrokeEllipse(s, vertices, payload.centerX, payload.centerY,
-                          payload.radiusX, payload.radiusY, payload.thickness,
-                          ToPremultipliedColor(payload.color));
+      AppendStrokeEllipse(s, vertices, centerX, centerY, radiusX, radiusY,
+                          thickness, ToPremultipliedColor(color));
       if (!DrawTriangleList(s, vertices))
         return false;
+      cursor += fdv::protocol::kStrokeEllipsePayloadBytes;
       break;
     }
 
-    case fdv::protocol::CommandType::Line: {
-      const auto& payload =
-          std::get<fdv::protocol::LinePayload>(command.payload);
+    case fdv::protocol::kCmdLine: {
+      if (cursor + fdv::protocol::kLinePayloadBytes > end) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      if (!endD2DDraw())
+        return false;
+
+      const float x0 =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineX0Offset);
+      const float y0 =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineY0Offset);
+      const float x1 =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineX1Offset);
+      const float y1 =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineY1Offset);
+      const float thickness =
+          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineThicknessOffset);
+      const auto color = fdv::protocol::ReadColorArgb8(
+          cursor + fdv::protocol::kLineColorOffset);
       vertices.clear();
-      AppendLine(s, vertices, payload.x0, payload.y0, payload.x1, payload.y1,
-                 payload.thickness, ToPremultipliedColor(payload.color));
+      AppendLine(s, vertices, x0, y0, x1, y1, thickness,
+                 ToPremultipliedColor(color));
       if (!DrawTriangleList(s, vertices))
         return false;
+      cursor += fdv::protocol::kLinePayloadBytes;
       break;
     }
+
+    case kCmdDrawText: {
+      if (cursor + kDrawTextHeaderBytes > end) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      const float x = fdv::protocol::ReadF32(cursor + kDrawTextXOffset);
+      const float y = fdv::protocol::ReadF32(cursor + kDrawTextYOffset);
+      const float fontSize =
+          std::max(1.0f, fdv::protocol::ReadF32(cursor + kDrawTextFontSizeOffset));
+      const auto color =
+          fdv::protocol::ReadColorArgb8(cursor + kDrawTextColorOffset);
+      const std::uint32_t textLength =
+          ReadU32(cursor + kDrawTextTextLengthOffset);
+      const std::uint32_t fontLength =
+          ReadU32(cursor + kDrawTextFontLengthOffset);
+
+      const std::uint64_t trailingBytes = static_cast<std::uint64_t>(textLength) +
+                                          static_cast<std::uint64_t>(fontLength);
+      const std::uint64_t availableBytes =
+          static_cast<std::uint64_t>(end - cursor - kDrawTextHeaderBytes);
+      if (trailingBytes > availableBytes) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      const auto* textUtf8 = cursor + kDrawTextHeaderBytes;
+      const auto* fontUtf8 = textUtf8 + textLength;
+      cursor += kDrawTextHeaderBytes + static_cast<std::ptrdiff_t>(trailingBytes);
+
+      if (textLength == 0)
+        break;
+
+      std::wstring textWide;
+      if (!Utf8ToWide(textUtf8, textLength, textWide) || textWide.empty()) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      std::wstring fontWide;
+      if (!Utf8ToWide(fontUtf8, fontLength, fontWide)) {
+        SetLastError(s, E_INVALIDARG);
+        return false;
+      }
+
+      if (fontWide.empty())
+        fontWide = L"Segoe UI";
+
+      if (!beginD2DDraw())
+        return false;
+
+      IDWriteTextFormat* textFormat = nullptr;
+      HRESULT hr = s->dwriteFactory->CreateTextFormat(
+          fontWide.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize,
+          L"en-us", &textFormat);
+      if (FAILED(hr) || textFormat == nullptr) {
+        SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+        SafeRelease(&textFormat);
+        return false;
+      }
+
+      textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+      textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+      textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+      D2D1_RECT_F layoutRect = {x, y, static_cast<float>(s->width),
+                                static_cast<float>(s->height)};
+      if (layoutRect.right <= layoutRect.left)
+        layoutRect.right = layoutRect.left + 1.0f;
+      if (layoutRect.bottom <= layoutRect.top)
+        layoutRect.bottom = layoutRect.top + 1.0f;
+
+      s->d2dSolidBrush->SetColor(ToD2DColor(color));
+      s->d2dContext->DrawText(
+          textWide.c_str(), static_cast<UINT32>(textWide.size()), textFormat,
+          &layoutRect, s->d2dSolidBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP,
+          DWRITE_MEASURING_MODE_NATURAL);
+      textFormat->Release();
+      break;
+    }
+
+    default:
+      SetLastError(s, E_INVALIDARG);
+      return false;
     }
   }
 
-  if (reader.HasError()) {
-    SetLastError(s, E_INVALIDARG);
+  if (!endD2DDraw())
     return false;
-  }
 
   HRESULT hr = s->swapChain->Present(1, 0);
   if (FAILED(hr)) {

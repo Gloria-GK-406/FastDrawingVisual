@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using FastDrawingVisual.CommandProtocol;
@@ -9,6 +10,16 @@ namespace FastDrawingVisual.DCompD3D11
 {
     internal sealed class DCompCommandBuffer
     {
+        // Experimental text command consumed by NativeProxy.D3D11 manual parser.
+        private const byte DrawTextCommandId = 7;
+        private const int DrawTextHeaderBytes = 24;
+        private const int DrawTextXOffset = 0;
+        private const int DrawTextYOffset = 4;
+        private const int DrawTextFontSizeOffset = 8;
+        private const int DrawTextColorOffset = 12;
+        private const int DrawTextTextLengthOffset = 16;
+        private const int DrawTextFontLengthOffset = 20;
+
         private readonly ArrayBufferWriter<byte> _writer = new();
 
         public ReadOnlyMemory<byte> WrittenMemory => _writer.WrittenMemory;
@@ -72,6 +83,34 @@ namespace FastDrawingVisual.DCompD3D11
             WriteSingle(span.Slice(1 + BridgeCommandLayout.LineThicknessOffset), thickness);
             WriteColor(span.Slice(1 + BridgeCommandLayout.LineColorOffset), color);
             _writer.Advance(BridgeCommandLayout.LineCommandBytes);
+        }
+
+        public void WriteDrawText(string text, Point origin, string fontFamily, float fontSize, Color color)
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+
+            if (string.IsNullOrWhiteSpace(fontFamily))
+                fontFamily = "Segoe UI";
+
+            if (fontSize <= 0f)
+                fontSize = 12f;
+
+            var textBytes = Encoding.UTF8.GetBytes(text);
+            var fontBytes = Encoding.UTF8.GetBytes(fontFamily);
+            var commandBytes = 1 + DrawTextHeaderBytes + textBytes.Length + fontBytes.Length;
+
+            var span = _writer.GetSpan(commandBytes);
+            span[0] = DrawTextCommandId;
+            WriteSingle(span.Slice(1 + DrawTextXOffset), (float)origin.X);
+            WriteSingle(span.Slice(1 + DrawTextYOffset), (float)origin.Y);
+            WriteSingle(span.Slice(1 + DrawTextFontSizeOffset), fontSize);
+            WriteColor(span.Slice(1 + DrawTextColorOffset), color);
+            BinaryPrimitives.WriteInt32LittleEndian(span.Slice(1 + DrawTextTextLengthOffset), textBytes.Length);
+            BinaryPrimitives.WriteInt32LittleEndian(span.Slice(1 + DrawTextFontLengthOffset), fontBytes.Length);
+            textBytes.CopyTo(span.Slice(1 + DrawTextHeaderBytes));
+            fontBytes.CopyTo(span.Slice(1 + DrawTextHeaderBytes + textBytes.Length));
+            _writer.Advance(commandBytes);
         }
 
         private static void WriteRect(Span<byte> target, Rect rect)

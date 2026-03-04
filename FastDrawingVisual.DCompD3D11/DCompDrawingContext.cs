@@ -71,7 +71,8 @@ namespace FastDrawingVisual.DCompD3D11
         public void DrawText(string text, Point origin, Brush foreground, string fontFamily = "Segoe UI", double fontSize = 12)
         {
             ThrowIfDisposed();
-            // Per current D3D11 scope: text drawing is intentionally skipped.
+            if (TryGetSolidColor(foreground, out var color))
+                _commands.WriteDrawText(text, origin, fontFamily, (float)fontSize, color);
         }
 
         public void DrawGlyphRun(Brush foregroundBrush, GlyphRun glyphRun)

@@ -8,7 +8,9 @@
 #define NOMINMAX
 #endif
 
+#include <d2d1_1.h>
 #include <d3d11.h>
+#include <dwrite.h>
 #include <dxgi1_2.h>
 #include <windows.h>
 
@@ -25,6 +27,12 @@ struct BridgeRendererD3D11 {
   ID3D11RasterizerState* rasterizerState = nullptr;
   ID3D11Buffer* dynamicVertexBuffer = nullptr;
   UINT dynamicVertexCapacityBytes = 0;
+  ID2D1Factory1* d2dFactory = nullptr;
+  ID2D1Device* d2dDevice = nullptr;
+  ID2D1DeviceContext* d2dContext = nullptr;
+  ID2D1Bitmap1* d2dTargetBitmap = nullptr;
+  ID2D1SolidColorBrush* d2dSolidBrush = nullptr;
+  IDWriteFactory* dwriteFactory = nullptr;
 
   int width = 0;
   int height = 0;
