@@ -11,6 +11,11 @@ Single-source command protocol generator for native command stream.
 - `BridgeCommandProtocol.g.cs`
 - `BridgeCommandProtocol.g.h`
 
+Generated C++ header includes:
+- command ids and layout constants
+- strong payload structs (`FillRectPayload`, etc.)
+- `CommandReader` and `DecodeAndVisit(...)` helpers for typed parsing
+
 ## Manual run (optional)
 
 ```powershell

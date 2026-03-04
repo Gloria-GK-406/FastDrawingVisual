@@ -48,18 +48,12 @@ struct ColorVertex {
   float a;
 };
 
-float ReadF32(const uint8_t* p) {
-  float value = 0.0f;
-  std::memcpy(&value, p, sizeof(float));
-  return value;
-}
-
-ColorF ReadPremultipliedColor(const uint8_t* p) {
-  const float a = static_cast<float>(p[0]) / 255.0f;
+ColorF ToPremultipliedColor(const fdv::protocol::ColorArgb8& color) {
+  const float a = static_cast<float>(color.a) / 255.0f;
   return {
-      (static_cast<float>(p[1]) / 255.0f) * a,
-      (static_cast<float>(p[2]) / 255.0f) * a,
-      (static_cast<float>(p[3]) / 255.0f) * a,
+      (static_cast<float>(color.r) / 255.0f) * a,
+      (static_cast<float>(color.g) / 255.0f) * a,
+      (static_cast<float>(color.b) / 255.0f) * a,
       a,
   };
 }
@@ -668,141 +662,85 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
   viewport.MaxDepth = 1.0f;
   s->context->RSSetViewports(1, &viewport);
 
-  const auto* p = static_cast<const uint8_t*>(commands);
-  const auto* end = p + commandBytes;
+  fdv::protocol::CommandReader reader(commands, commandBytes);
+  fdv::protocol::Command command{};
   std::vector<ColorVertex> vertices;
   vertices.reserve(6 * 8);
 
-  while (p < end) {
-    const uint8_t cmd = *p++;
-
-    switch (cmd) {
-    case fdv::protocol::kCmdClear: {
-      if (end - p < fdv::protocol::kClearPayloadBytes) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
-      const ColorF color =
-          ReadPremultipliedColor(p + fdv::protocol::kClearColorOffset);
-      p += fdv::protocol::kClearPayloadBytes;
+  while (reader.TryReadNext(command)) {
+    switch (command.type) {
+    case fdv::protocol::CommandType::Clear: {
+      const auto& payload =
+          std::get<fdv::protocol::ClearPayload>(command.payload);
+      const ColorF color = ToPremultipliedColor(payload.color);
       const float clearColor[4] = {color.r, color.g, color.b, color.a};
       s->context->ClearRenderTargetView(currentRtv, clearColor);
       break;
     }
 
-    case fdv::protocol::kCmdFillRect: {
-      if (end - p < fdv::protocol::kFillRectPayloadBytes) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
-      const float x = ReadF32(p + fdv::protocol::kFillRectXOffset);
-      const float y = ReadF32(p + fdv::protocol::kFillRectYOffset);
-      const float w = ReadF32(p + fdv::protocol::kFillRectWidthOffset);
-      const float h = ReadF32(p + fdv::protocol::kFillRectHeightOffset);
-      const ColorF color =
-          ReadPremultipliedColor(p + fdv::protocol::kFillRectColorOffset);
-      p += fdv::protocol::kFillRectPayloadBytes;
-
+    case fdv::protocol::CommandType::FillRect: {
+      const auto& payload =
+          std::get<fdv::protocol::FillRectPayload>(command.payload);
       vertices.clear();
-      AppendFilledRect(s, vertices, x, y, w, h, color);
+      AppendFilledRect(s, vertices, payload.x, payload.y, payload.width,
+                       payload.height, ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices))
         return false;
       break;
     }
 
-    case fdv::protocol::kCmdStrokeRect: {
-      if (end - p < fdv::protocol::kStrokeRectPayloadBytes) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
-      const float x = ReadF32(p + fdv::protocol::kStrokeRectXOffset);
-      const float y = ReadF32(p + fdv::protocol::kStrokeRectYOffset);
-      const float w = ReadF32(p + fdv::protocol::kStrokeRectWidthOffset);
-      const float h = ReadF32(p + fdv::protocol::kStrokeRectHeightOffset);
-      const float t = ReadF32(p + fdv::protocol::kStrokeRectThicknessOffset);
-      const ColorF color =
-          ReadPremultipliedColor(p + fdv::protocol::kStrokeRectColorOffset);
-      p += fdv::protocol::kStrokeRectPayloadBytes;
-
+    case fdv::protocol::CommandType::StrokeRect: {
+      const auto& payload =
+          std::get<fdv::protocol::StrokeRectPayload>(command.payload);
       vertices.clear();
-      AppendStrokeRect(s, vertices, x, y, w, h, t, color);
+      AppendStrokeRect(s, vertices, payload.x, payload.y, payload.width,
+                       payload.height, payload.thickness,
+                       ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices))
         return false;
       break;
     }
 
-    case fdv::protocol::kCmdFillEllipse: {
-      if (end - p < fdv::protocol::kFillEllipsePayloadBytes) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
-      const float cx = ReadF32(p + fdv::protocol::kFillEllipseCenterXOffset);
-      const float cy = ReadF32(p + fdv::protocol::kFillEllipseCenterYOffset);
-      const float rx = ReadF32(p + fdv::protocol::kFillEllipseRadiusXOffset);
-      const float ry = ReadF32(p + fdv::protocol::kFillEllipseRadiusYOffset);
-      const ColorF color =
-          ReadPremultipliedColor(p + fdv::protocol::kFillEllipseColorOffset);
-      p += fdv::protocol::kFillEllipsePayloadBytes;
-
+    case fdv::protocol::CommandType::FillEllipse: {
+      const auto& payload =
+          std::get<fdv::protocol::FillEllipsePayload>(command.payload);
       vertices.clear();
-      AppendFilledEllipse(s, vertices, cx, cy, rx, ry, color);
+      AppendFilledEllipse(s, vertices, payload.centerX, payload.centerY,
+                          payload.radiusX, payload.radiusY,
+                          ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices))
         return false;
       break;
     }
 
-    case fdv::protocol::kCmdStrokeEllipse: {
-      if (end - p < fdv::protocol::kStrokeEllipsePayloadBytes) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
-      const float cx = ReadF32(p + fdv::protocol::kStrokeEllipseCenterXOffset);
-      const float cy = ReadF32(p + fdv::protocol::kStrokeEllipseCenterYOffset);
-      const float rx = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusXOffset);
-      const float ry = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusYOffset);
-      const float t = ReadF32(p + fdv::protocol::kStrokeEllipseThicknessOffset);
-      const ColorF color =
-          ReadPremultipliedColor(p + fdv::protocol::kStrokeEllipseColorOffset);
-      p += fdv::protocol::kStrokeEllipsePayloadBytes;
-
+    case fdv::protocol::CommandType::StrokeEllipse: {
+      const auto& payload =
+          std::get<fdv::protocol::StrokeEllipsePayload>(command.payload);
       vertices.clear();
-      AppendStrokeEllipse(s, vertices, cx, cy, rx, ry, t, color);
+      AppendStrokeEllipse(s, vertices, payload.centerX, payload.centerY,
+                          payload.radiusX, payload.radiusY, payload.thickness,
+                          ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices))
         return false;
       break;
     }
 
-    case fdv::protocol::kCmdLine: {
-      if (end - p < fdv::protocol::kLinePayloadBytes) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
-      const float x0 = ReadF32(p + fdv::protocol::kLineX0Offset);
-      const float y0 = ReadF32(p + fdv::protocol::kLineY0Offset);
-      const float x1 = ReadF32(p + fdv::protocol::kLineX1Offset);
-      const float y1 = ReadF32(p + fdv::protocol::kLineY1Offset);
-      const float t = ReadF32(p + fdv::protocol::kLineThicknessOffset);
-      const ColorF color =
-          ReadPremultipliedColor(p + fdv::protocol::kLineColorOffset);
-      p += fdv::protocol::kLinePayloadBytes;
-
+    case fdv::protocol::CommandType::Line: {
+      const auto& payload =
+          std::get<fdv::protocol::LinePayload>(command.payload);
       vertices.clear();
-      AppendLine(s, vertices, x0, y0, x1, y1, t, color);
+      AppendLine(s, vertices, payload.x0, payload.y0, payload.x1, payload.y1,
+                 payload.thickness, ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices))
         return false;
       break;
     }
-
-    default:
-      SetLastError(s, E_INVALIDARG);
-      return false;
     }
+  }
+
+  if (reader.HasError()) {
+    SetLastError(s, E_INVALIDARG);
+    return false;
   }
 
   HRESULT hr = s->swapChain->Present(1, 0);

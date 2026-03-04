@@ -1,8 +1,6 @@
 #include "BridgeRendererInternal.h"
 #include "BridgeCommandProtocol.g.h"
 
-#include <string.h>
-
 #if !defined(YieldProcessor)
 #if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64) || defined(_M_AMD64))
 #include <intrin.h>
@@ -18,14 +16,8 @@ static constexpr DWORD kLegacyFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
 static constexpr DWORD kSdfFvf = D3DFVF_XYZRHW | D3DFVF_TEX1;
 static constexpr float kSdfAaWidthPx = 1.0f;
 
-static inline float ReadF32(const uint8_t *p) {
-  float v;
-  memcpy(&v, p, 4);
-  return v;
-}
-
-static inline D3DCOLOR ReadColor(const uint8_t *p) {
-  return D3DCOLOR_ARGB(p[0], p[1], p[2], p[3]);
+static inline D3DCOLOR ToD3DColor(const fdv::protocol::ColorArgb8 &color) {
+  return D3DCOLOR_ARGB(color.a, color.r, color.g, color.b);
 }
 
 static inline float Maxf(float a, float b) { return a > b ? a : b; }
@@ -188,115 +180,75 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
   SetupRenderState(dev);
 
   bool commandOk = true;
-  const uint8_t *p = data;
-  const uint8_t *end = data + bytes;
-
-  while (p < end) {
-    uint8_t cmd = *p++;
-
-    switch (cmd) {
-    case fdv::protocol::kCmdClear: {
-      if (p + fdv::protocol::kClearPayloadBytes > end)
-        goto done;
-
-      D3DCOLOR color = ReadColor(p + fdv::protocol::kClearColorOffset);
-      p += fdv::protocol::kClearPayloadBytes;
-      DWORD argb = color;
-      dev->Clear(0, nullptr, D3DCLEAR_TARGET,
-                 D3DCOLOR_ARGB((argb >> 24) & 0xFF, (argb >> 16) & 0xFF,
-                               (argb >> 8) & 0xFF, argb & 0xFF),
-                 1.0f, 0);
+  fdv::protocol::CommandReader reader(data, bytes);
+  fdv::protocol::Command command{};
+  while (reader.TryReadNext(command)) {
+    switch (command.type) {
+    case fdv::protocol::CommandType::Clear: {
+      const auto &payload =
+          std::get<fdv::protocol::ClearPayload>(command.payload);
+      dev->Clear(0, nullptr, D3DCLEAR_TARGET, ToD3DColor(payload.color), 1.0f,
+                 0);
       break;
     }
 
-    case fdv::protocol::kCmdFillRect: {
-      if (p + fdv::protocol::kFillRectPayloadBytes > end)
-        goto done;
-
-      float x = ReadF32(p + fdv::protocol::kFillRectXOffset);
-      float y = ReadF32(p + fdv::protocol::kFillRectYOffset);
-      float w = ReadF32(p + fdv::protocol::kFillRectWidthOffset);
-      float h = ReadF32(p + fdv::protocol::kFillRectHeightOffset);
-      D3DCOLOR color = ReadColor(p + fdv::protocol::kFillRectColorOffset);
-      p += fdv::protocol::kFillRectPayloadBytes;
-      DrawFilledRect(dev, x, y, w, h, color);
+    case fdv::protocol::CommandType::FillRect: {
+      const auto &payload =
+          std::get<fdv::protocol::FillRectPayload>(command.payload);
+      DrawFilledRect(dev, payload.x, payload.y, payload.width, payload.height,
+                     ToD3DColor(payload.color));
       break;
     }
 
-    case fdv::protocol::kCmdStrokeRect: {
-      if (p + fdv::protocol::kStrokeRectPayloadBytes > end)
-        goto done;
-
-      float x = ReadF32(p + fdv::protocol::kStrokeRectXOffset);
-      float y = ReadF32(p + fdv::protocol::kStrokeRectYOffset);
-      float w = ReadF32(p + fdv::protocol::kStrokeRectWidthOffset);
-      float h = ReadF32(p + fdv::protocol::kStrokeRectHeightOffset);
-      float t = ReadF32(p + fdv::protocol::kStrokeRectThicknessOffset);
-      D3DCOLOR color = ReadColor(p + fdv::protocol::kStrokeRectColorOffset);
-      p += fdv::protocol::kStrokeRectPayloadBytes;
-      if (t < 1.0f)
-        t = 1.0f;
-      DrawStrokeRect(dev, x, y, w, h, t, color);
+    case fdv::protocol::CommandType::StrokeRect: {
+      const auto &payload =
+          std::get<fdv::protocol::StrokeRectPayload>(command.payload);
+      const float thickness = payload.thickness < 1.0f ? 1.0f : payload.thickness;
+      DrawStrokeRect(dev, payload.x, payload.y, payload.width, payload.height,
+                     thickness, ToD3DColor(payload.color));
       break;
     }
 
-    case fdv::protocol::kCmdFillEllipse: {
-      if (p + fdv::protocol::kFillEllipsePayloadBytes > end)
-        goto done;
-
-      float cx = ReadF32(p + fdv::protocol::kFillEllipseCenterXOffset);
-      float cy = ReadF32(p + fdv::protocol::kFillEllipseCenterYOffset);
-      float rx = ReadF32(p + fdv::protocol::kFillEllipseRadiusXOffset);
-      float ry = ReadF32(p + fdv::protocol::kFillEllipseRadiusYOffset);
-      D3DCOLOR color = ReadColor(p + fdv::protocol::kFillEllipseColorOffset);
-      p += fdv::protocol::kFillEllipsePayloadBytes;
-      if (!DrawSdfEllipse(s, cx, cy, rx, ry, 0.0f, false, color)) {
+    case fdv::protocol::CommandType::FillEllipse: {
+      const auto &payload =
+          std::get<fdv::protocol::FillEllipsePayload>(command.payload);
+      if (!DrawSdfEllipse(s, payload.centerX, payload.centerY, payload.radiusX,
+                          payload.radiusY, 0.0f, false,
+                          ToD3DColor(payload.color))) {
         commandOk = false;
         goto done;
       }
       break;
     }
 
-    case fdv::protocol::kCmdStrokeEllipse: {
-      if (p + fdv::protocol::kStrokeEllipsePayloadBytes > end)
-        goto done;
-
-      float cx = ReadF32(p + fdv::protocol::kStrokeEllipseCenterXOffset);
-      float cy = ReadF32(p + fdv::protocol::kStrokeEllipseCenterYOffset);
-      float rx = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusXOffset);
-      float ry = ReadF32(p + fdv::protocol::kStrokeEllipseRadiusYOffset);
-      float t = ReadF32(p + fdv::protocol::kStrokeEllipseThicknessOffset);
-      D3DCOLOR color = ReadColor(p + fdv::protocol::kStrokeEllipseColorOffset);
-      p += fdv::protocol::kStrokeEllipsePayloadBytes;
-      if (!DrawSdfEllipse(s, cx, cy, rx, ry, t, true, color)) {
+    case fdv::protocol::CommandType::StrokeEllipse: {
+      const auto &payload =
+          std::get<fdv::protocol::StrokeEllipsePayload>(command.payload);
+      if (!DrawSdfEllipse(s, payload.centerX, payload.centerY, payload.radiusX,
+                          payload.radiusY, payload.thickness, true,
+                          ToD3DColor(payload.color))) {
         commandOk = false;
         goto done;
       }
       break;
     }
 
-    case fdv::protocol::kCmdLine: {
-      if (p + fdv::protocol::kLinePayloadBytes > end)
-        goto done;
-
-      float x0 = ReadF32(p + fdv::protocol::kLineX0Offset);
-      float y0 = ReadF32(p + fdv::protocol::kLineY0Offset);
-      float x1 = ReadF32(p + fdv::protocol::kLineX1Offset);
-      float y1 = ReadF32(p + fdv::protocol::kLineY1Offset);
-      float t = ReadF32(p + fdv::protocol::kLineThicknessOffset);
-      D3DCOLOR color = ReadColor(p + fdv::protocol::kLineColorOffset);
-      p += fdv::protocol::kLinePayloadBytes;
-
-      if (!DrawSdfLine(s, x0, y0, x1, y1, t, color)) {
+    case fdv::protocol::CommandType::Line: {
+      const auto &payload =
+          std::get<fdv::protocol::LinePayload>(command.payload);
+      if (!DrawSdfLine(s, payload.x0, payload.y0, payload.x1, payload.y1,
+                       payload.thickness, ToD3DColor(payload.color))) {
         commandOk = false;
         goto done;
       }
       break;
     }
-
-    default:
-      goto done;
     }
+  }
+
+  if (reader.HasError()) {
+    commandOk = false;
+    goto done;
   }
 
 done:

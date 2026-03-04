@@ -2,31 +2,31 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClCompile Include="NativeProxy.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="BridgeExports.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="BridgeDeviceResources.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="BridgeNativeExports.h">
-      <Filter>Header Files</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="BridgeRendererInternal.h">
-      <Filter>Header Files</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="NativeProxy.h">
-      <Filter>Header Files</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <Filter Include="Header Files">
+    <Filter Include="头文件">
       <UniqueIdentifier>{A268DEAF-6F6C-4C20-A4FE-4E36E53A3EB7}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files">
+    <Filter Include="源文件">
       <UniqueIdentifier>{4A42EBF3-E166-4968-8CFA-C19FAF5958F5}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
