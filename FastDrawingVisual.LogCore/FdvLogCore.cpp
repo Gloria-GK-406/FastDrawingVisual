@@ -1,99 +1,30 @@
-#include "FdvLogCoreExports.h"
-
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 
 #include <Windows.h>
-#include <evntprov.h>
 
+#include "FdvLogCoreExports.h"
+#include "LogEtwSink.h"
+#include "LogMetricsAggregator.h"
+#include "LogSinksSpdlog.h"
+#include "LogTypes.h"
+#include "RingBuffer.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstring>
-#include <cstdint>
-#include <cstdio>
 #include <cwchar>
-#include <cwctype>
-#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <utility>
-#include <vector>
-
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/msvc_sink.h>
-#include <spdlog/sinks/null_sink.h>
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 #pragma comment(lib, "advapi32.lib")
 
-const GUID kFdvLogEtwProviderId = {
-    0x5f0add12,
-    0x61d2,
-    0x4ee9,
-    {0x84, 0x71, 0x76, 0x8f, 0x2d, 0x6d, 0xa2, 0x0b},
-};
-
+namespace fdvlog {
 namespace {
-constexpr size_t kMaxCategoryChars = 63;
-constexpr size_t kMaxMessageChars = 511;
-constexpr int kDefaultRingBufferCapacity = 8192;
-constexpr int kDefaultFlushIntervalMs = 200;
-constexpr int kDefaultFileMaxBytes = 30 * 1024 * 1024;
-constexpr int kDefaultFileMaxFiles = 10;
-
-enum class EventType : uint8_t { Text, Metric };
-
-struct TextPayload {
-  int level = FDVLOG_LevelInfo;
-  uint32_t threadId = 0;
-  wchar_t category[kMaxCategoryChars + 1]{};
-  wchar_t message[kMaxMessageChars + 1]{};
-};
-
-struct MetricPayload {
-  uint32_t metricId = 0;
-  int64_t value = 0;
-  uint32_t windowMs = 1000;
-  int aggregation = FDVLOG_AggregationRate;
-};
-
-struct LogEvent {
-  EventType type = EventType::Text;
-  uint64_t qpcTicks = 0;
-  TextPayload text;
-  MetricPayload metric;
-};
-
-struct MetricState {
-  uint32_t windowMs = 1000;
-  int aggregation = FDVLOG_AggregationRate;
-  uint64_t windowStart100ns = 0;
-  uint64_t windowEnd100ns = 0;
-  int64_t sum = 0;
-  int64_t minValue = 0;
-  int64_t maxValue = 0;
-  uint64_t sampleCount = 0;
-  bool hasSamples = false;
-  bool emptyEmittedSinceLastSample = false;
-};
-
-struct LoggerConfig {
-  size_t ringBufferCapacity = static_cast<size_t>(kDefaultRingBufferCapacity);
-  int flushIntervalMs = kDefaultFlushIntervalMs;
-  bool enableFileSink = true;
-  std::wstring filePath = L"logs\\fastdrawingvisual.log";
-  uint64_t fileMaxBytes = static_cast<uint64_t>(kDefaultFileMaxBytes);
-  int fileMaxFiles = kDefaultFileMaxFiles;
-  bool enableDebugOutput = true;
-  bool enableEtw = true;
-};
 
 static uint64_t CombineFileTime(const FILETIME &ft) {
   ULARGE_INTEGER value{};
@@ -120,11 +51,6 @@ static uint64_t QuerySystemFileTimeNow100ns() {
   return CombineFileTime(ft);
 }
 
-static uint64_t WindowDuration100ns(uint32_t windowMs) {
-  const uint64_t safeWindowMs = std::max<uint32_t>(windowMs, 1);
-  return safeWindowMs * 10000ULL;
-}
-
 static const wchar_t *LevelName(int level) {
   switch (level) {
   case FDVLOG_LevelTrace:
@@ -144,41 +70,6 @@ static const wchar_t *LevelName(int level) {
   }
 }
 
-static const wchar_t *AggregationName(int aggregation) {
-  switch (aggregation) {
-  case FDVLOG_AggregationRate:
-    return L"rate";
-  case FDVLOG_AggregationAverage:
-    return L"avg";
-  case FDVLOG_AggregationSum:
-    return L"sum";
-  case FDVLOG_AggregationMin:
-    return L"min";
-  case FDVLOG_AggregationMax:
-    return L"max";
-  default:
-    return L"rate";
-  }
-}
-
-static UCHAR EtwLevelForLogLevel(int level) {
-  switch (level) {
-  case FDVLOG_LevelTrace:
-  case FDVLOG_LevelDebug:
-    return 5;
-  case FDVLOG_LevelInfo:
-    return 4;
-  case FDVLOG_LevelWarn:
-    return 3;
-  case FDVLOG_LevelError:
-    return 2;
-  case FDVLOG_LevelFatal:
-    return 1;
-  default:
-    return 4;
-  }
-}
-
 static void CopyBoundedText(const wchar_t *source, wchar_t *destination,
                             size_t destinationChars) {
   if (!destination || destinationChars == 0)
@@ -191,61 +82,46 @@ static void CopyBoundedText(const wchar_t *source, wchar_t *destination,
   wcsncpy_s(destination, destinationChars, source, _TRUNCATE);
 }
 
-static std::wstring GetDirectoryPart(const std::wstring &path) {
-  const auto index = path.find_last_of(L"\\/");
-  if (index == std::wstring::npos)
-    return std::wstring();
-  return path.substr(0, index);
+static void NormalizeConfig(const FDVLOG_Config *input, LoggerConfig *output) {
+  if (!output)
+    return;
+
+  if (!input)
+    return;
+
+  output->ringBufferCapacity =
+      static_cast<size_t>(std::max(input->ringBufferCapacity, 128));
+  output->flushIntervalMs = std::max(input->flushIntervalMs, 50);
+  output->enableFileSink = input->enableFileSink;
+  if (input->filePath && input->filePath[0] != L'\0')
+    output->filePath = input->filePath;
+  output->fileMaxBytes =
+      static_cast<uint64_t>(std::max(input->fileMaxBytes, 1024 * 1024));
+  output->fileMaxFiles = std::max(input->fileMaxFiles, 1);
+  output->enableDebugOutput = input->enableDebugOutput;
+  output->enableEtw = input->enableEtw;
 }
 
-static std::string WideToUtf8(const std::wstring &text) {
-  if (text.empty())
-    return {};
+static std::wstring FormatLocalTimestamp(uint64_t fileTime100ns) {
+  FILETIME utcFileTime{};
+  ULARGE_INTEGER value{};
+  value.QuadPart = fileTime100ns;
+  utcFileTime.dwLowDateTime = value.LowPart;
+  utcFileTime.dwHighDateTime = value.HighPart;
 
-  const int required = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1,
-                                           nullptr, 0, nullptr, nullptr);
-  if (required <= 1)
-    return {};
+  FILETIME localFileTime{};
+  FileTimeToLocalFileTime(&utcFileTime, &localFileTime);
 
-  std::string utf8(static_cast<size_t>(required), '\0');
-  WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, utf8.data(), required,
-                      nullptr, nullptr);
-  utf8.pop_back(); // Drop null terminator.
-  return utf8;
-}
+  SYSTEMTIME localSystemTime{};
+  FileTimeToSystemTime(&localFileTime, &localSystemTime);
 
-static spdlog::level::level_enum ToSpdlogLevel(int level) {
-  switch (level) {
-  case FDVLOG_LevelTrace:
-    return spdlog::level::trace;
-  case FDVLOG_LevelDebug:
-    return spdlog::level::debug;
-  case FDVLOG_LevelInfo:
-    return spdlog::level::info;
-  case FDVLOG_LevelWarn:
-    return spdlog::level::warn;
-  case FDVLOG_LevelError:
-    return spdlog::level::err;
-  case FDVLOG_LevelFatal:
-    return spdlog::level::critical;
-  default:
-    return spdlog::level::info;
-  }
-}
-
-static bool ParseBooleanValue(std::wstring text) {
-  std::transform(text.begin(), text.end(), text.begin(),
-                 [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-  return text == L"1" || text == L"true" || text == L"on" || text == L"yes";
-}
-
-static bool IsConsoleSinkEnabledByEnv() {
-  wchar_t buffer[16]{};
-  const DWORD length = GetEnvironmentVariableW(
-      L"FDVLOG_ENABLE_CONSOLE", buffer, static_cast<DWORD>(_countof(buffer)));
-  if (length == 0 || length >= _countof(buffer))
-    return false;
-  return ParseBooleanValue(std::wstring(buffer, length));
+  wchar_t buffer[64]{};
+  swprintf_s(buffer, L"%04d-%02d-%02d %02d:%02d:%02d.%03d",
+             localSystemTime.wYear, localSystemTime.wMonth,
+             localSystemTime.wDay, localSystemTime.wHour,
+             localSystemTime.wMinute, localSystemTime.wSecond,
+             localSystemTime.wMilliseconds);
+  return buffer;
 }
 
 class LoggerCore {
@@ -261,11 +137,8 @@ public:
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
       config_ = normalized;
-      events_.assign(config_.ringBufferCapacity, LogEvent{});
-      head_ = 0;
-      tail_ = 0;
-      count_ = 0;
-      droppedTotal_.store(0);
+      events_.Reset(config_.ringBufferCapacity);
+      droppedTotal_.store(0, std::memory_order_relaxed);
     }
 
     qpcFrequency_ = freq;
@@ -273,13 +146,8 @@ public:
     fileTimeBase100ns_ = QuerySystemFileTimeNow100ns();
     lastFlushTick_ = std::chrono::steady_clock::now();
 
-    InitializeSpdlogLogger(config_);
-
-    if (config_.enableEtw) {
-      etwRegistered_ =
-          EventRegister(&kFdvLogEtwProviderId, nullptr, nullptr, &etwHandle_) ==
-          ERROR_SUCCESS;
-    }
+    textSinks_.Initialize(config_);
+    etwSink_.Initialize(config_.enableEtw);
 
     running_.store(true);
     worker_ = std::thread([this]() { WorkerLoop(); });
@@ -296,14 +164,10 @@ public:
     }
 
     std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-    FlushSinksLocked();
-    if (etwRegistered_) {
-      EventUnregister(etwHandle_);
-      etwHandle_ = 0;
-      etwRegistered_ = false;
-    }
-    logger_.reset();
-    metrics_.clear();
+    textSinks_.Flush();
+    textSinks_.Shutdown();
+    etwSink_.Shutdown();
+    metrics_.Reset();
   }
 
   void Flush(uint32_t flushTimeoutMs) {
@@ -313,7 +177,7 @@ public:
     while (std::chrono::steady_clock::now() < deadline) {
       {
         std::lock_guard<std::mutex> lock(queueMutex_);
-        if (count_ == 0)
+        if (events_.Empty())
           break;
       }
       queueCv_.notify_all();
@@ -321,7 +185,7 @@ public:
     }
 
     std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-    FlushSinksLocked();
+    textSinks_.Flush();
   }
 
   void Log(int level, const wchar_t *category, const wchar_t *message,
@@ -354,88 +218,28 @@ public:
     Enqueue(ev);
   }
 
-  uint64_t DroppedTotal() const { return droppedTotal_.load(); }
-
-private:
-  static void NormalizeConfig(const FDVLOG_Config *input, LoggerConfig *output) {
-    if (!output)
-      return;
-
-    if (!input)
-      return;
-
-    output->ringBufferCapacity =
-        static_cast<size_t>(std::max(input->ringBufferCapacity, 128));
-    output->flushIntervalMs = std::max(input->flushIntervalMs, 50);
-    output->enableFileSink = input->enableFileSink;
-    if (input->filePath && input->filePath[0] != L'\0')
-      output->filePath = input->filePath;
-    output->fileMaxBytes =
-        static_cast<uint64_t>(std::max(input->fileMaxBytes, 1024 * 1024));
-    output->fileMaxFiles = std::max(input->fileMaxFiles, 1);
-    output->enableDebugOutput = input->enableDebugOutput;
-    output->enableEtw = input->enableEtw;
+  uint64_t DroppedTotal() const {
+    return droppedTotal_.load(std::memory_order_relaxed);
   }
 
+private:
   void Enqueue(const LogEvent &event) {
     std::lock_guard<std::mutex> lock(queueMutex_);
-    if (events_.empty())
-      return;
-
-    if (count_ == events_.size()) {
-      tail_ = (tail_ + 1) % events_.size();
-      --count_;
-      droppedTotal_.fetch_add(1);
+    const bool overwritten = events_.PushOverwrite(event);
+    if (overwritten) {
+      droppedTotal_.fetch_add(1, std::memory_order_relaxed);
     }
-
-    events_[head_] = event;
-    head_ = (head_ + 1) % events_.size();
-    ++count_;
     queueCv_.notify_one();
   }
 
   bool TryDequeue(LogEvent *event) {
     std::lock_guard<std::mutex> lock(queueMutex_);
-    if (count_ == 0 || !event)
-      return false;
-
-    *event = events_[tail_];
-    tail_ = (tail_ + 1) % events_.size();
-    --count_;
-    return true;
-  }
-
-  void WorkerLoop() {
-    while (running_.load() || HasPendingEvents()) {
-      LogEvent ev{};
-      if (TryDequeue(&ev)) {
-        if (ev.type == EventType::Text)
-          ProcessTextEvent(ev);
-        else
-          ProcessMetricEvent(ev);
-      } else {
-        std::unique_lock<std::mutex> lock(queueMutex_);
-        queueCv_.wait_for(lock, std::chrono::milliseconds(20),
-                          [this]() { return count_ > 0 || !running_.load(); });
-        lock.unlock();
-        ProcessHeartbeat(QueryQpcNow());
-      }
-
-      const auto now = std::chrono::steady_clock::now();
-      if (now - lastFlushTick_ >=
-          std::chrono::milliseconds(config_.flushIntervalMs)) {
-        std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-        FlushSinksLocked();
-        lastFlushTick_ = now;
-      }
-    }
-
-    ProcessHeartbeat(QueryQpcNow());
+    return events_.TryPop(event);
   }
 
   bool HasPendingEvents() {
     std::lock_guard<std::mutex> lock(queueMutex_);
-    return count_ > 0;
+    return !events_.Empty();
   }
 
   uint64_t QpcToFileTime100ns(uint64_t qpcTicks) const {
@@ -445,26 +249,14 @@ private:
     return fileTimeBase100ns_ + ((delta * 10000000ULL) / qpcFrequency_);
   }
 
-  static std::wstring FormatLocalTimestamp(uint64_t fileTime100ns) {
-    FILETIME utcFileTime{};
-    ULARGE_INTEGER value{};
-    value.QuadPart = fileTime100ns;
-    utcFileTime.dwLowDateTime = value.LowPart;
-    utcFileTime.dwHighDateTime = value.HighPart;
+  void EmitLineLocked(const std::wstring &line, int level) {
+    textSinks_.Log(line, level);
+    etwSink_.WriteETW(line, level);
+  }
 
-    FILETIME localFileTime{};
-    FileTimeToLocalFileTime(&utcFileTime, &localFileTime);
-
-    SYSTEMTIME localSystemTime{};
-    FileTimeToSystemTime(&localFileTime, &localSystemTime);
-
-    wchar_t buffer[64]{};
-    swprintf_s(buffer, L"%04d-%02d-%02d %02d:%02d:%02d.%03d",
-               localSystemTime.wYear, localSystemTime.wMonth,
-               localSystemTime.wDay, localSystemTime.wHour,
-               localSystemTime.wMinute, localSystemTime.wSecond,
-               localSystemTime.wMilliseconds);
-    return buffer;
+  void EmitLine(const std::wstring &line, int level) {
+    std::lock_guard<std::mutex> sinkLock(sinkMutex_);
+    EmitLineLocked(line, level);
   }
 
   void ProcessTextEvent(const LogEvent &ev) {
@@ -476,226 +268,51 @@ private:
                static_cast<unsigned long>(ev.text.threadId),
                LevelName(ev.text.level), ev.text.category, ev.text.message);
 
-    const std::wstring line = lineBuffer;
-
-    std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-    WriteTextLineLocked(line, ev.text.level);
-
-    if (etwRegistered_)
-      EventWriteString(etwHandle_, EtwLevelForLogLevel(ev.text.level), 0,
-                       line.c_str());
+    EmitLine(lineBuffer, ev.text.level);
   }
 
   void ProcessMetricEvent(const LogEvent &ev) {
     const uint64_t ts100ns = QpcToFileTime100ns(ev.qpcTicks);
-    auto &state = metrics_[ev.metric.metricId];
-
-    if (state.windowEnd100ns == 0 || state.windowMs != ev.metric.windowMs ||
-        state.aggregation != ev.metric.aggregation) {
-      InitializeMetricState(state, ev.metric.windowMs, ev.metric.aggregation,
-                            ts100ns);
-    }
-
-    AdvanceMetricWindow(state, ev.metric.metricId, ts100ns);
-    AccumulateMetric(state, ev.metric.value);
+    metrics_.OnMetricEvent(
+        ev.metric, ts100ns,
+        [this](const std::wstring &line, int level) { EmitLine(line, level); });
   }
 
   void ProcessHeartbeat(uint64_t nowQpcTicks) {
     const uint64_t now100ns = QpcToFileTime100ns(nowQpcTicks);
-    for (auto &entry : metrics_) {
-      AdvanceMetricWindow(entry.second, entry.first, now100ns);
-    }
+    metrics_.OnHeartbeat(
+        now100ns,
+        [this](const std::wstring &line, int level) { EmitLine(line, level); });
   }
 
-  static void InitializeMetricState(MetricState &state, uint32_t windowMs,
-                                    int aggregation, uint64_t ts100ns) {
-    const uint64_t duration = WindowDuration100ns(windowMs);
-    const uint64_t start = (ts100ns / duration) * duration;
-
-    state.windowMs = windowMs;
-    state.aggregation = aggregation;
-    state.windowStart100ns = start;
-    state.windowEnd100ns = start + duration;
-    state.sum = 0;
-    state.minValue = 0;
-    state.maxValue = 0;
-    state.sampleCount = 0;
-    state.hasSamples = false;
-    state.emptyEmittedSinceLastSample = false;
-  }
-
-  static void AccumulateMetric(MetricState &state, int64_t value) {
-    if (!state.hasSamples) {
-      state.sum = value;
-      state.minValue = value;
-      state.maxValue = value;
-      state.sampleCount = 1;
-      state.hasSamples = true;
-      state.emptyEmittedSinceLastSample = false;
-      return;
-    }
-
-    state.sum += value;
-    state.minValue = std::min(state.minValue, value);
-    state.maxValue = std::max(state.maxValue, value);
-    ++state.sampleCount;
-  }
-
-  void AdvanceMetricWindow(MetricState &state, uint32_t metricId,
-                           uint64_t ts100ns) {
-    const uint64_t duration = WindowDuration100ns(state.windowMs);
-    if (duration == 0)
-      return;
-
-    while (ts100ns >= state.windowEnd100ns) {
-      EmitMetricWindow(metricId, state);
-      state.windowStart100ns = state.windowEnd100ns;
-      state.windowEnd100ns += duration;
-      state.sum = 0;
-      state.sampleCount = 0;
-      state.hasSamples = false;
-      state.minValue = 0;
-      state.maxValue = 0;
-
-      if (!state.hasSamples && state.emptyEmittedSinceLastSample &&
-          ts100ns >= state.windowEnd100ns) {
-        const uint64_t windowsToSkip =
-            (ts100ns - state.windowEnd100ns) / duration;
-        state.windowStart100ns += windowsToSkip * duration;
-        state.windowEnd100ns += windowsToSkip * duration;
-      }
-    }
-  }
-
-  void EmitMetricWindow(uint32_t metricId, MetricState &state) {
-    bool hasValue = false;
-    double value = 0.0;
-    if (state.hasSamples) {
-      switch (state.aggregation) {
-      case FDVLOG_AggregationRate:
-        value = static_cast<double>(state.sampleCount);
-        hasValue = true;
-        break;
-      case FDVLOG_AggregationAverage:
-        value = static_cast<double>(state.sum) /
-                static_cast<double>(state.sampleCount);
-        hasValue = true;
-        break;
-      case FDVLOG_AggregationSum:
-        value = static_cast<double>(state.sum);
-        hasValue = true;
-        break;
-      case FDVLOG_AggregationMin:
-        value = static_cast<double>(state.minValue);
-        hasValue = true;
-        break;
-      case FDVLOG_AggregationMax:
-        value = static_cast<double>(state.maxValue);
-        hasValue = true;
-        break;
-      default:
-        break;
-      }
-      state.emptyEmittedSinceLastSample = false;
-    } else {
-      if (state.emptyEmittedSinceLastSample)
-        return;
-
-      if (state.aggregation == FDVLOG_AggregationRate ||
-          state.aggregation == FDVLOG_AggregationSum) {
-        value = 0.0;
-        hasValue = true;
-      }
-      state.emptyEmittedSinceLastSample = true;
-    }
-
-    wchar_t lineBuffer[512]{};
-    if (hasValue) {
-      swprintf_s(lineBuffer,
-                 L"[metric] id=%u windowMs=%u agg=%s value=%.3f samples=%llu",
-                 metricId, state.windowMs, AggregationName(state.aggregation),
-                 value, static_cast<unsigned long long>(state.sampleCount));
-    } else {
-      swprintf_s(lineBuffer,
-                 L"[metric] id=%u windowMs=%u agg=%s value=null samples=0",
-                 metricId, state.windowMs, AggregationName(state.aggregation));
-    }
-
-    std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-    WriteTextLineLocked(lineBuffer, FDVLOG_LevelInfo);
-
-    if (etwRegistered_)
-      EventWriteString(etwHandle_, 4, 0, lineBuffer);
-  }
-
-  void WriteTextLineLocked(const std::wstring &line, int level) {
-    if (!logger_)
-      return;
-
-    try {
-      logger_->log(ToSpdlogLevel(level), WideToUtf8(line));
-    } catch (...) {
-      // Swallow sink/format exceptions to avoid affecting callers.
-    }
-  }
-
-  void FlushSinksLocked() {
-    if (!logger_)
-      return;
-    try {
-      logger_->flush();
-    } catch (...) {
-      // Best-effort flush.
-    }
-  }
-
-  void InitializeSpdlogLogger(const LoggerConfig &config) {
-    std::vector<spdlog::sink_ptr> sinks;
-
-    if (config.enableFileSink) {
-      const std::wstring dir = GetDirectoryPart(config.filePath);
-      if (!dir.empty()) {
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
+  void WorkerLoop() {
+    while (running_.load() || HasPendingEvents()) {
+      LogEvent ev{};
+      if (TryDequeue(&ev)) {
+        if (ev.type == EventType::Text) {
+          ProcessTextEvent(ev);
+        } else {
+          ProcessMetricEvent(ev);
+        }
+      } else {
+        std::unique_lock<std::mutex> lock(queueMutex_);
+        queueCv_.wait_for(lock, std::chrono::milliseconds(20), [this]() {
+          return !events_.Empty() || !running_.load();
+        });
+        lock.unlock();
+        ProcessHeartbeat(QueryQpcNow());
       }
 
-      try {
-        auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-            config.filePath, config.fileMaxBytes,
-            static_cast<size_t>(std::max(config.fileMaxFiles, 1)));
-        sinks.push_back(fileSink);
-      } catch (...) {
-        // Continue with remaining sinks.
+      const auto now = std::chrono::steady_clock::now();
+      if (now - lastFlushTick_ >=
+          std::chrono::milliseconds(config_.flushIntervalMs)) {
+        std::lock_guard<std::mutex> sinkLock(sinkMutex_);
+        textSinks_.Flush();
+        lastFlushTick_ = now;
       }
     }
 
-#if defined(_DEBUG)
-    if (config.enableDebugOutput) {
-      try {
-        sinks.push_back(std::make_shared<spdlog::sinks::msvc_sink_mt>());
-      } catch (...) {
-        // Continue with remaining sinks.
-      }
-    }
-#endif
-
-    if (IsConsoleSinkEnabledByEnv()) {
-      try {
-        sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-      } catch (...) {
-        // Continue with remaining sinks.
-      }
-    }
-
-    if (sinks.empty()) {
-      sinks.push_back(std::make_shared<spdlog::sinks::null_sink_mt>());
-    }
-
-    logger_ = std::make_shared<spdlog::logger>("fdvlog", sinks.begin(),
-                                               sinks.end());
-    logger_->set_level(spdlog::level::trace);
-    logger_->set_pattern("%v");
-    logger_->flush_on(spdlog::level::err);
+    ProcessHeartbeat(QueryQpcNow());
   }
 
 private:
@@ -703,10 +320,7 @@ private:
 
   mutable std::mutex queueMutex_;
   std::condition_variable queueCv_;
-  std::vector<LogEvent> events_;
-  size_t head_ = 0;
-  size_t tail_ = 0;
-  size_t count_ = 0;
+  RingBuffer<LogEvent> events_;
 
   std::atomic<bool> running_{false};
   std::thread worker_;
@@ -719,10 +333,9 @@ private:
   std::chrono::steady_clock::time_point lastFlushTick_{};
 
   std::mutex sinkMutex_;
-  std::shared_ptr<spdlog::logger> logger_;
-  bool etwRegistered_ = false;
-  REGHANDLE etwHandle_ = 0;
-  std::unordered_map<uint32_t, MetricState> metrics_;
+  LogSinksSpdlog textSinks_;
+  LogEtwSink etwSink_;
+  LogMetricsAggregator metrics_;
 };
 
 std::mutex g_loggerGuard;
@@ -734,18 +347,20 @@ std::shared_ptr<LoggerCore> GetLogger() {
 }
 
 } // namespace
+} // namespace fdvlog
 
 extern "C" {
+
 bool __cdecl FDVLOG_Initialize(const FDVLOG_Config *config) {
-  auto next = std::make_shared<LoggerCore>();
+  auto next = std::make_shared<fdvlog::LoggerCore>();
   if (!next->Initialize(config))
     return false;
 
-  std::shared_ptr<LoggerCore> old;
+  std::shared_ptr<fdvlog::LoggerCore> old;
   {
-    std::lock_guard<std::mutex> lock(g_loggerGuard);
-    old = std::move(g_logger);
-    g_logger = std::move(next);
+    std::lock_guard<std::mutex> lock(fdvlog::g_loggerGuard);
+    old = std::move(fdvlog::g_logger);
+    fdvlog::g_logger = std::move(next);
   }
 
   if (old)
@@ -754,10 +369,10 @@ bool __cdecl FDVLOG_Initialize(const FDVLOG_Config *config) {
 }
 
 void __cdecl FDVLOG_Shutdown(int flushTimeoutMs) {
-  std::shared_ptr<LoggerCore> old;
+  std::shared_ptr<fdvlog::LoggerCore> old;
   {
-    std::lock_guard<std::mutex> lock(g_loggerGuard);
-    old = std::move(g_logger);
+    std::lock_guard<std::mutex> lock(fdvlog::g_loggerGuard);
+    old = std::move(fdvlog::g_logger);
   }
 
   if (old) {
@@ -766,7 +381,7 @@ void __cdecl FDVLOG_Shutdown(int flushTimeoutMs) {
 }
 
 void __cdecl FDVLOG_Flush(int flushTimeoutMs) {
-  auto logger = GetLogger();
+  auto logger = fdvlog::GetLogger();
   if (!logger)
     return;
   logger->Flush(static_cast<uint32_t>(std::max(flushTimeoutMs, 0)));
@@ -774,7 +389,7 @@ void __cdecl FDVLOG_Flush(int flushTimeoutMs) {
 
 void __cdecl FDVLOG_Log(int level, const wchar_t *category,
                         const wchar_t *message, bool direct) {
-  auto logger = GetLogger();
+  auto logger = fdvlog::GetLogger();
   if (!logger)
     return;
   logger->Log(level, category, message, direct);
@@ -782,16 +397,17 @@ void __cdecl FDVLOG_Log(int level, const wchar_t *category,
 
 void __cdecl FDVLOG_Metric(uint32_t metricId, int64_t value, uint32_t windowMs,
                            int aggregation) {
-  auto logger = GetLogger();
+  auto logger = fdvlog::GetLogger();
   if (!logger)
     return;
   logger->Metric(metricId, value, windowMs, aggregation);
 }
 
 uint64_t __cdecl FDVLOG_GetDroppedTotal() {
-  auto logger = GetLogger();
+  auto logger = fdvlog::GetLogger();
   if (!logger)
     return 0;
   return logger->DroppedTotal();
 }
-}
+
+} // extern "C"

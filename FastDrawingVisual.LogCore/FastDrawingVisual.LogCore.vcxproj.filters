@@ -12,9 +12,33 @@
     <ClCompile Include="FdvLogCore.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="LogEtwSink.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="LogMetricsAggregator.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="LogSinksSpdlog.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FdvLogCoreExports.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="LogMetricsAggregator.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="LogSinksSpdlog.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="LogTypes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="RingBuffer.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="LogEtwSink.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

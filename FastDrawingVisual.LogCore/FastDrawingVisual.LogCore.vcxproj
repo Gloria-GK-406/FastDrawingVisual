@@ -160,9 +160,17 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="FdvLogCore.cpp" />
+    <ClCompile Include="LogEtwSink.cpp" />
+    <ClCompile Include="LogMetricsAggregator.cpp" />
+    <ClCompile Include="LogSinksSpdlog.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FdvLogCoreExports.h" />
+    <ClInclude Include="LogEtwSink.h" />
+    <ClInclude Include="LogMetricsAggregator.h" />
+    <ClInclude Include="LogSinksSpdlog.h" />
+    <ClInclude Include="LogTypes.h" />
+    <ClInclude Include="RingBuffer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
