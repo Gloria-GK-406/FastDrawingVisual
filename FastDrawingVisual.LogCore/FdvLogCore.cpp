@@ -5,6 +5,7 @@
 #include <Windows.h>
 
 #include "FdvLogCoreExports.h"
+#include "LogCoreResource.h"
 #include "LogEtwSink.h"
 #include "LogMetricsAggregator.h"
 #include "LogSinksSpdlog.h"
@@ -16,16 +17,24 @@
 #include <chrono>
 #include <condition_variable>
 #include <cwchar>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
 
+#include "third_party/nlohmann/json.hpp"
+
 #pragma comment(lib, "advapi32.lib")
 
 namespace fdvlog {
 namespace {
+
+extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 static uint64_t CombineFileTime(const FILETIME &ft) {
   ULARGE_INTEGER value{};
@@ -83,7 +92,296 @@ static void CopyBoundedText(const wchar_t *source, wchar_t *destination,
   wcsncpy_s(destination, destinationChars, source, _TRUNCATE);
 }
 
-static void NormalizeConfig(const FDVLOG_Config *input, LoggerConfig *output) {
+static void StripUtf8Bom(std::string *text) {
+  if (!text)
+    return;
+  if (text->size() >= 3 && static_cast<unsigned char>((*text)[0]) == 0xEF &&
+      static_cast<unsigned char>((*text)[1]) == 0xBB &&
+      static_cast<unsigned char>((*text)[2]) == 0xBF) {
+    text->erase(0, 3);
+  }
+}
+
+static std::wstring Utf8ToWide(const std::string &text) {
+  if (text.empty())
+    return {};
+
+  const int required =
+      MultiByteToWideChar(CP_UTF8, 0, text.data(),
+                          static_cast<int>(text.size()), nullptr, 0);
+  if (required <= 0)
+    return {};
+
+  std::wstring converted(static_cast<size_t>(required), L'\0');
+  const int written =
+      MultiByteToWideChar(CP_UTF8, 0, text.data(),
+                          static_cast<int>(text.size()), converted.data(),
+                          required);
+  if (written <= 0)
+    return {};
+  return converted;
+}
+
+static bool TryReadUtf8TextFile(const std::wstring &path, std::string *content) {
+  if (!content)
+    return false;
+
+  std::ifstream stream(std::filesystem::path(path), std::ios::binary);
+  if (!stream)
+    return false;
+
+  std::string loaded((std::istreambuf_iterator<char>(stream)),
+                     std::istreambuf_iterator<char>());
+  StripUtf8Bom(&loaded);
+  *content = std::move(loaded);
+  return true;
+}
+
+static std::wstring GetExecutableDirectory() {
+  std::wstring buffer(MAX_PATH, L'\0');
+  DWORD copied = 0;
+  while (true) {
+    copied = GetModuleFileNameW(nullptr, buffer.data(),
+                                static_cast<DWORD>(buffer.size()));
+    if (copied == 0)
+      return L".";
+    if (copied < buffer.size() - 1)
+      break;
+    buffer.resize(buffer.size() * 2, L'\0');
+  }
+
+  buffer.resize(copied);
+  const size_t sep = buffer.find_last_of(L"\\/");
+  if (sep == std::wstring::npos)
+    return L".";
+  return buffer.substr(0, sep);
+}
+
+static std::wstring CombinePath(const std::wstring &directory,
+                                const wchar_t *fileName) {
+  if (!fileName || fileName[0] == L'\0')
+    return directory;
+
+  if (directory.empty())
+    return std::wstring(fileName);
+
+  std::wstring full = directory;
+  if (full.back() != L'\\' && full.back() != L'/')
+    full.push_back(L'\\');
+  full.append(fileName);
+  return full;
+}
+
+static bool TryLoadEmbeddedMonitorJson(std::string *content) {
+  if (!content)
+    return false;
+
+  const HMODULE module = reinterpret_cast<HMODULE>(&__ImageBase);
+
+  HRSRC resource =
+      FindResourceW(module, MAKEINTRESOURCEW(IDR_MONITOR_JSON), RT_RCDATA);
+  if (!resource)
+    return false;
+
+  const DWORD size = SizeofResource(module, resource);
+  if (size == 0)
+    return false;
+
+  HGLOBAL loaded = LoadResource(module, resource);
+  if (!loaded)
+    return false;
+
+  const void *raw = LockResource(loaded);
+  if (!raw)
+    return false;
+
+  content->assign(static_cast<const char *>(raw),
+                  static_cast<const char *>(raw) + size);
+  StripUtf8Bom(content);
+  return true;
+}
+
+static void MergeJsonNode(nlohmann::json *baseline,
+                          const nlohmann::json &overrideNode) {
+  if (!baseline)
+    return;
+
+  if (baseline->is_object() && overrideNode.is_object()) {
+    for (auto it = overrideNode.begin(); it != overrideNode.end(); ++it) {
+      const auto existing = baseline->find(it.key());
+      if (existing != baseline->end()) {
+        MergeJsonNode(&(*baseline)[it.key()], it.value());
+      } else {
+        (*baseline)[it.key()] = it.value();
+      }
+    }
+    return;
+  }
+
+  *baseline = overrideNode;
+}
+
+static bool TryGetJsonObject(const nlohmann::json &node, const char *key,
+                             const nlohmann::json **value) {
+  if (!value || !node.is_object())
+    return false;
+  const auto it = node.find(key);
+  if (it == node.end() || !it->is_object())
+    return false;
+  *value = &(*it);
+  return true;
+}
+
+static bool TryGetJsonBool(const nlohmann::json &node, const char *key,
+                           bool *value) {
+  if (!value || !node.is_object())
+    return false;
+  const auto it = node.find(key);
+  if (it == node.end() || !it->is_boolean())
+    return false;
+  *value = it->get<bool>();
+  return true;
+}
+
+static bool TryGetJsonInt(const nlohmann::json &node, const char *key,
+                          int *value) {
+  if (!value || !node.is_object())
+    return false;
+
+  const auto it = node.find(key);
+  if (it == node.end())
+    return false;
+
+  int64_t parsed = 0;
+  if (it->is_number_integer()) {
+    parsed = it->get<int64_t>();
+  } else if (it->is_number_unsigned()) {
+    const uint64_t unsignedValue = it->get<uint64_t>();
+    parsed = unsignedValue > static_cast<uint64_t>(std::numeric_limits<int>::max())
+                 ? static_cast<int64_t>(std::numeric_limits<int>::max())
+                 : static_cast<int64_t>(unsignedValue);
+  } else if (it->is_number_float()) {
+    parsed = static_cast<int64_t>(it->get<double>());
+  } else {
+    return false;
+  }
+
+  if (parsed < std::numeric_limits<int>::min())
+    parsed = std::numeric_limits<int>::min();
+  if (parsed > std::numeric_limits<int>::max())
+    parsed = std::numeric_limits<int>::max();
+  *value = static_cast<int>(parsed);
+  return true;
+}
+
+static bool TryGetJsonString(const nlohmann::json &node, const char *key,
+                             std::wstring *value) {
+  if (!value || !node.is_object())
+    return false;
+
+  const auto it = node.find(key);
+  if (it == node.end() || !it->is_string())
+    return false;
+
+  const std::string utf8 = it->get<std::string>();
+  *value = Utf8ToWide(utf8);
+  return true;
+}
+
+static void ApplyJsonToLoggerConfig(const nlohmann::json &root,
+                                    LoggerConfig *output) {
+  if (!output || !root.is_object())
+    return;
+
+  const nlohmann::json *ringBuffer = nullptr;
+  if (TryGetJsonObject(root, "ringBuffer", &ringBuffer)) {
+    int capacity = 0;
+    if (TryGetJsonInt(*ringBuffer, "capacity", &capacity)) {
+      output->ringBufferCapacity = static_cast<size_t>(std::max(capacity, 128));
+    }
+  }
+
+  const nlohmann::json *flush = nullptr;
+  if (TryGetJsonObject(root, "flush", &flush)) {
+    int intervalMs = 0;
+    if (TryGetJsonInt(*flush, "intervalMs", &intervalMs)) {
+      output->flushIntervalMs = std::max(intervalMs, 50);
+    }
+  }
+
+  const nlohmann::json *sinks = nullptr;
+  if (!TryGetJsonObject(root, "sinks", &sinks))
+    return;
+
+  const nlohmann::json *file = nullptr;
+  if (TryGetJsonObject(*sinks, "file", &file)) {
+    bool enabled = false;
+    if (TryGetJsonBool(*file, "enabled", &enabled))
+      output->enableFileSink = enabled;
+
+    std::wstring filePath;
+    if (TryGetJsonString(*file, "path", &filePath) && !filePath.empty())
+      output->filePath = std::move(filePath);
+
+    int maxFileSizeMb = 0;
+    if (TryGetJsonInt(*file, "maxFileSizeMB", &maxFileSizeMb)) {
+      const int normalizedMb = std::max(maxFileSizeMb, 1);
+      output->fileMaxBytes =
+          static_cast<uint64_t>(normalizedMb) * 1024ULL * 1024ULL;
+    }
+
+    int maxFiles = 0;
+    if (TryGetJsonInt(*file, "maxFiles", &maxFiles))
+      output->fileMaxFiles = std::max(maxFiles, 1);
+  }
+
+  const nlohmann::json *outputDebugString = nullptr;
+  if (TryGetJsonObject(*sinks, "outputDebugString", &outputDebugString)) {
+    bool enabled = false;
+    if (TryGetJsonBool(*outputDebugString, "enabled", &enabled))
+      output->enableDebugOutput = enabled;
+  }
+
+  const nlohmann::json *etw = nullptr;
+  if (TryGetJsonObject(*sinks, "etw", &etw)) {
+    bool enabled = false;
+    if (TryGetJsonBool(*etw, "enabled", &enabled))
+      output->enableEtw = enabled;
+  }
+}
+
+static void ApplyJsonConfigOverrides(LoggerConfig *output) {
+  if (!output)
+    return;
+
+  std::string baselineJson;
+  if (!TryLoadEmbeddedMonitorJson(&baselineJson))
+    return;
+
+  nlohmann::json merged;
+  try {
+    merged = nlohmann::json::parse(baselineJson);
+  } catch (...) {
+    return;
+  }
+
+  const std::wstring overridePath =
+      CombinePath(GetExecutableDirectory(), L"monitor.json");
+  std::string overrideJson;
+  if (TryReadUtf8TextFile(overridePath, &overrideJson) && !overrideJson.empty()) {
+    try {
+      const nlohmann::json overrideNode = nlohmann::json::parse(overrideJson);
+      MergeJsonNode(&merged, overrideNode);
+    } catch (...) {
+      // Ignore invalid runtime override file and keep baseline defaults.
+    }
+  }
+
+  ApplyJsonToLoggerConfig(merged, output);
+}
+
+static void ApplyNativeConfigOverrides(const FDVLOG_Config *input,
+                                       LoggerConfig *output) {
   if (!output)
     return;
 
@@ -129,7 +427,8 @@ class LoggerCore {
 public:
   bool Initialize(const FDVLOG_Config *config) {
     LoggerConfig normalized{};
-    NormalizeConfig(config, &normalized);
+    ApplyJsonConfigOverrides(&normalized);
+    ApplyNativeConfigOverrides(config, &normalized);
 
     const uint64_t freq = QueryQpcFrequency();
     if (freq == 0)
@@ -432,6 +731,15 @@ std::shared_ptr<LoggerCore> GetLogger() {
   return g_logger;
 }
 
+std::shared_ptr<LoggerCore> GetOrCreateLogger() {
+  auto logger = GetLogger();
+  if (logger)
+    return logger;
+
+  ::FDVLOG_Initialize(nullptr);
+  return GetLogger();
+}
+
 } // namespace
 } // namespace fdvlog
 
@@ -467,7 +775,7 @@ void __cdecl FDVLOG_Shutdown(int flushTimeoutMs) {
 }
 
 void __cdecl FDVLOG_Flush(int flushTimeoutMs) {
-  auto logger = fdvlog::GetLogger();
+  auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return;
   logger->Flush(static_cast<uint32_t>(std::max(flushTimeoutMs, 0)));
@@ -475,7 +783,7 @@ void __cdecl FDVLOG_Flush(int flushTimeoutMs) {
 
 void __cdecl FDVLOG_Log(int level, const wchar_t *category,
                         const wchar_t *message, bool isDirect) {
-  auto logger = fdvlog::GetLogger();
+  auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return;
   logger->Log(level, category, message, isDirect);
@@ -483,35 +791,35 @@ void __cdecl FDVLOG_Log(int level, const wchar_t *category,
 
 void __cdecl FDVLOG_WriteETW(int level, const wchar_t *category,
                              const wchar_t *message, bool isDirect) {
-  auto logger = fdvlog::GetLogger();
+  auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return;
   logger->WriteEtw(level, category, message, isDirect);
 }
 
 int __cdecl FDVLOG_RegisterMetric(const FDVLOG_MetricSpec *spec) {
-  auto logger = fdvlog::GetLogger();
+  auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return 0;
   return logger->RegisterMetric(spec);
 }
 
 bool __cdecl FDVLOG_UnregisterMetric(int metricId) {
-  auto logger = fdvlog::GetLogger();
+  auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return false;
   return logger->UnregisterMetric(metricId);
 }
 
 void __cdecl FDVLOG_LogMetric(int metricId, double value) {
-  auto logger = fdvlog::GetLogger();
+  auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return;
   logger->LogMetric(metricId, value);
 }
 
 uint64_t __cdecl FDVLOG_GetDroppedTotal() {
-  auto logger = fdvlog::GetLogger();
+  auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return 0;
   return logger->DroppedTotal();

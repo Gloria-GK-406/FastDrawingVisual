@@ -165,7 +165,11 @@
     <ClCompile Include="LogSinksSpdlog.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ResourceCompile Include="LogCoreResources.rc" />
+  </ItemGroup>
+  <ItemGroup>
     <ClInclude Include="FdvLogCoreExports.h" />
+    <ClInclude Include="LogCoreResource.h" />
     <ClInclude Include="LogEtwSink.h" />
     <ClInclude Include="LogMetricsAggregator.h" />
     <ClInclude Include="LogSinksSpdlog.h" />

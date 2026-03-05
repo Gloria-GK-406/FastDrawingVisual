@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "ringBuffer": {
+    "capacity": 8192
+  },
+  "flush": {
+    "intervalMs": 200
+  },
+  "sinks": {
+    "file": {
+      "enabled": true,
+      "path": "logs/fastdrawingvisual.log",
+      "maxFileSizeMB": 30,
+      "maxFiles": 10
+    },
+    "outputDebugString": {
+      "enabled": true
+    },
+    "etw": {
+      "enabled": true
+    }
+  },
+  "shutdown": {
+    "flushTimeoutMs": 2000
+  }
+}
