@@ -15,8 +15,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cwchar>
+#include <cwctype>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,6 +24,12 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/msvc_sink.h>
+#include <spdlog/sinks/null_sink.h>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -192,10 +198,6 @@ static std::wstring GetDirectoryPart(const std::wstring &path) {
   return path.substr(0, index);
 }
 
-static std::wstring BuildRotatedPath(const std::wstring &basePath, int index) {
-  return basePath + L"." + std::to_wstring(index);
-}
-
 static std::string WideToUtf8(const std::wstring &text) {
   if (text.empty())
     return {};
@@ -212,77 +214,39 @@ static std::string WideToUtf8(const std::wstring &text) {
   return utf8;
 }
 
-class RotatingFileSink {
-public:
-  bool Initialize(const std::wstring &filePath, uint64_t maxBytes,
-                  int maxFiles) {
-    filePath_ = filePath;
-    maxBytes_ = maxBytes > 0 ? maxBytes : static_cast<uint64_t>(kDefaultFileMaxBytes);
-    maxFiles_ = std::max(maxFiles, 1);
-
-    const std::wstring dir = GetDirectoryPart(filePath_);
-    if (!dir.empty()) {
-      std::error_code ec;
-      std::filesystem::create_directories(dir, ec);
-    }
-
-    return OpenFile();
+static spdlog::level::level_enum ToSpdlogLevel(int level) {
+  switch (level) {
+  case FDVLOG_LevelTrace:
+    return spdlog::level::trace;
+  case FDVLOG_LevelDebug:
+    return spdlog::level::debug;
+  case FDVLOG_LevelInfo:
+    return spdlog::level::info;
+  case FDVLOG_LevelWarn:
+    return spdlog::level::warn;
+  case FDVLOG_LevelError:
+    return spdlog::level::err;
+  case FDVLOG_LevelFatal:
+    return spdlog::level::critical;
+  default:
+    return spdlog::level::info;
   }
+}
 
-  void WriteLine(const std::wstring &line) {
-    if (!file_.is_open())
-      return;
+static bool ParseBooleanValue(std::wstring text) {
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+  return text == L"1" || text == L"true" || text == L"on" || text == L"yes";
+}
 
-    RotateIfNeeded();
-    const std::string utf8 = WideToUtf8(line);
-    file_.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
-    file_.write("\n", 1);
-  }
-
-  void Flush() {
-    if (file_.is_open())
-      file_.flush();
-  }
-
-private:
-  bool OpenFile() {
-    file_.close();
-    file_.open(std::filesystem::path(filePath_),
-               std::ios::out | std::ios::app | std::ios::binary);
-    return file_.is_open();
-  }
-
-  void RotateIfNeeded() {
-    std::error_code ec;
-    const auto path = std::filesystem::path(filePath_);
-    const auto size = std::filesystem::exists(path, ec)
-                          ? std::filesystem::file_size(path, ec)
-                          : 0;
-    if (ec || size < maxBytes_)
-      return;
-
-    file_.flush();
-    file_.close();
-
-    for (int i = maxFiles_ - 1; i >= 1; --i) {
-      const std::filesystem::path src(BuildRotatedPath(filePath_, i));
-      const std::filesystem::path dst(BuildRotatedPath(filePath_, i + 1));
-      std::filesystem::remove(dst, ec);
-      std::filesystem::rename(src, dst, ec);
-    }
-
-    const std::filesystem::path first(BuildRotatedPath(filePath_, 1));
-    std::filesystem::remove(first, ec);
-    std::filesystem::rename(path, first, ec);
-
-    OpenFile();
-  }
-
-  std::wstring filePath_;
-  uint64_t maxBytes_ = static_cast<uint64_t>(kDefaultFileMaxBytes);
-  int maxFiles_ = kDefaultFileMaxFiles;
-  std::ofstream file_;
-};
+static bool IsConsoleSinkEnabledByEnv() {
+  wchar_t buffer[16]{};
+  const DWORD length = GetEnvironmentVariableW(
+      L"FDVLOG_ENABLE_CONSOLE", buffer, static_cast<DWORD>(_countof(buffer)));
+  if (length == 0 || length >= _countof(buffer))
+    return false;
+  return ParseBooleanValue(std::wstring(buffer, length));
+}
 
 class LoggerCore {
 public:
@@ -309,13 +273,7 @@ public:
     fileTimeBase100ns_ = QuerySystemFileTimeNow100ns();
     lastFlushTick_ = std::chrono::steady_clock::now();
 
-    if (config_.enableFileSink) {
-      fileSink_ = std::make_unique<RotatingFileSink>();
-      if (!fileSink_->Initialize(config_.filePath, config_.fileMaxBytes,
-                                 config_.fileMaxFiles)) {
-        fileSink_.reset();
-      }
-    }
+    InitializeSpdlogLogger(config_);
 
     if (config_.enableEtw) {
       etwRegistered_ =
@@ -344,7 +302,7 @@ public:
       etwHandle_ = 0;
       etwRegistered_ = false;
     }
-    fileSink_.reset();
+    logger_.reset();
     metrics_.clear();
   }
 
@@ -521,7 +479,7 @@ private:
     const std::wstring line = lineBuffer;
 
     std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-    WriteTextLineLocked(line);
+    WriteTextLineLocked(line, ev.text.level);
 
     if (etwRegistered_)
       EventWriteString(etwHandle_, EtwLevelForLogLevel(ev.text.level), 0,
@@ -664,28 +622,80 @@ private:
     }
 
     std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-    WriteTextLineLocked(lineBuffer);
+    WriteTextLineLocked(lineBuffer, FDVLOG_LevelInfo);
 
     if (etwRegistered_)
       EventWriteString(etwHandle_, 4, 0, lineBuffer);
   }
 
-  void WriteTextLineLocked(const std::wstring &line) {
-    if (fileSink_) {
-      fileSink_->WriteLine(line);
-    }
+  void WriteTextLineLocked(const std::wstring &line, int level) {
+    if (!logger_)
+      return;
 
-#if defined(_DEBUG)
-    if (config_.enableDebugOutput) {
-      std::wstring withBreak = line + L"\n";
-      OutputDebugStringW(withBreak.c_str());
+    try {
+      logger_->log(ToSpdlogLevel(level), WideToUtf8(line));
+    } catch (...) {
+      // Swallow sink/format exceptions to avoid affecting callers.
     }
-#endif
   }
 
   void FlushSinksLocked() {
-    if (fileSink_)
-      fileSink_->Flush();
+    if (!logger_)
+      return;
+    try {
+      logger_->flush();
+    } catch (...) {
+      // Best-effort flush.
+    }
+  }
+
+  void InitializeSpdlogLogger(const LoggerConfig &config) {
+    std::vector<spdlog::sink_ptr> sinks;
+
+    if (config.enableFileSink) {
+      const std::wstring dir = GetDirectoryPart(config.filePath);
+      if (!dir.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+      }
+
+      try {
+        auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            config.filePath, config.fileMaxBytes,
+            static_cast<size_t>(std::max(config.fileMaxFiles, 1)));
+        sinks.push_back(fileSink);
+      } catch (...) {
+        // Continue with remaining sinks.
+      }
+    }
+
+#if defined(_DEBUG)
+    if (config.enableDebugOutput) {
+      try {
+        sinks.push_back(std::make_shared<spdlog::sinks::msvc_sink_mt>());
+      } catch (...) {
+        // Continue with remaining sinks.
+      }
+    }
+#endif
+
+    if (IsConsoleSinkEnabledByEnv()) {
+      try {
+        sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+      } catch (...) {
+        // Continue with remaining sinks.
+      }
+    }
+
+    if (sinks.empty()) {
+      sinks.push_back(std::make_shared<spdlog::sinks::null_sink_mt>());
+    }
+
+    logger_ = std::make_shared<spdlog::logger>("fdvlog", sinks.begin(),
+                                               sinks.end());
+    logger_->set_level(spdlog::level::trace);
+    logger_->set_pattern("%v");
+    logger_->flush_on(spdlog::level::err);
   }
 
 private:
@@ -709,7 +719,7 @@ private:
   std::chrono::steady_clock::time_point lastFlushTick_{};
 
   std::mutex sinkMutex_;
-  std::unique_ptr<RotatingFileSink> fileSink_;
+  std::shared_ptr<spdlog::logger> logger_;
   bool etwRegistered_ = false;
   REGHANDLE etwHandle_ = 0;
   std::unordered_map<uint32_t, MetricState> metrics_;
