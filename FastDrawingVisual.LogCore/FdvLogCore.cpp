@@ -10,6 +10,7 @@
 #include "LogSinksSpdlog.h"
 #include "LogTypes.h"
 #include "RingBuffer.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -148,20 +149,36 @@ public:
 
     textSinks_.Initialize(config_);
     etwSink_.Initialize(config_.enableEtw);
-    {
-      std::lock_guard<std::mutex> lock(metricsMutex_);
+    metrics_.Reset();
+
+    running_.store(true, std::memory_order_release);
+    worker_ = std::thread([this]() { WorkerLoop(); });
+
+    if (!StartMetricTimer()) {
+      running_.store(false, std::memory_order_release);
+      queueCv_.notify_all();
+      if (worker_.joinable()) {
+        worker_.join();
+      }
+
+      std::lock_guard<std::mutex> sinkLock(sinkMutex_);
+      textSinks_.Flush();
+      textSinks_.Shutdown();
+      etwSink_.Shutdown();
       metrics_.Reset();
+      return false;
     }
 
-    running_.store(true);
-    worker_ = std::thread([this]() { WorkerLoop(); });
     return true;
   }
 
   void Shutdown(uint32_t flushTimeoutMs) {
+    StopMetricTimer();
+    OnMetricTimerFired();
+
     Flush(flushTimeoutMs);
 
-    running_.store(false);
+    running_.store(false, std::memory_order_release);
     queueCv_.notify_all();
     if (worker_.joinable()) {
       worker_.join();
@@ -171,10 +188,7 @@ public:
     textSinks_.Flush();
     textSinks_.Shutdown();
     etwSink_.Shutdown();
-    {
-      std::lock_guard<std::mutex> lock(metricsMutex_);
-      metrics_.Reset();
-    }
+    metrics_.Reset();
   }
 
   void Flush(uint32_t flushTimeoutMs) {
@@ -198,7 +212,6 @@ public:
   void Log(int level, const wchar_t *category, const wchar_t *message,
            bool direct) {
     LogEvent ev{};
-    ev.type = EventType::Text;
     ev.qpcTicks = QueryQpcNow();
     ev.text.level = level;
     ev.text.threadId = GetCurrentThreadId();
@@ -214,12 +227,10 @@ public:
   }
 
   int RegisterMetric(const FDVLOG_MetricSpec *spec) {
-    std::lock_guard<std::mutex> lock(metricsMutex_);
     return metrics_.RegisterMetric(spec);
   }
 
   bool UnregisterMetric(int metricId) {
-    std::lock_guard<std::mutex> lock(metricsMutex_);
     return metrics_.UnregisterMetric(metricId);
   }
 
@@ -227,12 +238,15 @@ public:
     if (metricId <= 0)
       return;
 
-    LogEvent ev{};
-    ev.type = EventType::Metric;
-    ev.qpcTicks = QueryQpcNow();
-    ev.metric.metricId = metricId;
-    ev.metric.value = value;
-    Enqueue(ev);
+    MetricPayload payload{};
+    payload.metricId = metricId;
+    payload.value = value;
+
+    const uint64_t ts100ns = QpcToFileTime100ns(QueryQpcNow());
+    metrics_.OnMetricEvent(payload, ts100ns, [this](const std::wstring &line,
+                                                    int level) {
+      EnqueueMetricLine(level, line);
+    });
   }
 
   uint64_t DroppedTotal() const {
@@ -240,6 +254,64 @@ public:
   }
 
 private:
+  static void CALLBACK MetricTimerCallback(void *context, BOOLEAN) {
+    auto *self = static_cast<LoggerCore *>(context);
+    if (self) {
+      self->OnMetricTimerFired();
+    }
+  }
+
+  bool StartMetricTimer() {
+    HANDLE timer = nullptr;
+    const BOOL ok = CreateTimerQueueTimer(&timer, nullptr, MetricTimerCallback,
+                                          this, 1000, 1000,
+                                          WT_EXECUTEDEFAULT);
+    if (!ok)
+      return false;
+
+    metricTimer_ = timer;
+    return true;
+  }
+
+  void StopMetricTimer() {
+    HANDLE timer = metricTimer_;
+    if (!timer)
+      return;
+
+    metricTimer_ = nullptr;
+    DeleteTimerQueueTimer(nullptr, timer, INVALID_HANDLE_VALUE);
+  }
+
+  void OnMetricTimerFired() {
+    if (!running_.load(std::memory_order_acquire))
+      return;
+
+    bool expected = false;
+    if (!metricTickRunning_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      return;
+    }
+
+    const uint64_t now100ns = QpcToFileTime100ns(QueryQpcNow());
+    metrics_.OnHeartbeat(now100ns,
+                         [this](const std::wstring &line, int level) {
+                           EnqueueMetricLine(level, line);
+                         });
+
+    metricTickRunning_.store(false, std::memory_order_release);
+  }
+
+  void EnqueueMetricLine(int level, const std::wstring &message) {
+    LogEvent ev{};
+    ev.qpcTicks = QueryQpcNow();
+    ev.text.level = level;
+    ev.text.threadId = GetCurrentThreadId();
+    CopyBoundedText(L"metric", ev.text.category, _countof(ev.text.category));
+    CopyBoundedText(message.c_str(), ev.text.message, _countof(ev.text.message));
+    Enqueue(ev);
+  }
+
   void Enqueue(const LogEvent &event) {
     std::lock_guard<std::mutex> lock(queueMutex_);
     const bool overwritten = events_.PushOverwrite(event);
@@ -288,38 +360,17 @@ private:
     EmitLine(lineBuffer, ev.text.level);
   }
 
-  void ProcessMetricEvent(const LogEvent &ev) {
-    const uint64_t ts100ns = QpcToFileTime100ns(ev.qpcTicks);
-    std::lock_guard<std::mutex> lock(metricsMutex_);
-    metrics_.OnMetricEvent(
-        ev.metric, ts100ns,
-        [this](const std::wstring &line, int level) { EmitLine(line, level); });
-  }
-
-  void ProcessHeartbeat(uint64_t nowQpcTicks) {
-    const uint64_t now100ns = QpcToFileTime100ns(nowQpcTicks);
-    std::lock_guard<std::mutex> lock(metricsMutex_);
-    metrics_.OnHeartbeat(
-        now100ns,
-        [this](const std::wstring &line, int level) { EmitLine(line, level); });
-  }
-
   void WorkerLoop() {
-    while (running_.load() || HasPendingEvents()) {
+    while (running_.load(std::memory_order_acquire) || HasPendingEvents()) {
       LogEvent ev{};
       if (TryDequeue(&ev)) {
-        if (ev.type == EventType::Text) {
-          ProcessTextEvent(ev);
-        } else {
-          ProcessMetricEvent(ev);
-        }
+        ProcessTextEvent(ev);
       } else {
         std::unique_lock<std::mutex> lock(queueMutex_);
         queueCv_.wait_for(lock, std::chrono::milliseconds(20), [this]() {
-          return !events_.Empty() || !running_.load();
+          return !events_.Empty() ||
+                 !running_.load(std::memory_order_acquire);
         });
-        lock.unlock();
-        ProcessHeartbeat(QueryQpcNow());
       }
 
       const auto now = std::chrono::steady_clock::now();
@@ -330,8 +381,6 @@ private:
         lastFlushTick_ = now;
       }
     }
-
-    ProcessHeartbeat(QueryQpcNow());
   }
 
 private:
@@ -352,10 +401,12 @@ private:
   std::chrono::steady_clock::time_point lastFlushTick_{};
 
   std::mutex sinkMutex_;
-  std::mutex metricsMutex_;
   LogSinksSpdlog textSinks_;
   LogEtwSink etwSink_;
   LogMetricsAggregator metrics_;
+
+  HANDLE metricTimer_ = nullptr;
+  std::atomic<bool> metricTickRunning_{false};
 };
 
 std::mutex g_loggerGuard;

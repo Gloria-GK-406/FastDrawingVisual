@@ -231,7 +231,7 @@ int LogProxy::RegisterMetric(String ^ name, UInt32 windowMs,
 
   FDVLOG_MetricSpec spec{};
   spec.name = name->Length > 0 ? n : nullptr;
-  spec.windowMs = Math::Max(windowMs, 1U);
+  spec.windowMs = Math::Max(windowMs, 1000U);
   spec.aggregation = static_cast<int>(aggregation);
   spec.format = format->Length > 0 ? f : nullptr;
   spec.level = static_cast<int>(level);

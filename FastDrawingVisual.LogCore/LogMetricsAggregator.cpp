@@ -10,7 +10,7 @@ namespace fdvlog {
 namespace {
 
 constexpr const wchar_t *kDefaultMetricFormat =
-    L"[metric] id={id} name={name} windowMs={windowMs} "
+    L"id={id} name={name} windowMs={windowMs} "
     L"count={count} avg={avg} min={min} max={max}";
 
 static bool IsNullOrEmpty(const wchar_t *text) {
@@ -23,9 +23,15 @@ int LogMetricsAggregator::RegisterMetric(const FDVLOG_MetricSpec *spec) {
   if (!spec)
     return 0;
 
+  int metricId = 0;
+  {
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    metricId = nextMetricId_++;
+  }
+
   MetricDefinition definition{};
-  definition.id = nextMetricId_++;
-  definition.windowMs = std::max<uint32_t>(spec->windowMs, 1);
+  definition.id = metricId;
+  definition.windowMs = std::max<uint32_t>(spec->windowMs, 1000);
   definition.aggregation = NormalizeAggregation(spec->aggregation);
   definition.level = NormalizeLevel(spec->level);
 
@@ -62,44 +68,67 @@ int LogMetricsAggregator::RegisterMetric(const FDVLOG_MetricSpec *spec) {
     }
   }
 
-  MetricEntry entry{};
-  entry.definition = std::move(definition);
-  const int metricId = entry.definition.id;
-  metrics_.emplace(metricId, std::move(entry));
+  auto entry = std::make_shared<MetricEntry>();
+  entry->definition = std::move(definition);
+  {
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    metrics_.emplace(metricId, entry);
+  }
   return metricId;
 }
 
 bool LogMetricsAggregator::UnregisterMetric(int metricId) {
+  std::lock_guard<std::mutex> lock(metricsMutex_);
   return metrics_.erase(metricId) > 0;
 }
 
 void LogMetricsAggregator::Reset() {
+  std::lock_guard<std::mutex> lock(metricsMutex_);
   metrics_.clear();
   nextMetricId_ = 1;
+}
+
+std::shared_ptr<LogMetricsAggregator::MetricEntry>
+LogMetricsAggregator::FindEntry(int metricId) {
+  std::lock_guard<std::mutex> lock(metricsMutex_);
+  const auto it = metrics_.find(metricId);
+  if (it == metrics_.end())
+    return {};
+  return it->second;
 }
 
 void LogMetricsAggregator::OnMetricEvent(const MetricPayload &payload,
                                          uint64_t timestamp100ns,
                                          const EmitCallback &emit) {
-  auto it = metrics_.find(payload.metricId);
-  if (it == metrics_.end())
+  auto entry = FindEntry(payload.metricId);
+  if (!entry)
     return;
 
-  auto &entry = it->second;
-  if (entry.state.windowEnd100ns == 0) {
-    InitializeWindow(entry.state, entry.definition.windowMs, timestamp100ns);
+  std::lock_guard<std::mutex> lock(entry->mutex);
+  if (entry->state.windowEnd100ns == 0) {
+    InitializeWindow(entry->state, entry->definition.windowMs, timestamp100ns);
   }
 
-  AdvanceMetricWindow(entry, timestamp100ns, emit);
-  AccumulateMetric(entry.state, payload.value);
+  AdvanceMetricWindow(*entry, timestamp100ns, emit);
+  AccumulateMetric(entry->state, payload.value);
 }
 
 void LogMetricsAggregator::OnHeartbeat(uint64_t timestamp100ns,
                                        const EmitCallback &emit) {
-  for (auto &entry : metrics_) {
-    if (entry.second.state.windowEnd100ns == 0)
+  std::vector<std::shared_ptr<MetricEntry>> snapshot;
+  {
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    snapshot.reserve(metrics_.size());
+    for (const auto &item : metrics_) {
+      snapshot.push_back(item.second);
+    }
+  }
+
+  for (const auto &entry : snapshot) {
+    std::lock_guard<std::mutex> entryLock(entry->mutex);
+    if (entry->state.windowEnd100ns == 0)
       continue;
-    AdvanceMetricWindow(entry.second, timestamp100ns, emit);
+    AdvanceMetricWindow(*entry, timestamp100ns, emit);
   }
 }
 
@@ -132,23 +161,6 @@ int LogMetricsAggregator::NormalizeLevel(int level) {
     return level;
   default:
     return FDVLOG_LevelInfo;
-  }
-}
-
-const wchar_t *LogMetricsAggregator::AggregationName(int aggregation) {
-  switch (aggregation) {
-  case FDVLOG_AggregationCount:
-    return L"count";
-  case FDVLOG_AggregationAverage:
-    return L"avg";
-  case FDVLOG_AggregationSum:
-    return L"sum";
-  case FDVLOG_AggregationMin:
-    return L"min";
-  case FDVLOG_AggregationMax:
-    return L"max";
-  default:
-    return L"avg";
   }
 }
 

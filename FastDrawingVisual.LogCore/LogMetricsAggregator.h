@@ -5,6 +5,8 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -62,6 +64,7 @@ private:
   };
 
   struct MetricEntry {
+    mutable std::mutex mutex;
     MetricDefinition definition;
     MetricState state;
   };
@@ -69,7 +72,6 @@ private:
   static uint64_t WindowDuration100ns(uint32_t windowMs);
   static int NormalizeAggregation(int aggregation);
   static int NormalizeLevel(int level);
-  static const wchar_t *AggregationName(int aggregation);
   static void ResetBucket(MetricState &state);
   static void InitializeWindow(MetricState &state, uint32_t windowMs,
                                uint64_t timestamp100ns);
@@ -86,9 +88,11 @@ private:
                                      const EmitCallback &emit);
   static void AdvanceMetricWindow(MetricEntry &entry, uint64_t timestamp100ns,
                                   const EmitCallback &emit);
+  std::shared_ptr<MetricEntry> FindEntry(int metricId);
 
+  std::mutex metricsMutex_;
   int nextMetricId_ = 1;
-  std::unordered_map<int, MetricEntry> metrics_;
+  std::unordered_map<int, std::shared_ptr<MetricEntry>> metrics_;
 };
 
 } // namespace fdvlog
