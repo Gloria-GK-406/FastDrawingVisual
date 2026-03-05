@@ -19,12 +19,21 @@ enum FDVLOG_Level {
 };
 
 enum FDVLOG_Aggregation {
-  FDVLOG_AggregationRate = 0,
+  FDVLOG_AggregationCount = 0,
+  FDVLOG_AggregationRate = FDVLOG_AggregationCount,
   FDVLOG_AggregationAverage = 1,
   FDVLOG_AggregationSum = 2,
   FDVLOG_AggregationMin = 3,
   FDVLOG_AggregationMax = 4
 };
+
+typedef struct FDVLOG_MetricSpec {
+  const wchar_t *name;
+  uint32_t windowMs;
+  int aggregation;
+  const wchar_t *format;
+  int level;
+} FDVLOG_MetricSpec;
 
 typedef struct FDVLOG_Config {
   int ringBufferCapacity;
@@ -42,7 +51,8 @@ FDVLOG_API void __cdecl FDVLOG_Shutdown(int flushTimeoutMs);
 FDVLOG_API void __cdecl FDVLOG_Flush(int flushTimeoutMs);
 FDVLOG_API void __cdecl FDVLOG_Log(int level, const wchar_t *category,
                                    const wchar_t *message, bool direct);
-FDVLOG_API void __cdecl FDVLOG_Metric(uint32_t metricId, int64_t value,
-                                      uint32_t windowMs, int aggregation);
+FDVLOG_API int __cdecl FDVLOG_RegisterMetric(const FDVLOG_MetricSpec *spec);
+FDVLOG_API bool __cdecl FDVLOG_UnregisterMetric(int metricId);
+FDVLOG_API void __cdecl FDVLOG_LogMetric(int metricId, double value);
 FDVLOG_API uint64_t __cdecl FDVLOG_GetDroppedTotal();
 }

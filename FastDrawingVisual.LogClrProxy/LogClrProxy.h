@@ -13,7 +13,8 @@ enum class LogLevel : int {
 
 public
 enum class MetricAggregation : int {
-  Rate = 0,
+  Count = 0,
+  Rate = Count,
   Average = 1,
   Sum = 2,
   Min = 3,
@@ -31,8 +32,11 @@ public:
                     System::String ^ message);
   static void WriteDirect(LogLevel level, System::String ^ category,
                           System::String ^ message);
-  static void Metric(System::UInt32 metricId, System::Int64 value,
-                     System::UInt32 windowMs, MetricAggregation aggregation);
+  static int RegisterMetric(System::String ^ name, System::UInt32 windowMs,
+                            MetricAggregation aggregation,
+                            System::String ^ format, LogLevel level);
+  static bool UnregisterMetric(int metricId);
+  static void LogMetric(int metricId, double value);
   static System::UInt64 GetDroppedTotal();
   static System::String ^ GetEffectiveConfigJson();
 };

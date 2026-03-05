@@ -148,6 +148,10 @@ public:
 
     textSinks_.Initialize(config_);
     etwSink_.Initialize(config_.enableEtw);
+    {
+      std::lock_guard<std::mutex> lock(metricsMutex_);
+      metrics_.Reset();
+    }
 
     running_.store(true);
     worker_ = std::thread([this]() { WorkerLoop(); });
@@ -167,7 +171,10 @@ public:
     textSinks_.Flush();
     textSinks_.Shutdown();
     etwSink_.Shutdown();
-    metrics_.Reset();
+    {
+      std::lock_guard<std::mutex> lock(metricsMutex_);
+      metrics_.Reset();
+    }
   }
 
   void Flush(uint32_t flushTimeoutMs) {
@@ -206,15 +213,25 @@ public:
     Enqueue(ev);
   }
 
-  void Metric(uint32_t metricId, int64_t value, uint32_t windowMs,
-              int aggregation) {
+  int RegisterMetric(const FDVLOG_MetricSpec *spec) {
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    return metrics_.RegisterMetric(spec);
+  }
+
+  bool UnregisterMetric(int metricId) {
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    return metrics_.UnregisterMetric(metricId);
+  }
+
+  void LogMetric(int metricId, double value) {
+    if (metricId <= 0)
+      return;
+
     LogEvent ev{};
     ev.type = EventType::Metric;
     ev.qpcTicks = QueryQpcNow();
     ev.metric.metricId = metricId;
     ev.metric.value = value;
-    ev.metric.windowMs = std::max<uint32_t>(windowMs, 1);
-    ev.metric.aggregation = aggregation;
     Enqueue(ev);
   }
 
@@ -273,6 +290,7 @@ private:
 
   void ProcessMetricEvent(const LogEvent &ev) {
     const uint64_t ts100ns = QpcToFileTime100ns(ev.qpcTicks);
+    std::lock_guard<std::mutex> lock(metricsMutex_);
     metrics_.OnMetricEvent(
         ev.metric, ts100ns,
         [this](const std::wstring &line, int level) { EmitLine(line, level); });
@@ -280,6 +298,7 @@ private:
 
   void ProcessHeartbeat(uint64_t nowQpcTicks) {
     const uint64_t now100ns = QpcToFileTime100ns(nowQpcTicks);
+    std::lock_guard<std::mutex> lock(metricsMutex_);
     metrics_.OnHeartbeat(
         now100ns,
         [this](const std::wstring &line, int level) { EmitLine(line, level); });
@@ -333,6 +352,7 @@ private:
   std::chrono::steady_clock::time_point lastFlushTick_{};
 
   std::mutex sinkMutex_;
+  std::mutex metricsMutex_;
   LogSinksSpdlog textSinks_;
   LogEtwSink etwSink_;
   LogMetricsAggregator metrics_;
@@ -395,12 +415,25 @@ void __cdecl FDVLOG_Log(int level, const wchar_t *category,
   logger->Log(level, category, message, direct);
 }
 
-void __cdecl FDVLOG_Metric(uint32_t metricId, int64_t value, uint32_t windowMs,
-                           int aggregation) {
+int __cdecl FDVLOG_RegisterMetric(const FDVLOG_MetricSpec *spec) {
+  auto logger = fdvlog::GetLogger();
+  if (!logger)
+    return 0;
+  return logger->RegisterMetric(spec);
+}
+
+bool __cdecl FDVLOG_UnregisterMetric(int metricId) {
+  auto logger = fdvlog::GetLogger();
+  if (!logger)
+    return false;
+  return logger->UnregisterMetric(metricId);
+}
+
+void __cdecl FDVLOG_LogMetric(int metricId, double value) {
   auto logger = fdvlog::GetLogger();
   if (!logger)
     return;
-  logger->Metric(metricId, value, windowMs, aggregation);
+  logger->LogMetric(metricId, value);
 }
 
 uint64_t __cdecl FDVLOG_GetDroppedTotal() {

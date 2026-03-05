@@ -25,10 +25,8 @@ struct TextPayload {
 };
 
 struct MetricPayload {
-  uint32_t metricId = 0;
-  int64_t value = 0;
-  uint32_t windowMs = 1000;
-  int aggregation = FDVLOG_AggregationRate;
+  int metricId = 0;
+  double value = 0.0;
 };
 
 struct LogEvent {

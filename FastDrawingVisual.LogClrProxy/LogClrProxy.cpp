@@ -220,10 +220,30 @@ void LogProxy::WriteDirect(LogLevel level, String ^ category, String ^ message) 
   FDVLOG_Log(static_cast<int>(level), c, m, true);
 }
 
-void LogProxy::Metric(UInt32 metricId, Int64 value, UInt32 windowMs,
-                      MetricAggregation aggregation) {
-  FDVLOG_Metric(metricId, value, Math::Max(windowMs, 1U),
-                static_cast<int>(aggregation));
+int LogProxy::RegisterMetric(String ^ name, UInt32 windowMs,
+                             MetricAggregation aggregation, String ^ format,
+                             LogLevel level) {
+  name = Coalesce(name, String::Empty);
+  format = Coalesce(format, String::Empty);
+
+  pin_ptr<const wchar_t> n = PtrToStringChars(name);
+  pin_ptr<const wchar_t> f = PtrToStringChars(format);
+
+  FDVLOG_MetricSpec spec{};
+  spec.name = name->Length > 0 ? n : nullptr;
+  spec.windowMs = Math::Max(windowMs, 1U);
+  spec.aggregation = static_cast<int>(aggregation);
+  spec.format = format->Length > 0 ? f : nullptr;
+  spec.level = static_cast<int>(level);
+  return FDVLOG_RegisterMetric(&spec);
+}
+
+bool LogProxy::UnregisterMetric(int metricId) {
+  return FDVLOG_UnregisterMetric(metricId);
+}
+
+void LogProxy::LogMetric(int metricId, double value) {
+  FDVLOG_LogMetric(metricId, value);
 }
 
 UInt64 LogProxy::GetDroppedTotal() { return FDVLOG_GetDroppedTotal(); }
