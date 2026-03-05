@@ -15,6 +15,11 @@ constexpr int kDefaultFlushIntervalMs = 200;
 constexpr int kDefaultFileMaxBytes = 30 * 1024 * 1024;
 constexpr int kDefaultFileMaxFiles = 10;
 
+enum class LogTarget : uint8_t {
+  Log = 1,
+  Etw = 2,
+};
+
 struct TextPayload {
   int level = FDVLOG_LevelInfo;
   uint32_t threadId = 0;
@@ -29,6 +34,7 @@ struct MetricPayload {
 
 struct LogEvent {
   uint64_t qpcTicks = 0;
+  LogTarget target = LogTarget::Log;
   TextPayload text;
 };
 

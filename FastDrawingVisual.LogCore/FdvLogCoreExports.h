@@ -40,7 +40,9 @@ FDVLOG_API bool __cdecl FDVLOG_Initialize(const FDVLOG_Config *config);
 FDVLOG_API void __cdecl FDVLOG_Shutdown(int flushTimeoutMs);
 FDVLOG_API void __cdecl FDVLOG_Flush(int flushTimeoutMs);
 FDVLOG_API void __cdecl FDVLOG_Log(int level, const wchar_t *category,
-                                   const wchar_t *message, bool direct);
+                                   const wchar_t *message, bool isDirect);
+FDVLOG_API void __cdecl FDVLOG_WriteETW(int level, const wchar_t *category,
+                                        const wchar_t *message, bool isDirect);
 FDVLOG_API int __cdecl FDVLOG_RegisterMetric(const FDVLOG_MetricSpec *spec);
 FDVLOG_API bool __cdecl FDVLOG_UnregisterMetric(int metricId);
 FDVLOG_API void __cdecl FDVLOG_LogMetric(int metricId, double value);

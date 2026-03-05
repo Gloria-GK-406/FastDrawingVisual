@@ -202,22 +202,32 @@ void LogProxy::Flush(int flushTimeoutMs) {
   FDVLOG_Flush(Math::Max(flushTimeoutMs, 0));
 }
 
-void LogProxy::Write(LogLevel level, String ^ category, String ^ message) {
-  category = Coalesce(category, "managed");
-  message = Coalesce(message, String::Empty);
-
-  pin_ptr<const wchar_t> c = PtrToStringChars(category);
-  pin_ptr<const wchar_t> m = PtrToStringChars(message);
-  FDVLOG_Log(static_cast<int>(level), c, m, false);
+void LogProxy::Log(LogLevel level, String ^ category, String ^ message) {
+  Log(level, category, message, false);
 }
 
-void LogProxy::WriteDirect(LogLevel level, String ^ category, String ^ message) {
+void LogProxy::Log(LogLevel level, String ^ category, String ^ message,
+                   bool isDirect) {
   category = Coalesce(category, "managed");
   message = Coalesce(message, String::Empty);
 
   pin_ptr<const wchar_t> c = PtrToStringChars(category);
   pin_ptr<const wchar_t> m = PtrToStringChars(message);
-  FDVLOG_Log(static_cast<int>(level), c, m, true);
+  FDVLOG_Log(static_cast<int>(level), c, m, isDirect);
+}
+
+void LogProxy::WriteETW(LogLevel level, String ^ category, String ^ message) {
+  WriteETW(level, category, message, false);
+}
+
+void LogProxy::WriteETW(LogLevel level, String ^ category, String ^ message,
+                        bool isDirect) {
+  category = Coalesce(category, "managed");
+  message = Coalesce(message, String::Empty);
+
+  pin_ptr<const wchar_t> c = PtrToStringChars(category);
+  pin_ptr<const wchar_t> m = PtrToStringChars(message);
+  FDVLOG_WriteETW(static_cast<int>(level), c, m, isDirect);
 }
 
 int LogProxy::RegisterMetric(String ^ name, UInt32 periodSec, String ^ format,

@@ -18,10 +18,14 @@ public:
   static bool Initialize(System::String ^ userConfigPath);
   static void Shutdown(int flushTimeoutMs);
   static void Flush(int flushTimeoutMs);
-  static void Write(LogLevel level, System::String ^ category,
-                    System::String ^ message);
-  static void WriteDirect(LogLevel level, System::String ^ category,
-                          System::String ^ message);
+  static void Log(LogLevel level, System::String ^ category,
+                  System::String ^ message);
+  static void Log(LogLevel level, System::String ^ category,
+                  System::String ^ message, bool isDirect);
+  static void WriteETW(LogLevel level, System::String ^ category,
+                       System::String ^ message);
+  static void WriteETW(LogLevel level, System::String ^ category,
+                       System::String ^ message, bool isDirect);
   /// <summary>Registers a periodic metric bucket.</summary>
   /// <param name="name">Metric name; empty uses an auto-generated name.</param>
   /// <param name="periodSec">Bucket period in seconds; minimum is 1.</param>

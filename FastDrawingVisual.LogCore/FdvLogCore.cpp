@@ -210,15 +210,26 @@ public:
   }
 
   void Log(int level, const wchar_t *category, const wchar_t *message,
-           bool direct) {
+           bool isDirect) {
+    Write(level, category, message, isDirect, LogTarget::Log);
+  }
+
+  void WriteEtw(int level, const wchar_t *category, const wchar_t *message,
+                bool isDirect) {
+    Write(level, category, message, isDirect, LogTarget::Etw);
+  }
+
+  void Write(int level, const wchar_t *category, const wchar_t *message,
+             bool isDirect, LogTarget target) {
     LogEvent ev{};
     ev.qpcTicks = QueryQpcNow();
+    ev.target = target;
     ev.text.level = level;
     ev.text.threadId = GetCurrentThreadId();
     CopyBoundedText(category, ev.text.category, _countof(ev.text.category));
     CopyBoundedText(message, ev.text.message, _countof(ev.text.message));
 
-    if (direct || level == FDVLOG_LevelFatal) {
+    if (isDirect || level == FDVLOG_LevelFatal) {
       ProcessTextEvent(ev);
       return;
     }
@@ -303,6 +314,7 @@ private:
   void EnqueueMetricLine(int level, const std::wstring &message) {
     LogEvent ev{};
     ev.qpcTicks = QueryQpcNow();
+    ev.target = LogTarget::Log;
     ev.text.level = level;
     ev.text.threadId = GetCurrentThreadId();
     CopyBoundedText(L"metric", ev.text.category, _countof(ev.text.category));
@@ -336,14 +348,19 @@ private:
     return fileTimeBase100ns_ + ((delta * 10000000ULL) / qpcFrequency_);
   }
 
-  void EmitLineLocked(const std::wstring &line, int level) {
-    textSinks_.Log(line, level);
-    etwSink_.WriteETW(line, level);
+  void EmitLineLocked(const std::wstring &line, int level, LogTarget target) {
+    if (target == LogTarget::Log) {
+      textSinks_.Log(line, level);
+      return;
+    }
+    if (target == LogTarget::Etw) {
+      etwSink_.WriteETW(line, level);
+    }
   }
 
-  void EmitLine(const std::wstring &line, int level) {
+  void EmitLine(const std::wstring &line, int level, LogTarget target) {
     std::lock_guard<std::mutex> sinkLock(sinkMutex_);
-    EmitLineLocked(line, level);
+    EmitLineLocked(line, level, target);
   }
 
   void ProcessTextEvent(const LogEvent &ev) {
@@ -355,7 +372,7 @@ private:
                static_cast<unsigned long>(ev.text.threadId),
                LevelName(ev.text.level), ev.text.category, ev.text.message);
 
-    EmitLine(lineBuffer, ev.text.level);
+    EmitLine(lineBuffer, ev.text.level, ev.target);
   }
 
   void WorkerLoop() {
@@ -457,11 +474,19 @@ void __cdecl FDVLOG_Flush(int flushTimeoutMs) {
 }
 
 void __cdecl FDVLOG_Log(int level, const wchar_t *category,
-                        const wchar_t *message, bool direct) {
+                        const wchar_t *message, bool isDirect) {
   auto logger = fdvlog::GetLogger();
   if (!logger)
     return;
-  logger->Log(level, category, message, direct);
+  logger->Log(level, category, message, isDirect);
+}
+
+void __cdecl FDVLOG_WriteETW(int level, const wchar_t *category,
+                             const wchar_t *message, bool isDirect) {
+  auto logger = fdvlog::GetLogger();
+  if (!logger)
+    return;
+  logger->WriteEtw(level, category, message, isDirect);
 }
 
 int __cdecl FDVLOG_RegisterMetric(const FDVLOG_MetricSpec *spec) {
