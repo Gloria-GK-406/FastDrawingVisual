@@ -1,13 +1,16 @@
 #include "BridgeRendererInternal.h"
 #include "BridgeCommandProtocol.g.h"
+#include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
 
 #include <d3dcompiler.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -30,6 +33,60 @@ constexpr int kDrawTextFontSizeOffset = 8;
 constexpr int kDrawTextColorOffset = 12;
 constexpr int kDrawTextTextLengthOffset = 16;
 constexpr int kDrawTextFontLengthOffset = 20;
+constexpr const wchar_t* kLogCategory = L"NativeProxy.D3D11";
+constexpr double kSlowFrameThresholdMs = 33.0;
+constexpr std::uint64_t kSlowFrameLogEveryNFrames = 120;
+
+std::uint64_t QueryQpcNow() {
+  LARGE_INTEGER value{};
+  QueryPerformanceCounter(&value);
+  return static_cast<std::uint64_t>(value.QuadPart);
+}
+
+std::uint64_t QueryQpcFrequency() {
+  static const std::uint64_t cached = []() {
+    LARGE_INTEGER value{};
+    QueryPerformanceFrequency(&value);
+    return static_cast<std::uint64_t>(value.QuadPart);
+  }();
+  return cached;
+}
+
+void RecordFramePerformance(BridgeRendererD3D11* s, double frameDurationMs) {
+  if (!s) {
+    return;
+  }
+
+  ++s->submittedFrameCount;
+
+  if (s->drawDurationMetricId > 0) {
+    FDVLOG_LogMetric(s->drawDurationMetricId, frameDurationMs);
+  }
+
+  const std::uint64_t nowQpc = QueryQpcNow();
+  if (s->lastPresentQpc != 0 && s->fpsMetricId > 0) {
+    const std::uint64_t deltaTicks = nowQpc - s->lastPresentQpc;
+    const std::uint64_t freq = QueryQpcFrequency();
+    if (deltaTicks > 0 && freq > 0) {
+      const double fps =
+          static_cast<double>(freq) / static_cast<double>(deltaTicks);
+      FDVLOG_LogMetric(s->fpsMetricId, fps);
+    }
+  }
+  s->lastPresentQpc = nowQpc;
+
+  if (frameDurationMs >= kSlowFrameThresholdMs &&
+      (s->submittedFrameCount % kSlowFrameLogEveryNFrames) == 0) {
+    wchar_t message[320]{};
+    swprintf_s(message,
+               L"slow frame renderer=0x%p drawMs=%.3f frame=%llu size=%dx%d.",
+               static_cast<void*>(s), frameDurationMs,
+               static_cast<unsigned long long>(s->submittedFrameCount), s->width,
+               s->height);
+    FDVLOG_Log(FDVLOG_LevelWarn, kLogCategory, message, false);
+    FDVLOG_WriteETW(FDVLOG_LevelWarn, kLogCategory, message, false);
+  }
+}
 
 template <typename T> void SafeRelease(T** ptr) {
   if (ptr == nullptr || *ptr == nullptr)
@@ -814,6 +871,8 @@ bool ResizeSwapChain(BridgeRendererD3D11* s, int width, int height) {
 
 bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
                               int commandBytes) {
+  const auto frameStart = std::chrono::steady_clock::now();
+
   if (!s || !s->context || !s->swapChain || !s->rtv0 || !commands ||
       commandBytes <= 0 || s->width <= 0 || s->height <= 0) {
     SetLastError(s, E_UNEXPECTED);
@@ -1138,6 +1197,11 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
     SetLastError(s, hr);
     return false;
   }
+
+  const auto frameEnd = std::chrono::steady_clock::now();
+  const double frameDurationMs =
+      std::chrono::duration<double, std::milli>(frameEnd - frameStart).count();
+  RecordFramePerformance(s, frameDurationMs);
 
   SetLastError(s, S_OK);
   return true;

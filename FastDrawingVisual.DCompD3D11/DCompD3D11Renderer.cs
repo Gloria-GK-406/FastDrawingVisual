@@ -1,4 +1,5 @@
 using FastDrawingVisual.Rendering;
+using FastDrawingVisual.Log;
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -33,8 +34,18 @@ namespace FastDrawingVisual.DCompD3D11
         private bool _isInitialized;
         private bool _isRenderFaulted;
         private bool _isDisposed;
+        private int _drawDurationMetricId;
+        private int _fpsMetricId;
+        private long _lastFrameCompletedTimestamp;
+        private long _submittedFrameCount;
+        private static int s_nextRendererId;
+        private readonly int _rendererId = Interlocked.Increment(ref s_nextRendererId);
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
+        private const string LogCategory = "DCompD3D11Renderer";
+        private const int MetricWindowSec = 5;
+        private const string DrawMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
+        private const string FpsMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgFps={avg} minFps={min} maxFps={max}";
 
         public bool AttachToElement(ContentControl element)
         {
@@ -63,6 +74,7 @@ namespace FastDrawingVisual.DCompD3D11
             _previousContent = _hostElement.Content;
             _hostElement.Content = _hwndHost;
             _contentInjected = true;
+            LogInfo($"rid={_rendererId} attach host; injected HWND host wrapper.");
 
             TryEnsurePresentationBinding();
             return true;
@@ -75,21 +87,26 @@ namespace FastDrawingVisual.DCompD3D11
 
             _width = width;
             _height = height;
+            LogInfoEtw($"rid={_rendererId} initialize start width={_width} height={_height}.");
 
             try
             {
                 EnsureNativeRenderer();
                 EnsureProxyCreated();
+                EnsureMetricsRegistered();
                 _isRenderFaulted = false;
                 _presentationReady = false;
                 _isInitialized = true;
+                _lastFrameCompletedTimestamp = 0;
+                _submittedFrameCount = 0;
                 StartDrawingWorker();
                 TryEnsurePresentationBinding();
+                LogInfoEtw($"rid={_rendererId} initialize success width={_width} height={_height} native=0x{_nativeRenderer.ToInt64():X} proxy=0x{_proxyHandle.ToInt64():X}.");
                 return true;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DCompD3D11] Initialize failed: {ex}");
+                LogErrorEtw($"rid={_rendererId} initialize failed width={_width} height={_height}. {ex}");
                 StopDrawingWorker(WorkerShutdownTimeout);
                 _isInitialized = false;
                 return false;
@@ -109,6 +126,7 @@ namespace FastDrawingVisual.DCompD3D11
 
             if (!Proxy.Resize(_nativeRenderer, _width, _height))
                 ThrowNativeFailure("FDV_Resize");
+            LogInfoEtw($"rid={_rendererId} resize success width={_width} height={_height}.");
 
             TryEnsurePresentationBinding();
             UpdateProxyRect();
@@ -129,6 +147,7 @@ namespace FastDrawingVisual.DCompD3D11
             _isDisposed = true;
 
             StopDrawingWorker(Timeout.InfiniteTimeSpan);
+            UnregisterMetrics();
 
             UnhookHostElement();
 
@@ -174,8 +193,6 @@ namespace FastDrawingVisual.DCompD3D11
         {
             if (_proxyHandle != IntPtr.Zero)
                 return;
-
-            WinRTProxyNative.EnsureResolverRegistered();
 
             if (!WinRTProxyNative.FDV_WinRTProxy_IsReady())
                 throw new InvalidOperationException("FDV_WinRTProxy_IsReady returned false.");
@@ -234,6 +251,7 @@ namespace FastDrawingVisual.DCompD3D11
                     _swapChainBound = false;
                     _presentationReady = false;
                     _boundHwnd = hwnd;
+                    LogInfoEtw($"rid={_rendererId} desktop target bound hwnd=0x{hwnd.ToInt64():X}.");
                 }
 
                 if (!_swapChainBound)
@@ -247,6 +265,7 @@ namespace FastDrawingVisual.DCompD3D11
 
                     _swapChainBound = true;
                     _presentationReady = false;
+                    LogInfoEtw($"rid={_rendererId} swapchain bound swapchain=0x{swapChain.ToInt64():X}.");
                 }
 
                 UpdateProxyRect();
@@ -256,7 +275,7 @@ namespace FastDrawingVisual.DCompD3D11
             catch (Exception ex)
             {
                 _presentationReady = false;
-                Debug.WriteLine($"[DCompD3D11] Presentation binding failed: {ex}");
+                LogErrorEtw($"rid={_rendererId} presentation binding failed. {ex}");
                 return false;
             }
         }
@@ -285,6 +304,7 @@ namespace FastDrawingVisual.DCompD3D11
                 _workerCts?.Dispose();
                 _workerCts = new CancellationTokenSource();
                 _drawingWorkerTask = Task.Run(() => DrawingWorkerLoopAsync(_workerCts.Token));
+                LogInfo($"rid={_rendererId} drawing worker started.");
             }
         }
 
@@ -324,6 +344,7 @@ namespace FastDrawingVisual.DCompD3D11
                     _workerCts = null;
                 }
             }
+            LogInfo($"rid={_rendererId} drawing worker stopped.");
 
             return true;
         }
@@ -348,13 +369,15 @@ namespace FastDrawingVisual.DCompD3D11
 
                     try
                     {
+                        var drawStarted = Stopwatch.GetTimestamp();
                         using var context = new DCompDrawingContext(_width, _height, SubmitCommandsToNative);
                         action(context);
+                        RecordFrameMetrics(drawStarted);
                     }
                     catch (Exception ex)
                     {
                         _isRenderFaulted = true;
-                        Debug.WriteLine($"[DCompD3D11] Draw worker failed: {ex}");
+                        LogErrorEtw($"rid={_rendererId} draw worker failed after {_submittedFrameCount} frames. {ex}");
                     }
                 }
             }
@@ -408,6 +431,7 @@ namespace FastDrawingVisual.DCompD3D11
             _desktopTargetBound = false;
             _swapChainBound = false;
             _presentationReady = false;
+            LogInfo($"rid={_rendererId} host hwnd destroyed; presentation state reset.");
         }
 
         private void UnhookHostElement()
@@ -442,6 +466,122 @@ namespace FastDrawingVisual.DCompD3D11
             _presentationReady = false;
         }
 
+        private void EnsureMetricsRegistered()
+        {
+            if (_drawDurationMetricId <= 0)
+            {
+                _drawDurationMetricId = SafeRegisterMetric(
+                    $"dcomp.d3d11.r{_rendererId}.draw_ms",
+                    MetricWindowSec,
+                    DrawMetricFormat,
+                    LogLevel.Info);
+            }
+
+            if (_fpsMetricId <= 0)
+            {
+                _fpsMetricId = SafeRegisterMetric(
+                    $"dcomp.d3d11.r{_rendererId}.fps",
+                    MetricWindowSec,
+                    FpsMetricFormat,
+                    LogLevel.Info);
+            }
+
+            LogDebug($"rid={_rendererId} metric registration drawMetricId={_drawDurationMetricId} fpsMetricId={_fpsMetricId}.");
+        }
+
+        private void UnregisterMetrics()
+        {
+            if (_drawDurationMetricId > 0)
+                SafeUnregisterMetric(_drawDurationMetricId);
+            if (_fpsMetricId > 0)
+                SafeUnregisterMetric(_fpsMetricId);
+
+            _drawDurationMetricId = 0;
+            _fpsMetricId = 0;
+        }
+
+        private void RecordFrameMetrics(long drawStartedTimestamp)
+        {
+            _submittedFrameCount++;
+
+            var nowTicks = Stopwatch.GetTimestamp();
+            var drawDurationMs = (nowTicks - drawStartedTimestamp) * 1000d / Stopwatch.Frequency;
+            if (_drawDurationMetricId > 0)
+                SafeLogMetric(_drawDurationMetricId, drawDurationMs);
+
+            if (_lastFrameCompletedTimestamp > 0)
+            {
+                var deltaTicks = nowTicks - _lastFrameCompletedTimestamp;
+                if (deltaTicks > 0)
+                {
+                    var fps = Stopwatch.Frequency / (double)deltaTicks;
+                    if (_fpsMetricId > 0)
+                        SafeLogMetric(_fpsMetricId, fps);
+                }
+            }
+            _lastFrameCompletedTimestamp = nowTicks;
+
+            if (drawDurationMs >= 33d && (_submittedFrameCount % 120 == 0))
+                LogWarnEtw($"rid={_rendererId} slow frame drawMs={drawDurationMs:F3} frame={_submittedFrameCount} size={_width}x{_height}.");
+        }
+
+        private static int SafeRegisterMetric(string name, uint periodSec, string format, LogLevel level)
+        {
+            try
+            {
+                return LogProxy.RegisterMetric(name, periodSec, format, level);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DCompD3D11][MetricFallback] register failed: {ex.GetType().Name}: {ex.Message}");
+                return 0;
+            }
+        }
+
+        private static void SafeUnregisterMetric(int metricId)
+        {
+            try
+            {
+                LogProxy.UnregisterMetric(metricId);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DCompD3D11][MetricFallback] unregister failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static void SafeLogMetric(int metricId, double value)
+        {
+            try
+            {
+                LogProxy.LogMetric(metricId, value);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DCompD3D11][MetricFallback] log failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static void LogDebug(string message) => SafeLog(LogLevel.Debug, message, false);
+        private static void LogInfo(string message) => SafeLog(LogLevel.Info, message, false);
+        private static void LogInfoEtw(string message) => SafeLog(LogLevel.Info, message, true);
+        private static void LogWarnEtw(string message) => SafeLog(LogLevel.Warn, message, true);
+        private static void LogErrorEtw(string message) => SafeLog(LogLevel.Error, message, true);
+
+        private static void SafeLog(LogLevel level, string message, bool emitEtw)
+        {
+            try
+            {
+                LogProxy.Log(level, LogCategory, message);
+                if (emitEtw)
+                    LogProxy.WriteETW(level, LogCategory, message);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DCompD3D11][LogFallback] {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         private void ThrowProxyFailure(string operation)
         {
             var hr = _proxyHandle != IntPtr.Zero
@@ -451,7 +591,9 @@ namespace FastDrawingVisual.DCompD3D11
             if (hr >= 0)
                 hr = unchecked((int)0x80004005);
 
-            throw new COMException($"{operation} failed with HRESULT=0x{hr:X8}", hr);
+            var message = $"{operation} failed with HRESULT=0x{hr:X8}";
+            LogErrorEtw($"rid={_rendererId} {message}");
+            throw new COMException(message, hr);
         }
 
         private void ThrowNativeFailure(string operation)
@@ -463,7 +605,9 @@ namespace FastDrawingVisual.DCompD3D11
             if (hr >= 0)
                 hr = unchecked((int)0x80004005);
 
-            throw new COMException($"{operation} failed with HRESULT=0x{hr:X8}", hr);
+            var message = $"{operation} failed with HRESULT=0x{hr:X8}";
+            LogErrorEtw($"rid={_rendererId} {message}");
+            throw new COMException(message, hr);
         }
     }
 }

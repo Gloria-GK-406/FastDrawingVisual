@@ -12,6 +12,7 @@
 #include <d3d11.h>
 #include <dwrite.h>
 #include <dxgi1_2.h>
+#include <stdint.h>
 #include <windows.h>
 
 struct BridgeRendererD3D11 {
@@ -37,6 +38,10 @@ struct BridgeRendererD3D11 {
   int width = 0;
   int height = 0;
   HRESULT lastErrorHr = S_OK;
+  int drawDurationMetricId = 0;
+  int fpsMetricId = 0;
+  uint64_t lastPresentQpc = 0;
+  uint64_t submittedFrameCount = 0;
 
   bool csInitialized = false;
   CRITICAL_SECTION cs;

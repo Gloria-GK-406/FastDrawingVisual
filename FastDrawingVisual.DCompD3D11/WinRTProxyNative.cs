@@ -1,46 +1,11 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace FastDrawingVisual
 {
     internal static class WinRTProxyNative
     {
         private const string DllName = "FastDrawingVisual.WINRTProxy";
-        private const string DllFileName = "FastDrawingVisual.WINRTProxy.dll";
-        private static bool _resolverRegistered;
-
-        internal static void EnsureResolverRegistered()
-        {
-            if (_resolverRegistered)
-                return;
-
-            NativeLibrary.SetDllImportResolver(typeof(WinRTProxyNative).Assembly, ResolveDllImport);
-            _resolverRegistered = true;
-        }
-
-        private static IntPtr ResolveDllImport(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
-        {
-            if (!string.Equals(libraryName, DllName, StringComparison.OrdinalIgnoreCase))
-                return IntPtr.Zero;
-
-            var arch = Environment.Is64BitProcess ? "x64" : "x86";
-            var baseDir = AppContext.BaseDirectory;
-            var candidate = Path.Combine(baseDir, "lib", arch, DllFileName);
-            if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
-                return handle;
-
-            var fallback = Path.Combine(baseDir, DllFileName);
-            if (File.Exists(fallback) && NativeLibrary.TryLoad(fallback, out handle))
-                return handle;
-
-            return IntPtr.Zero;
-        }
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "FDV_WinRTProxy_IsReady")]
         [return: MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]

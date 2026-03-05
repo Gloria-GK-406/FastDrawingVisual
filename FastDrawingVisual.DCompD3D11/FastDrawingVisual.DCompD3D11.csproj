@@ -10,10 +10,17 @@
     <BridgeProtocolProjectDir>$(MSBuildProjectDirectory)\..\FastDrawingVisual.CommandProtocol</BridgeProtocolProjectDir>
     <BridgeProtocolSchema>$(BridgeProtocolProjectDir)\command_protocol.schema.json</BridgeProtocolSchema>
     <BridgeProtocolOutDir>$(MSBuildProjectDirectory)\..\artifacts\generated\protocol</BridgeProtocolOutDir>
+    <NativePlatform Condition="'$(Platform)' == 'x86'">Win32</NativePlatform>
+    <NativePlatform Condition="'$(Platform)' == 'AnyCPU'">x64</NativePlatform>
+    <NativePlatform Condition="'$(NativePlatform)' == ''">$(Platform)</NativePlatform>
+    <NativeArtifactsRoot>$(MSBuildProjectDirectory)\..\artifacts</NativeArtifactsRoot>
+    <LogCoreDll>$(NativeArtifactsRoot)\FastDrawingVisual.LogCore\$(Configuration)\$(NativePlatform)\FastDrawingVisual.LogCore.dll</LogCoreDll>
+    <WinRTProxyDll>$(NativeArtifactsRoot)\FastDrawingVisual.WINRTProxy\$(Configuration)\$(NativePlatform)\FastDrawingVisual.WINRTProxy.dll</WinRTProxyDll>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
+    <ProjectReference Include="..\FastDrawingVisual.LogClrProxy\FastDrawingVisual.LogClrProxy.vcxproj" />
     <ProjectReference Include="..\FastDrawingVisual.NativeProxy.D3D11\FastDrawingVisual.NativeProxy.D3D11.vcxproj" />
   </ItemGroup>
 
@@ -22,20 +29,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="lib\x86\FastDrawingVisual.WINRTProxy.dll">
+    <Content Include="$(LogCoreDll)" Condition="Exists('$(LogCoreDll)')">
+      <Link>FastDrawingVisual.LogCore.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>lib\x86\FastDrawingVisual.WINRTProxy.dll</TargetPath>
     </Content>
-    <Content Include="lib\x64\FastDrawingVisual.WINRTProxy.dll">
+    <Content Include="$(WinRTProxyDll)" Condition="Exists('$(WinRTProxyDll)')">
+      <Link>FastDrawingVisual.WINRTProxy.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>lib\x64\FastDrawingVisual.WINRTProxy.dll</TargetPath>
     </Content>
   </ItemGroup>
 
-  <Target Name="FDV_GenerateBridgeProtocol"
-          BeforeTargets="CoreCompile"
-          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\Program.cs"
-          Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
+  <Target Name="FDV_GenerateBridgeProtocol" BeforeTargets="CoreCompile" Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\Program.cs" Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
     <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot; -- --schema &quot;$(BridgeProtocolSchema)&quot; --out-dir &quot;$(BridgeProtocolOutDir)&quot;" />
   </Target>
 </Project>
