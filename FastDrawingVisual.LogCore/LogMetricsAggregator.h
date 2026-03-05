@@ -45,7 +45,6 @@ private:
     int id = 0;
     std::wstring name;
     uint32_t periodSec = 1;
-    int aggregation = FDVLOG_AggregationCount;
     std::wstring idText;
     std::wstring periodSecText;
     std::vector<FormatPiece> formatPieces;
@@ -74,7 +73,6 @@ private:
     MetricState state;
   };
 
-  static int NormalizeAggregation(int aggregation);
   static int NormalizeLevel(int level);
   static void ResetBucket(MetricState &state);
   static void AccumulateMetric(MetricState &state, double value);

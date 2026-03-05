@@ -12,16 +12,6 @@ enum class LogLevel : int {
 };
 
 public
-enum class MetricAggregation : int {
-  Count = 0,
-  Rate = Count,
-  Average = 1,
-  Sum = 2,
-  Min = 3,
-  Max = 4
-};
-
-public
 ref class LogProxy abstract sealed {
 public:
   static bool Initialize();
@@ -32,8 +22,15 @@ public:
                     System::String ^ message);
   static void WriteDirect(LogLevel level, System::String ^ category,
                           System::String ^ message);
+  /// <summary>Registers a periodic metric bucket.</summary>
+  /// <param name="name">Metric name; empty uses an auto-generated name.</param>
+  /// <param name="periodSec">Bucket period in seconds; minimum is 1.</param>
+  /// <param name="format">
+  /// Supported placeholders: {id}, {name}, {periodSec}, {windowMs},
+  /// {count}/{samples}, {avg}, {min}, {max}.
+  /// </param>
+  /// <param name="level">Log level used when a bucket is emitted.</param>
   static int RegisterMetric(System::String ^ name, System::UInt32 periodSec,
-                            MetricAggregation aggregation,
                             System::String ^ format, LogLevel level);
   static bool UnregisterMetric(int metricId);
   static void LogMetric(int metricId, double value);

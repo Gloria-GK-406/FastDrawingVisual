@@ -18,19 +18,9 @@ enum FDVLOG_Level {
   FDVLOG_LevelFatal = 5
 };
 
-enum FDVLOG_Aggregation {
-  FDVLOG_AggregationCount = 0,
-  FDVLOG_AggregationRate = FDVLOG_AggregationCount,
-  FDVLOG_AggregationAverage = 1,
-  FDVLOG_AggregationSum = 2,
-  FDVLOG_AggregationMin = 3,
-  FDVLOG_AggregationMax = 4
-};
-
 typedef struct FDVLOG_MetricSpec {
   const wchar_t *name;
   uint32_t periodSec;
-  int aggregation;
   const wchar_t *format;
   int level;
 } FDVLOG_MetricSpec;

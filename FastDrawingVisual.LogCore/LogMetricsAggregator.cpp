@@ -32,7 +32,6 @@ int LogMetricsAggregator::RegisterMetric(const FDVLOG_MetricSpec *spec) {
   MetricDefinition definition{};
   definition.id = metricId;
   definition.periodSec = std::max<uint32_t>(spec->periodSec, 1);
-  definition.aggregation = NormalizeAggregation(spec->aggregation);
   definition.level = NormalizeLevel(spec->level);
 
   if (!IsNullOrEmpty(spec->name)) {
@@ -137,19 +136,6 @@ void LogMetricsAggregator::OnHeartbeat(const EmitCallback &emit) {
     // Keep rolling on heartbeat boundaries so only the first period can be
     // partial in continuous streams.
     entry->state.currentPeriod = 1;
-  }
-}
-
-int LogMetricsAggregator::NormalizeAggregation(int aggregation) {
-  switch (aggregation) {
-  case FDVLOG_AggregationCount:
-  case FDVLOG_AggregationAverage:
-  case FDVLOG_AggregationSum:
-  case FDVLOG_AggregationMin:
-  case FDVLOG_AggregationMax:
-    return aggregation;
-  default:
-    return FDVLOG_AggregationAverage;
   }
 }
 
