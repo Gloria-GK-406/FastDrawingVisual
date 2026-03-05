@@ -220,7 +220,7 @@ void LogProxy::WriteDirect(LogLevel level, String ^ category, String ^ message) 
   FDVLOG_Log(static_cast<int>(level), c, m, true);
 }
 
-int LogProxy::RegisterMetric(String ^ name, UInt32 windowMs,
+int LogProxy::RegisterMetric(String ^ name, UInt32 periodSec,
                              MetricAggregation aggregation, String ^ format,
                              LogLevel level) {
   name = Coalesce(name, String::Empty);
@@ -231,7 +231,7 @@ int LogProxy::RegisterMetric(String ^ name, UInt32 windowMs,
 
   FDVLOG_MetricSpec spec{};
   spec.name = name->Length > 0 ? n : nullptr;
-  spec.windowMs = Math::Max(windowMs, 1000U);
+  spec.periodSec = Math::Max(periodSec, 1U);
   spec.aggregation = static_cast<int>(aggregation);
   spec.format = format->Length > 0 ? f : nullptr;
   spec.level = static_cast<int>(level);

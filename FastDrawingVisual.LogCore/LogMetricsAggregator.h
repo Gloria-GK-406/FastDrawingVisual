@@ -22,14 +22,14 @@ public:
   void Reset();
   void OnMetricEvent(const MetricPayload &payload, uint64_t timestamp100ns,
                      const EmitCallback &emit);
-  void OnHeartbeat(uint64_t timestamp100ns, const EmitCallback &emit);
+  void OnHeartbeat(const EmitCallback &emit);
 
 private:
   enum class FormatTokenType {
     Literal,
     Id,
     Name,
-    WindowMs,
+    PeriodSec,
     Count,
     Avg,
     Min,
@@ -44,23 +44,28 @@ private:
   struct MetricDefinition {
     int id = 0;
     std::wstring name;
-    uint32_t windowMs = 1000;
+    uint32_t periodSec = 1;
     int aggregation = FDVLOG_AggregationCount;
     std::wstring idText;
-    std::wstring windowMsText;
+    std::wstring periodSecText;
     std::vector<FormatPiece> formatPieces;
     size_t staticChars = 0;
     int level = FDVLOG_LevelInfo;
   };
 
   struct MetricState {
-    uint64_t windowStart100ns = 0;
-    uint64_t windowEnd100ns = 0;
+    uint64_t currentPeriod = 0;
     double sum = 0.0;
     double minValue = 0.0;
     double maxValue = 0.0;
     uint64_t sampleCount = 0;
-    bool hasSamples = false;
+  };
+
+  struct MetricStateSnapshot {
+    uint64_t sampleCount = 0;
+    double avg = 0.0;
+    double minValue = 0.0;
+    double maxValue = 0.0;
   };
 
   struct MetricEntry {
@@ -69,12 +74,9 @@ private:
     MetricState state;
   };
 
-  static uint64_t WindowDuration100ns(uint32_t windowMs);
   static int NormalizeAggregation(int aggregation);
   static int NormalizeLevel(int level);
   static void ResetBucket(MetricState &state);
-  static void InitializeWindow(MetricState &state, uint32_t windowMs,
-                               uint64_t timestamp100ns);
   static void AccumulateMetric(MetricState &state, double value);
   static std::wstring FormatNumber(double value);
   static std::vector<FormatPiece>
@@ -82,12 +84,10 @@ private:
   static bool TryParseToken(const std::wstring &tokenName,
                             FormatTokenType *tokenType);
   static std::wstring BuildFormattedLine(const MetricDefinition &definition,
-                                         uint64_t sampleCount, double avg,
-                                         double minValue, double maxValue);
+                                         const MetricStateSnapshot &snapshot);
+  static MetricStateSnapshot BuildSnapshot(const MetricState &state);
   static void EmitCurrentBucketIfAny(MetricEntry &entry,
                                      const EmitCallback &emit);
-  static void AdvanceMetricWindow(MetricEntry &entry, uint64_t timestamp100ns,
-                                  const EmitCallback &emit);
   std::shared_ptr<MetricEntry> FindEntry(int metricId);
 
   std::mutex metricsMutex_;

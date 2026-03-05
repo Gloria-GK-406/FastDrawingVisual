@@ -32,7 +32,7 @@ public:
                     System::String ^ message);
   static void WriteDirect(LogLevel level, System::String ^ category,
                           System::String ^ message);
-  static int RegisterMetric(System::String ^ name, System::UInt32 windowMs,
+  static int RegisterMetric(System::String ^ name, System::UInt32 periodSec,
                             MetricAggregation aggregation,
                             System::String ^ format, LogLevel level);
   static bool UnregisterMetric(int metricId);

@@ -29,7 +29,7 @@ enum FDVLOG_Aggregation {
 
 typedef struct FDVLOG_MetricSpec {
   const wchar_t *name;
-  uint32_t windowMs;
+  uint32_t periodSec;
   int aggregation;
   const wchar_t *format;
   int level;

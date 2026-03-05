@@ -293,11 +293,9 @@ private:
       return;
     }
 
-    const uint64_t now100ns = QpcToFileTime100ns(QueryQpcNow());
-    metrics_.OnHeartbeat(now100ns,
-                         [this](const std::wstring &line, int level) {
-                           EnqueueMetricLine(level, line);
-                         });
+    metrics_.OnHeartbeat([this](const std::wstring &line, int level) {
+      EnqueueMetricLine(level, line);
+    });
 
     metricTickRunning_.store(false, std::memory_order_release);
   }

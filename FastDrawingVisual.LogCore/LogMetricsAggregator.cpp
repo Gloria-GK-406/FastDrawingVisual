@@ -10,7 +10,7 @@ namespace fdvlog {
 namespace {
 
 constexpr const wchar_t *kDefaultMetricFormat =
-    L"id={id} name={name} windowMs={windowMs} "
+    L"id={id} name={name} periodSec={periodSec} "
     L"count={count} avg={avg} min={min} max={max}";
 
 static bool IsNullOrEmpty(const wchar_t *text) {
@@ -31,7 +31,7 @@ int LogMetricsAggregator::RegisterMetric(const FDVLOG_MetricSpec *spec) {
 
   MetricDefinition definition{};
   definition.id = metricId;
-  definition.windowMs = std::max<uint32_t>(spec->windowMs, 1000);
+  definition.periodSec = std::max<uint32_t>(spec->periodSec, 1);
   definition.aggregation = NormalizeAggregation(spec->aggregation);
   definition.level = NormalizeLevel(spec->level);
 
@@ -42,7 +42,7 @@ int LogMetricsAggregator::RegisterMetric(const FDVLOG_MetricSpec *spec) {
   }
 
   definition.idText = std::to_wstring(definition.id);
-  definition.windowMsText = std::to_wstring(definition.windowMs);
+  definition.periodSecText = std::to_wstring(definition.periodSec);
 
   const std::wstring format =
       IsNullOrEmpty(spec->format) ? std::wstring(kDefaultMetricFormat)
@@ -60,8 +60,8 @@ int LogMetricsAggregator::RegisterMetric(const FDVLOG_MetricSpec *spec) {
     case FormatTokenType::Name:
       definition.staticChars += definition.name.size();
       break;
-    case FormatTokenType::WindowMs:
-      definition.staticChars += definition.windowMsText.size();
+    case FormatTokenType::PeriodSec:
+      definition.staticChars += definition.periodSecText.size();
       break;
     default:
       break;
@@ -105,16 +105,15 @@ void LogMetricsAggregator::OnMetricEvent(const MetricPayload &payload,
     return;
 
   std::lock_guard<std::mutex> lock(entry->mutex);
-  if (entry->state.windowEnd100ns == 0) {
-    InitializeWindow(entry->state, entry->definition.windowMs, timestamp100ns);
-  }
+  if (entry->state.currentPeriod == 0)
+    entry->state.currentPeriod = 1;
 
-  AdvanceMetricWindow(*entry, timestamp100ns, emit);
+  (void)timestamp100ns;
+  (void)emit;
   AccumulateMetric(entry->state, payload.value);
 }
 
-void LogMetricsAggregator::OnHeartbeat(uint64_t timestamp100ns,
-                                       const EmitCallback &emit) {
+void LogMetricsAggregator::OnHeartbeat(const EmitCallback &emit) {
   std::vector<std::shared_ptr<MetricEntry>> snapshot;
   {
     std::lock_guard<std::mutex> lock(metricsMutex_);
@@ -126,15 +125,19 @@ void LogMetricsAggregator::OnHeartbeat(uint64_t timestamp100ns,
 
   for (const auto &entry : snapshot) {
     std::lock_guard<std::mutex> entryLock(entry->mutex);
-    if (entry->state.windowEnd100ns == 0)
+    if (entry->state.currentPeriod == 0)
       continue;
-    AdvanceMetricWindow(*entry, timestamp100ns, emit);
-  }
-}
 
-uint64_t LogMetricsAggregator::WindowDuration100ns(uint32_t windowMs) {
-  const uint64_t safeWindowMs = std::max<uint32_t>(windowMs, 1);
-  return safeWindowMs * 10000ULL;
+    ++entry->state.currentPeriod;
+    if (entry->state.currentPeriod <= entry->definition.periodSec)
+      continue;
+
+    EmitCurrentBucketIfAny(*entry, emit);
+    ResetBucket(entry->state);
+    // Keep rolling on heartbeat boundaries so only the first period can be
+    // partial in continuous streams.
+    entry->state.currentPeriod = 1;
+  }
 }
 
 int LogMetricsAggregator::NormalizeAggregation(int aggregation) {
@@ -169,31 +172,17 @@ void LogMetricsAggregator::ResetBucket(MetricState &state) {
   state.minValue = 0.0;
   state.maxValue = 0.0;
   state.sampleCount = 0;
-  state.hasSamples = false;
-}
-
-void LogMetricsAggregator::InitializeWindow(MetricState &state, uint32_t windowMs,
-                                            uint64_t timestamp100ns) {
-  const uint64_t duration = WindowDuration100ns(windowMs);
-  const uint64_t start = (timestamp100ns / duration) * duration;
-  state.windowStart100ns = start;
-  state.windowEnd100ns = start + duration;
-  ResetBucket(state);
 }
 
 void LogMetricsAggregator::AccumulateMetric(MetricState &state, double value) {
-  if (!state.hasSamples) {
-    state.sum = value;
+  if (state.sampleCount == 0) {
     state.minValue = value;
     state.maxValue = value;
-    state.sampleCount = 1;
-    state.hasSamples = true;
-    return;
+  } else {
+    state.minValue = std::min(state.minValue, value);
+    state.maxValue = std::max(state.maxValue, value);
   }
-
   state.sum += value;
-  state.minValue = std::min(state.minValue, value);
-  state.maxValue = std::max(state.maxValue, value);
   ++state.sampleCount;
 }
 
@@ -286,8 +275,8 @@ bool LogMetricsAggregator::TryParseToken(const std::wstring &tokenName,
     *tokenType = FormatTokenType::Name;
     return true;
   }
-  if (tokenName == L"windowMs") {
-    *tokenType = FormatTokenType::WindowMs;
+  if (tokenName == L"periodSec" || tokenName == L"windowMs") {
+    *tokenType = FormatTokenType::PeriodSec;
     return true;
   }
   if (tokenName == L"count" || tokenName == L"samples") {
@@ -312,12 +301,11 @@ bool LogMetricsAggregator::TryParseToken(const std::wstring &tokenName,
 
 std::wstring
 LogMetricsAggregator::BuildFormattedLine(const MetricDefinition &definition,
-                                         uint64_t sampleCount, double avg,
-                                         double minValue, double maxValue) {
-  const std::wstring countText = std::to_wstring(sampleCount);
-  const std::wstring avgText = FormatNumber(avg);
-  const std::wstring minText = FormatNumber(minValue);
-  const std::wstring maxText = FormatNumber(maxValue);
+                                         const MetricStateSnapshot &snapshot) {
+  const std::wstring countText = std::to_wstring(snapshot.sampleCount);
+  const std::wstring avgText = FormatNumber(snapshot.avg);
+  const std::wstring minText = FormatNumber(snapshot.minValue);
+  const std::wstring maxText = FormatNumber(snapshot.maxValue);
 
   std::wstring line;
   line.reserve(definition.staticChars + countText.size() + avgText.size() +
@@ -334,8 +322,8 @@ LogMetricsAggregator::BuildFormattedLine(const MetricDefinition &definition,
     case FormatTokenType::Name:
       line += definition.name;
       break;
-    case FormatTokenType::WindowMs:
-      line += definition.windowMsText;
+    case FormatTokenType::PeriodSec:
+      line += definition.periodSecText;
       break;
     case FormatTokenType::Count:
       line += countText;
@@ -355,38 +343,26 @@ LogMetricsAggregator::BuildFormattedLine(const MetricDefinition &definition,
   return line;
 }
 
-void LogMetricsAggregator::EmitCurrentBucketIfAny(MetricEntry &entry,
-                                                  const EmitCallback &emit) {
-  if (!entry.state.hasSamples || entry.state.sampleCount == 0)
-    return;
+LogMetricsAggregator::MetricStateSnapshot
+LogMetricsAggregator::BuildSnapshot(const MetricState &state) {
+  MetricStateSnapshot snapshot{};
+  snapshot.sampleCount = state.sampleCount;
+  if (state.sampleCount == 0)
+    return snapshot;
 
-  const double avg =
-      entry.state.sum / static_cast<double>(entry.state.sampleCount);
-  emit(BuildFormattedLine(entry.definition, entry.state.sampleCount, avg,
-                          entry.state.minValue, entry.state.maxValue),
-       entry.definition.level);
+  snapshot.avg = state.sum / static_cast<double>(state.sampleCount);
+  snapshot.minValue = state.minValue;
+  snapshot.maxValue = state.maxValue;
+  return snapshot;
 }
 
-void LogMetricsAggregator::AdvanceMetricWindow(MetricEntry &entry,
-                                               uint64_t timestamp100ns,
-                                               const EmitCallback &emit) {
-  const uint64_t duration = WindowDuration100ns(entry.definition.windowMs);
-  if (duration == 0)
+void LogMetricsAggregator::EmitCurrentBucketIfAny(MetricEntry &entry,
+                                                  const EmitCallback &emit) {
+  if (entry.state.sampleCount == 0)
     return;
 
-  while (timestamp100ns >= entry.state.windowEnd100ns) {
-    EmitCurrentBucketIfAny(entry, emit);
-    entry.state.windowStart100ns = entry.state.windowEnd100ns;
-    entry.state.windowEnd100ns += duration;
-    ResetBucket(entry.state);
-
-    if (timestamp100ns >= entry.state.windowEnd100ns) {
-      const uint64_t windowsToSkip =
-          (timestamp100ns - entry.state.windowEnd100ns) / duration;
-      entry.state.windowStart100ns += windowsToSkip * duration;
-      entry.state.windowEnd100ns += windowsToSkip * duration;
-    }
-  }
+  const MetricStateSnapshot snapshot = BuildSnapshot(entry.state);
+  emit(BuildFormattedLine(entry.definition, snapshot), entry.definition.level);
 }
 
 } // namespace fdvlog
