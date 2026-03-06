@@ -10,13 +10,12 @@
 ### Runtime Entry and Selection
 - Host control entry point: `FastDrawingVisual.Controls.FastDrawingVisual`.
 - Renderer factory: `FastDrawingVisual.Controls.RendererFactory`.
-- Current `RendererFactory.Create()` decision order is:
-  - `FDV_RENDERER=DCompD3D11` -> try `DCompD3D11`
-  - if `RendererCapability.IsAcceleratedAvailable` -> try `Skia`
-  - if `NativeD3D9Capability.IsAvailable` -> try `NativeD3D9`
-  - if `RendererCapability.IsAcceleratedAvailable` -> try `Skia` again
-  - fallback -> `WpfFallbackRenderer`
-- Keep this behavior stable unless a task explicitly asks to change selection policy.
+- `FastDrawingVisual` exposes a `PreferredRenderer` dependency property.
+- `RendererFactory.Create(RendererPreference)` behaves as:
+  - `Auto` -> try `Skia`, then `NativeD3D9`, then `WpfFallbackRenderer`
+  - explicit preference (`Skia` / `NativeD3D9` / `DCompD3D11`) -> try only that renderer family
+  - if the preferred renderer is unsupported or initialization/attach fails -> fallback to `WpfFallbackRenderer`
+- No environment-variable renderer override is used.
 
 ### Primary Path (default maintenance priority)
 - `FastDrawingVisual.Contracts`
@@ -30,7 +29,7 @@
 
 Evidence:
 - `FastDrawingVisual/FastDrawingVisual.csproj` references Contracts + DCompD3D11 + WpfRenderer + NativeD3D9 + SkiaSharp.
-- Default non-env runtime path still prefers `Skia` / `NativeD3D9` / `WpfFallbackRenderer`.
+- Default runtime path still prefers `Skia` / `NativeD3D9` / `WpfFallbackRenderer`.
 - `NativeD3D9` + `NativeProxy.D3D9` consume generated protocol outputs from `FastDrawingVisual.CommandProtocol`.
 
 ### Experimental Path (editable, but not default capability)
@@ -41,7 +40,7 @@ Evidence:
 - `FastDrawingVisual.LogClrProxy`
 
 Evidence:
-- DCompD3D11 is only force-selected by env var `FDV_RENDERER=DCompD3D11`.
+- DCompD3D11 is only reachable via explicit `PreferredRenderer=DCompD3D11`.
 - `DCompD3D11` depends on `NativeProxy.D3D11` + `LogClrProxy` and runtime-loads `WINRTProxy`.
 - `DCompDrawingContext` intentionally has partial `IDrawingContext` coverage (several APIs are explicit no-op in MVP scope).
 
@@ -54,13 +53,14 @@ Evidence:
 
 ## Obsolete Detection Rules
 - Primary status is based on default runtime reachability from `RendererFactory` plus required build-time infrastructure.
-- If a project is only reachable via explicit opt-in (for example `FDV_RENDERER=DCompD3D11`), treat it as experimental.
+- If a project is only reachable via explicit opt-in (for example `PreferredRenderer=DCompD3D11`), treat it as experimental.
 - If implementation is clearly stubbed (`NotImplementedException`, permanent `false`, empty behavior), classify as experimental/placeholder.
 - For likely dormant modules, prefer minimal maintenance only (compile fixes, comments, docs). Avoid large refactors unless explicitly requested.
 
 ## Architecture Constraints
 - Shared contracts live in `FastDrawingVisual.Contracts/Rendering/*.cs`. Do not drift backend-specific behavior from contract semantics.
 - Host control entry point is `FastDrawingVisual.Controls.FastDrawingVisual`.
+- Runtime capability probing lives in the main `FastDrawingVisual` assembly, not in `Contracts`.
 - Renderer lifecycle is expected to stay:
   - `Initialize(width, height)` -> `AttachToElement(...)` -> `SubmitDrawing(...)` -> `Resize(...)` -> `Dispose()`
 - `SubmitDrawing` is latest-wins (replace semantics), not a queued replay model.

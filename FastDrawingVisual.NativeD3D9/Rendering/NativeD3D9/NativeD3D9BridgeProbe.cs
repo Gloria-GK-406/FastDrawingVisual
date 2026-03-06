@@ -5,7 +5,7 @@ using Proxy = FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.Rendering.NativeD3D9
 {
-    internal static class NativeD3D9Capability
+    public static class NativeD3D9BridgeProbe
     {
         [Flags]
         private enum NativeProxyCapability
@@ -34,7 +34,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             if (!File.Exists(Path.Combine(sysDir, "d3d9.dll")))
                 return false;
 
-            var proxyAssemblyPath = typeof(Proxy).Assembly.Location; ;
+            var proxyAssemblyPath = typeof(Proxy).Assembly.Location;
             if (string.IsNullOrWhiteSpace(proxyAssemblyPath) || !File.Exists(proxyAssemblyPath))
                 return false;
 

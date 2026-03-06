@@ -1,4 +1,3 @@
-using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 
@@ -14,7 +13,6 @@ namespace FastDrawingVisualApp
 
         protected override void OnStartup(StartupEventArgs e)
         {
-            Environment.SetEnvironmentVariable("FDV_RENDERER", "DCompD3D11");
             _timerResolutionRaised = NativeMethods.timeBeginPeriod(TimerResolutionMs) == 0;
             base.OnStartup(e);
         }

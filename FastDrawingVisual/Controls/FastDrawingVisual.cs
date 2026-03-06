@@ -1,4 +1,5 @@
 using FastDrawingVisual.Rendering;
+using FastDrawingVisual.WpfRenderer;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -17,7 +18,21 @@ namespace FastDrawingVisual.Controls
         private bool _isAttached;
         private bool _isDisposed;
 
+        public static readonly DependencyProperty PreferredRendererProperty =
+            DependencyProperty.Register(
+                nameof(PreferredRenderer),
+                typeof(RendererPreference),
+                typeof(FastDrawingVisual),
+                new PropertyMetadata(RendererPreference.Auto, OnPreferredRendererChanged),
+                IsValidPreferredRenderer);
+
         public bool IsReady => _renderer != null && _isAttached && !_isDisposed;
+
+        public RendererPreference PreferredRenderer
+        {
+            get => (RendererPreference)GetValue(PreferredRendererProperty);
+            set => SetValue(PreferredRendererProperty, value);
+        }
 
         public FastDrawingVisual()
         {
@@ -38,22 +53,16 @@ namespace FastDrawingVisual.Controls
 
         private void EnsureInitialized()
         {
+            if (_isDisposed)
+                return;
+
             var (px, py) = GetPixelSize();
             if (px <= 0 || py <= 0)
                 return;
 
             if (_renderer == null)
             {
-                _renderer = RendererFactory.Create();
-                if (_renderer.Initialize(px, py))
-                {
-                    _isAttached = _renderer.AttachToElement(this);
-                    if (!_isAttached)
-                    {
-                        _renderer.Dispose();
-                        _renderer = null;
-                    }
-                }
+                TryInitializeRenderer(px, py);
             }
             else if (_isAttached)
             {
@@ -120,6 +129,71 @@ namespace FastDrawingVisual.Controls
             Unloaded -= OnUnloaded;
             SizeChanged -= OnSizeChanged;
 
+            ResetRendererState();
+        }
+
+        private static void OnPreferredRendererChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is FastDrawingVisual visual)
+                visual.HandlePreferredRendererChanged();
+        }
+
+        private static bool IsValidPreferredRenderer(object value)
+            => value is RendererPreference preference && Enum.IsDefined(typeof(RendererPreference), preference);
+
+        private void HandlePreferredRendererChanged()
+        {
+            if (_isDisposed)
+                return;
+
+            ResetRendererState();
+            if (IsLoaded)
+                EnsureInitialized();
+        }
+
+        private void TryInitializeRenderer(int width, int height)
+        {
+            var renderer = RendererFactory.Create(PreferredRenderer);
+            if (TryAttachRenderer(renderer, width, height))
+                return;
+
+            if (renderer is WpfFallbackRenderer)
+                return;
+
+            TryAttachRenderer(new WpfFallbackRenderer(), width, height);
+        }
+
+        private bool TryAttachRenderer(IRenderer renderer, int width, int height)
+        {
+            ResetRendererState();
+
+            try
+            {
+                if (!renderer.Initialize(width, height))
+                {
+                    renderer.Dispose();
+                    return false;
+                }
+
+                if (!renderer.AttachToElement(this))
+                {
+                    renderer.Dispose();
+                    return false;
+                }
+
+                _renderer = renderer;
+                _isAttached = true;
+                return true;
+            }
+            catch
+            {
+                renderer.Dispose();
+                return false;
+            }
+        }
+
+        private void ResetRendererState()
+        {
             _renderer?.Dispose();
             _renderer = null;
 

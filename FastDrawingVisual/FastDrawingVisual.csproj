@@ -16,4 +16,8 @@
     <ProjectReference Include="..\FastDrawingVisual.NativeD3D9\FastDrawingVisual.NativeD3D9.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.SkiaSharp\FastDrawingVisual.SkiaSharp.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Document\" />
+  </ItemGroup>
 </Project>
