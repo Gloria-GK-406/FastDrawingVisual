@@ -52,7 +52,7 @@ std::uint64_t QueryQpcFrequency() {
   return cached;
 }
 
-void RecordFramePerformance(BridgeRendererD3D11* s, double frameDurationMs) {
+void RecordFramePerformance(BridgeRendererD3D11* s, double drawDurationMs) {
   if (!s) {
     return;
   }
@@ -60,7 +60,7 @@ void RecordFramePerformance(BridgeRendererD3D11* s, double frameDurationMs) {
   ++s->submittedFrameCount;
 
   if (s->drawDurationMetricId > 0) {
-    FDVLOG_LogMetric(s->drawDurationMetricId, frameDurationMs);
+    FDVLOG_LogMetric(s->drawDurationMetricId, drawDurationMs);
   }
 
   const std::uint64_t nowQpc = QueryQpcNow();
@@ -75,12 +75,12 @@ void RecordFramePerformance(BridgeRendererD3D11* s, double frameDurationMs) {
   }
   s->lastPresentQpc = nowQpc;
 
-  if (frameDurationMs >= kSlowFrameThresholdMs &&
+  if (drawDurationMs >= kSlowFrameThresholdMs &&
       (s->submittedFrameCount % kSlowFrameLogEveryNFrames) == 0) {
     wchar_t message[320]{};
     swprintf_s(message,
                L"slow frame renderer=0x%p drawMs=%.3f frame=%llu size=%dx%d.",
-               static_cast<void*>(s), frameDurationMs,
+               static_cast<void*>(s), drawDurationMs,
                static_cast<unsigned long long>(s->submittedFrameCount), s->width,
                s->height);
     FDVLOG_Log(FDVLOG_LevelWarn, kLogCategory, message, false);
@@ -749,7 +749,7 @@ bool CreateSwapChain(BridgeRendererD3D11* s) {
   swapDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
   swapDesc.BufferCount = kBufferCount;
   swapDesc.Scaling = DXGI_SCALING_STRETCH;
-  swapDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+  swapDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
   swapDesc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
   swapDesc.Flags = 0;
 
@@ -871,7 +871,7 @@ bool ResizeSwapChain(BridgeRendererD3D11* s, int width, int height) {
 
 bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
                               int commandBytes) {
-  const auto frameStart = std::chrono::steady_clock::now();
+  const auto drawStart = std::chrono::steady_clock::now();
 
   if (!s || !s->context || !s->swapChain || !s->rtv0 || !commands ||
       commandBytes <= 0 || s->width <= 0 || s->height <= 0) {
@@ -1192,16 +1192,18 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
   if (!endD2DDraw())
     return false;
 
-  HRESULT hr = s->swapChain->Present(1, 0);
+  HRESULT hr = s->swapChain->Present(0, 0);
+
+  const auto drawEnd = std::chrono::steady_clock::now();
+  const double drawDurationMs =
+      std::chrono::duration<double, std::milli>(drawEnd - drawStart).count();
+
   if (FAILED(hr)) {
     SetLastError(s, hr);
     return false;
   }
 
-  const auto frameEnd = std::chrono::steady_clock::now();
-  const double frameDurationMs =
-      std::chrono::duration<double, std::milli>(frameEnd - frameStart).count();
-  RecordFramePerformance(s, frameDurationMs);
+  RecordFramePerformance(s, drawDurationMs);
 
   SetLastError(s, S_OK);
   return true;

@@ -28,7 +28,9 @@ namespace FastDrawingVisual.DCompD3D11
         private int _width;
         private int _height;
         private readonly object _workerLock = new();
+        private readonly SemaphoreSlim _drawSignal = new(0, 1);
         private volatile Action<IDrawingContext>? _pendingDrawAction;
+        private int _drawSignalState;
         private CancellationTokenSource? _workerCts;
         private Task? _drawingWorkerTask;
         private bool _isInitialized;
@@ -43,7 +45,7 @@ namespace FastDrawingVisual.DCompD3D11
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
         private const string LogCategory = "DCompD3D11Renderer";
-        private const int MetricWindowSec = 5;
+        private const int MetricWindowSec = 1;
         private const string DrawMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
         private const string FpsMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgFps={avg} minFps={min} maxFps={max}";
 
@@ -139,6 +141,7 @@ namespace FastDrawingVisual.DCompD3D11
             if (_isRenderFaulted || drawAction == null) return;
 
             Interlocked.Exchange(ref _pendingDrawAction, drawAction);
+            SignalDrawingWorker();
         }
 
         public void Dispose()
@@ -270,6 +273,7 @@ namespace FastDrawingVisual.DCompD3D11
 
                 UpdateProxyRect();
                 _presentationReady = true;
+                SignalDrawingWorkerIfPending();
                 return true;
             }
             catch (Exception ex)
@@ -306,6 +310,8 @@ namespace FastDrawingVisual.DCompD3D11
                 _drawingWorkerTask = Task.Run(() => DrawingWorkerLoopAsync(_workerCts.Token));
                 LogInfo($"rid={_rendererId} drawing worker started.");
             }
+
+            SignalDrawingWorkerIfPending();
         }
 
         private bool StopDrawingWorker(TimeSpan timeout)
@@ -351,12 +357,13 @@ namespace FastDrawingVisual.DCompD3D11
 
         private async Task DrawingWorkerLoopAsync(CancellationToken token)
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1));
-
             try
             {
-                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                while (true)
                 {
+                    await _drawSignal.WaitAsync(token).ConfigureAwait(false);
+                    Interlocked.Exchange(ref _drawSignalState, 0);
+
                     if (_isDisposed || !_isInitialized || _nativeRenderer == IntPtr.Zero || _isRenderFaulted)
                         continue;
 
@@ -384,6 +391,26 @@ namespace FastDrawingVisual.DCompD3D11
             catch (OperationCanceledException)
             {
             }
+        }
+
+        private void SignalDrawingWorker()
+        {
+            if (Interlocked.Exchange(ref _drawSignalState, 1) != 0)
+                return;
+
+            try
+            {
+                _drawSignal.Release();
+            }
+            catch (SemaphoreFullException)
+            {
+            }
+        }
+
+        private void SignalDrawingWorkerIfPending()
+        {
+            if (_pendingDrawAction != null)
+                SignalDrawingWorker();
         }
 
         private unsafe void SubmitCommandsToNative(ReadOnlyMemory<byte> commandData)

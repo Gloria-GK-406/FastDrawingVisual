@@ -15,7 +15,7 @@ namespace {
 constexpr int kCapabilityCommandStream = 1 << 0;
 constexpr int kCapabilitySwapChain = 1 << 3;
 constexpr int kCapabilityResize = 1 << 5;
-constexpr uint32_t kMetricWindowSec = 5;
+constexpr uint32_t kMetricWindowSec = 1;
 constexpr const wchar_t* kLogCategory = L"NativeProxy.D3D11";
 constexpr const wchar_t* kDrawMetricFormat =
     L"name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
