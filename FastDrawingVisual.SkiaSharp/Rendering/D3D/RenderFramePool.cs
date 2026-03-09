@@ -1,22 +1,18 @@
+using Silk.NET.Direct3D11;
+using Silk.NET.Direct3D9;
 using System;
-using Texture2D11 = SharpDX.Direct3D11.Texture2D;
-using Texture9 = SharpDX.Direct3D9.Texture;
-using Surface9 = SharpDX.Direct3D9.Surface;
 
 namespace FastDrawingVisual.Rendering.D3D
 {
-    /// <summary>
-    /// 渲染帧池。管理两个绘制帧（Drawing / ReadyForPresent）和一个独立的 Presenting 表面。
-    /// </summary>
-    internal sealed class RenderFramePool : IDisposable
+    internal unsafe sealed class RenderFramePool : IDisposable
     {
         private const int FrameCount = 2;
 
         private readonly D3DDeviceManager _deviceManager;
         private readonly RenderFrame[] _frames;
-        private Texture2D11? _presentingD3D11Texture;
-        private Texture9? _presentingD3D9Texture;
-        private Surface9? _presentingSurface;
+        private ID3D11Texture2D* _presentingD3D11Texture;
+        private IDirect3DTexture9* _presentingD3D9Texture;
+        private IDirect3DSurface9* _presentingSurface;
 
         private readonly object _lock = new object();
         private volatile bool _hasReadyFrame;
@@ -25,20 +21,17 @@ namespace FastDrawingVisual.Rendering.D3D
 
         public RenderFramePool(D3DDeviceManager deviceManager)
         {
-            if (deviceManager == null) throw new ArgumentNullException(nameof(deviceManager));
-
-            _deviceManager = deviceManager;
+            _deviceManager = deviceManager ?? throw new ArgumentNullException(nameof(deviceManager));
 
             _frames = new RenderFrame[FrameCount];
             for (int i = 0; i < FrameCount; i++)
                 _frames[i] = new RenderFrame(deviceManager, OnFrameDrawingComplete);
         }
 
-        /// <summary>为所有帧创建（或重建）GPU 资源。</summary>
         public void CreateResources(int width, int height)
         {
             if (width <= 0 || height <= 0)
-                throw new ArgumentException("宽高必须大于 0。");
+                throw new ArgumentException("Width and height must be greater than zero.");
 
             lock (_lock)
             {
@@ -51,12 +44,10 @@ namespace FastDrawingVisual.Rendering.D3D
 
                 _presentingD3D11Texture = _deviceManager.CreateSharedTexture(width, height);
                 var sharedHandle = _deviceManager.GetSharedHandle(_presentingD3D11Texture);
-                _presentingD3D9Texture = _deviceManager.FromSharedHandle(sharedHandle, width, height, out var surface);
-                _presentingSurface = surface;
+                _presentingD3D9Texture = _deviceManager.FromSharedHandle(sharedHandle, width, height, out _presentingSurface);
             }
         }
 
-        /// <summary>释放所有帧的 GPU 资源（设备丢失时调用）。</summary>
         public void ReleaseResources()
         {
             lock (_lock)
@@ -65,21 +56,12 @@ namespace FastDrawingVisual.Rendering.D3D
                 foreach (var frame in _frames)
                     frame.ReleaseResources();
 
-                _presentingSurface?.Dispose();
-                _presentingSurface = null;
-
-                _presentingD3D9Texture?.Dispose();
-                _presentingD3D9Texture = null;
-
-                _presentingD3D11Texture?.Dispose();
-                _presentingD3D11Texture = null;
+                ComPtrExtensions.Release(ref _presentingSurface);
+                ComPtrExtensions.Release(ref _presentingD3D9Texture);
+                ComPtrExtensions.Release(ref _presentingD3D11Texture);
             }
         }
 
-        /// <summary>
-        /// 获取一个可用于绘制的帧，并原子性地将其从 Ready → Drawing。
-        /// 若所有帧都忙则返回 null（调用方可稍后重试或跳过本帧）。
-        /// </summary>
         public RenderFrame? AcquireForDrawing()
         {
             foreach (var frame in _frames)
@@ -87,14 +69,10 @@ namespace FastDrawingVisual.Rendering.D3D
                 if (frame.TryTransitionTo(FrameState.Ready, FrameState.Drawing))
                     return frame;
             }
+
             return null;
         }
 
-        /// <summary>
-        /// 由 <see cref="RenderFrame"/> 在画布关闭后回调。
-        /// 保证同一时刻最多只有一帧处于 ReadyForPresent，
-        /// 新帧到来时旧的 ReadyForPresent 帧被抢占回 Ready（帧丢弃策略，始终呈现最新帧）。
-        /// </summary>
         private void OnFrameDrawingComplete(RenderFrame completedFrame)
         {
             lock (_lock)
@@ -108,7 +86,6 @@ namespace FastDrawingVisual.Rendering.D3D
                     }
                 }
 
-                // 将完成的帧推进到 ReadyForPresent
                 completedFrame.ForceSetState(FrameState.ReadyForPresent);
                 _hasReadyFrame = true;
             }
@@ -118,7 +95,7 @@ namespace FastDrawingVisual.Rendering.D3D
         {
             lock (_lock)
             {
-                return _presentingSurface?.NativePointer ?? IntPtr.Zero;
+                return (IntPtr)_presentingSurface;
             }
         }
 
@@ -156,15 +133,18 @@ namespace FastDrawingVisual.Rendering.D3D
 
                 readyFrame.ForceSetState(FrameState.Ready);
                 _hasReadyFrame = false;
-
                 return true;
             }
         }
 
         public void Dispose()
         {
-            if (_isDisposed) return;
+            if (_isDisposed)
+                return;
+
             _isDisposed = true;
+
+            ReleaseResources();
 
             foreach (var frame in _frames)
                 frame.Dispose();

@@ -30,7 +30,8 @@
         <Border Grid.Row="1" Margin="16" CornerRadius="8"
                 BorderBrush="#313244" BorderThickness="1"
                 Background="#181825">
-            <fdv:FastDrawingVisual x:Name="FastCanvas"/>
+            <fdv:FastDrawingVisual x:Name="FastCanvas"
+                                   PreferredRenderer="Skia"/>
         </Border>
 
         <!-- 底部状态栏 -->
