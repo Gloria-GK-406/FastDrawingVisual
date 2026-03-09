@@ -5,6 +5,7 @@
 #include <vcclr.h>
 
 using namespace System;
+using namespace System::Diagnostics;
 
 namespace {
 
@@ -12,24 +13,26 @@ String ^ Coalesce(String ^ value, String ^ fallback) {
   return String::IsNullOrWhiteSpace(value) ? fallback : value;
 }
 
+String ^ DescribeException(String ^ operation, Exception ^ ex) {
+  operation = Coalesce(operation, "operation failed");
+  if (ex == nullptr) {
+    return operation;
+  }
+
+  return String::Format("{0}: {1}: {2}", operation, ex->GetType()->Name,
+                        Coalesce(ex->Message, String::Empty));
+}
+
+void WriteFallback(String ^ category, String ^ channel, String ^ message) {
+  Debug::WriteLine(String::Format("[{0}][{1}] {2}",
+                                  Coalesce(category, "managed"),
+                                  Coalesce(channel, "Fallback"),
+                                  Coalesce(message, String::Empty)));
+}
+
 } // namespace
 
 namespace FastDrawingVisual::Log {
-
-bool LogProxy::Initialize() { return FDVLOG_Initialize(nullptr); }
-
-bool LogProxy::Initialize(String ^ userConfigPath) {
-  (void)userConfigPath;
-  return FDVLOG_Initialize(nullptr);
-}
-
-void LogProxy::Shutdown(int flushTimeoutMs) {
-  FDVLOG_Shutdown(Math::Max(flushTimeoutMs, 0));
-}
-
-void LogProxy::Flush(int flushTimeoutMs) {
-  FDVLOG_Flush(Math::Max(flushTimeoutMs, 0));
-}
 
 void LogProxy::Log(LogLevel level, String ^ category, String ^ message) {
   Log(level, category, message, false);
@@ -83,8 +86,77 @@ void LogProxy::LogMetric(int metricId, double value) {
   FDVLOG_LogMetric(metricId, value);
 }
 
-UInt64 LogProxy::GetDroppedTotal() { return FDVLOG_GetDroppedTotal(); }
+Logger::Logger(String ^ category) : category_(Coalesce(category, "managed")) {}
 
-String ^ LogProxy::GetEffectiveConfigJson() { return String::Empty; }
+String ^ Logger::Category::get() { return category_; }
+
+void Logger::Log(LogLevel level, String ^ message) {
+  Write(level, message, false);
+}
+
+void Logger::LogEtw(LogLevel level, String ^ message) {
+  Write(level, message, true);
+}
+
+void Logger::Debug(String ^ message) { Write(LogLevel::Debug, message, false); }
+
+void Logger::Info(String ^ message) { Write(LogLevel::Info, message, false); }
+
+void Logger::Warn(String ^ message) { Write(LogLevel::Warn, message, false); }
+
+void Logger::Error(String ^ message) { Write(LogLevel::Error, message, false); }
+
+void Logger::DebugEtw(String ^ message) {
+  Write(LogLevel::Debug, message, true);
+}
+
+void Logger::InfoEtw(String ^ message) { Write(LogLevel::Info, message, true); }
+
+void Logger::WarnEtw(String ^ message) { Write(LogLevel::Warn, message, true); }
+
+void Logger::ErrorEtw(String ^ message) {
+  Write(LogLevel::Error, message, true);
+}
+
+int Logger::RegisterMetric(String ^ name, UInt32 periodSec, String ^ format,
+                           LogLevel level) {
+  try {
+    return LogProxy::RegisterMetric(name, periodSec, format, level);
+  } catch (Exception ^ ex) {
+    WriteFallback(category_, "MetricFallback",
+                  DescribeException("register failed", ex));
+    return 0;
+  }
+}
+
+bool Logger::UnregisterMetric(int metricId) {
+  try {
+    return LogProxy::UnregisterMetric(metricId);
+  } catch (Exception ^ ex) {
+    WriteFallback(category_, "MetricFallback",
+                  DescribeException("unregister failed", ex));
+    return false;
+  }
+}
+
+void Logger::LogMetric(int metricId, double value) {
+  try {
+    LogProxy::LogMetric(metricId, value);
+  } catch (Exception ^ ex) {
+    WriteFallback(category_, "MetricFallback",
+                  DescribeException("log metric failed", ex));
+  }
+}
+
+void Logger::Write(LogLevel level, String ^ message, bool emitEtw) {
+  try {
+    LogProxy::Log(level, category_, message);
+    if (emitEtw) {
+      LogProxy::WriteETW(level, category_, message);
+    }
+  } catch (Exception ^ ex) {
+    WriteFallback(category_, "LogFallback", DescribeException("log failed", ex));
+  }
+}
 
 } // namespace FastDrawingVisual::Log
