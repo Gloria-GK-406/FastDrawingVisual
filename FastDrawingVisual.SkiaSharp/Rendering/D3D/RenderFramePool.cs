@@ -10,18 +10,19 @@ namespace FastDrawingVisual.Rendering.D3D
 
         private readonly D3DDeviceManager _deviceManager;
         private readonly RenderFrame[] _frames;
+        private readonly Action? _onFrameAvailable;
+        private readonly object _lock = new();
+
         private ID3D11Texture2D* _presentingD3D11Texture;
         private IDirect3DTexture9* _presentingD3D9Texture;
         private IDirect3DSurface9* _presentingSurface;
-
-        private readonly object _lock = new object();
         private volatile bool _hasReadyFrame;
-
         private bool _isDisposed;
 
-        public RenderFramePool(D3DDeviceManager deviceManager)
+        public RenderFramePool(D3DDeviceManager deviceManager, Action? onFrameAvailable = null)
         {
             _deviceManager = deviceManager ?? throw new ArgumentNullException(nameof(deviceManager));
+            _onFrameAvailable = onFrameAvailable;
 
             _frames = new RenderFrame[FrameCount];
             for (int i = 0; i < FrameCount; i++)
@@ -75,6 +76,8 @@ namespace FastDrawingVisual.Rendering.D3D
 
         private void OnFrameDrawingComplete(RenderFrame completedFrame)
         {
+            var frameAvailable = false;
+
             lock (_lock)
             {
                 foreach (var frame in _frames)
@@ -82,6 +85,7 @@ namespace FastDrawingVisual.Rendering.D3D
                     if (frame != completedFrame && frame.State == FrameState.ReadyForPresent)
                     {
                         frame.ForceSetState(FrameState.Ready);
+                        frameAvailable = true;
                         break;
                     }
                 }
@@ -89,6 +93,9 @@ namespace FastDrawingVisual.Rendering.D3D
                 completedFrame.ForceSetState(FrameState.ReadyForPresent);
                 _hasReadyFrame = true;
             }
+
+            if (frameAvailable)
+                _onFrameAvailable?.Invoke();
         }
 
         public IntPtr GetPresentingSurfacePointer()
@@ -103,6 +110,8 @@ namespace FastDrawingVisual.Rendering.D3D
         {
             if (!_hasReadyFrame)
                 return false;
+
+            var frameAvailable = false;
 
             lock (_lock)
             {
@@ -133,8 +142,13 @@ namespace FastDrawingVisual.Rendering.D3D
 
                 readyFrame.ForceSetState(FrameState.Ready);
                 _hasReadyFrame = false;
-                return true;
+                frameAvailable = true;
             }
+
+            if (frameAvailable)
+                _onFrameAvailable?.Invoke();
+
+            return true;
         }
 
         public void Dispose()
