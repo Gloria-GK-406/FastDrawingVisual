@@ -31,7 +31,7 @@
                 BorderBrush="#313244" BorderThickness="1"
                 Background="#181825">
             <fdv:FastDrawingVisual x:Name="FastCanvas"
-                                   PreferredRenderer="Skia"/>
+                                   PreferredRenderer="WpfFallback"/>
         </Border>
 
         <!-- 底部状态栏 -->
