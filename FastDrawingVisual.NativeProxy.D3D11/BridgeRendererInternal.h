@@ -12,8 +12,9 @@
 #include <d3d11.h>
 #include <dwrite.h>
 #include <dxgi1_2.h>
-#include <stdint.h>
 #include <windows.h>
+
+#include <cstdint>
 
 struct BridgeRendererD3D11 {
   ID3D11Device* device = nullptr;
@@ -47,8 +48,35 @@ struct BridgeRendererD3D11 {
   CRITICAL_SECTION cs;
 };
 
+template <typename T> inline void SafeRelease(T** ptr) {
+  if (ptr == nullptr || *ptr == nullptr) {
+    return;
+  }
+
+  (*ptr)->Release();
+  *ptr = nullptr;
+}
+
+inline void SetLastError(BridgeRendererD3D11* s, HRESULT hr) {
+  if (s != nullptr) {
+    s->lastErrorHr = hr;
+  }
+}
+
+// Experimental text command:
+// [id][x][y][fontSize][argb][textLen][fontLen][textUtf8][fontUtf8].
+constexpr std::uint8_t kExperimentalCmdDrawText = 7;
+
 bool CreateDeviceAndSwapChain(BridgeRendererD3D11* s);
 void ReleaseRendererResources(BridgeRendererD3D11* s);
 bool ResizeSwapChain(BridgeRendererD3D11* s, int width, int height);
 bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
                               int commandBytes);
+bool CreateDrawPipeline(BridgeRendererD3D11* s);
+bool EnsureDynamicVertexBuffer(BridgeRendererD3D11* s, UINT requiredBytes);
+bool BeginD2DDraw(BridgeRendererD3D11* s, bool& d2dDrawActive);
+bool EndD2DDraw(BridgeRendererD3D11* s, bool& d2dDrawActive);
+bool ExecuteExperimentalTextCommand(BridgeRendererD3D11* s,
+                                    const std::uint8_t*& cursor,
+                                    const std::uint8_t* end,
+                                    bool& d2dDrawActive);
