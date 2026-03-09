@@ -375,17 +375,20 @@ namespace FastDrawingVisual.DCompD3D11
                     var action = Interlocked.Exchange(ref _pendingDrawAction, null);
                     if (action == null) continue;
 
+                    var drawStarted = Stopwatch.GetTimestamp();
                     try
                     {
-                        var drawStarted = Stopwatch.GetTimestamp();
                         using var context = new DCompDrawingContext(_width, _height, SubmitCommandsToNative);
                         action(context);
-                        RecordFrameMetrics(drawStarted);
                     }
                     catch (Exception ex)
                     {
                         _isRenderFaulted = true;
                         s_logger.ErrorEtw($"rid={_rendererId} draw worker failed after {_submittedFrameCount} frames. {ex}");
+                    }
+                    finally
+                    {
+                        RecordFrameMetrics(drawStarted);
                     }
                 }
             }

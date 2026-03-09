@@ -20,9 +20,11 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
         private readonly Dispatcher _uiDispatcher;
         private readonly DispatcherTimer _retryTimer;
         private readonly object _workerLock = new();
+        private readonly SemaphoreSlim _drawSignal = new(0, 1);
         private IVisualHostElement? _attachedHost;
 
         private volatile Action<IDrawingContext>? _pendingDrawAction;
+        private int _drawSignalState;
         private CancellationTokenSource? _workerCts;
         private Task? _drawingWorkerTask;
         private HwndSource? _fallbackHwndSource;
@@ -146,6 +148,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             if (_isDeviceLost || drawAction == null) return;
 
             Interlocked.Exchange(ref _pendingDrawAction, drawAction);
+            SignalDrawingWorker();
         }
 
         public void Dispose()
@@ -175,12 +178,13 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
         private async Task DrawingWorkerLoopAsync(CancellationToken token)
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1));
-
             try
             {
-                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                while (true)
                 {
+                    await _drawSignal.WaitAsync(token).ConfigureAwait(false);
+                    Interlocked.Exchange(ref _drawSignalState, 0);
+
                     if (_isDisposed || _isDeviceLost || !_isInitialized || _nativeRenderer == IntPtr.Zero)
                         continue;
 
@@ -192,17 +196,40 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                     {
                         using var ctx = new NativeDrawingContext(_width, _height, SubmitCommandsToNative);
                         action(ctx);
-                        RecordFrameMetrics(drawStarted);
                     }
                     catch
                     {
                         // MVP behavior: drop the failed frame and keep running.
                     }
+                    finally
+                    {
+                        RecordFrameMetrics(drawStarted);
+                    } 
                 }
             }
             catch (OperationCanceledException)
             {
             }
+        }
+
+        private void SignalDrawingWorker()
+        {
+            if (Interlocked.Exchange(ref _drawSignalState, 1) != 0)
+                return;
+
+            try
+            {
+                _drawSignal.Release();
+            }
+            catch (SemaphoreFullException)
+            {
+            }
+        }
+
+        private void SignalDrawingWorkerIfPending()
+        {
+            if (_pendingDrawAction != null)
+                SignalDrawingWorker();
         }
 
         private unsafe void SubmitCommandsToNative(ReadOnlyMemory<byte> commandData)
@@ -360,6 +387,8 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                 _workerCts = new CancellationTokenSource();
                 _drawingWorkerTask = Task.Run(() => DrawingWorkerLoopAsync(_workerCts.Token));
             }
+
+            SignalDrawingWorkerIfPending();
         }
 
         private bool StopDrawingWorker(TimeSpan timeout)
