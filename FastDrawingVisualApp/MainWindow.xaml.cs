@@ -1,228 +1,244 @@
-using FastDrawingVisual.Rendering;
+using FastDrawingVisual.Controls;
+using FastDrawingVisualApp.Benchmark;
+using FastDrawingVisualApp.Benchmark.Scenarios;
 using System;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Windows;
-using System.Windows.Media;
+using System.Windows.Controls;
 using System.Windows.Threading;
 
 namespace FastDrawingVisualApp
 {
     public partial class MainWindow : Window
     {
-        private double _animPhase;
-        private int _frameCount;
-        private DateTime _lastFpsTime = DateTime.Now;
-        private double _fps;
-        private int _fpsUpdatePending;
-
-        private static readonly SolidColorBrush _bgBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x25)));
-        private static readonly SolidColorBrush _gridBrush = Freeze(new SolidColorBrush(Color.FromArgb(0x28, 0xCD, 0xD6, 0xF4)));
-        private static readonly SolidColorBrush _purpleBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xCB, 0xA6, 0xF7)));
-        private static readonly SolidColorBrush _pinkBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8)));
-        private static readonly SolidColorBrush _blueBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x89, 0xB4, 0xFA)));
-        private static readonly SolidColorBrush _greenBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1)));
-        private static readonly SolidColorBrush _yellowBrush = Freeze(new SolidColorBrush(Color.FromRgb(0xF9, 0xE2, 0xAF)));
-        private static readonly SolidColorBrush _tealBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x94, 0xE2, 0xD5)));
-        private static readonly SolidColorBrush _whiteBrush = Freeze(new SolidColorBrush(Colors.White));
-        private static readonly SolidColorBrush _dimBrush = Freeze(new SolidColorBrush(Color.FromArgb(0xCC, 0x6C, 0x70, 0x86)));
-
-        private static readonly Pen _gridPen = Freeze(new Pen(_gridBrush, 1));
-        private static readonly Pen _purplePen = Freeze(new Pen(_purpleBrush, 2));
-        private static readonly Pen _pinkPen = Freeze(new Pen(_pinkBrush, 2));
-        private static readonly Pen _bluePen = Freeze(new Pen(_blueBrush, 2));
-        private static readonly Pen _whitePen = Freeze(new Pen(_whiteBrush, 1.5));
-
-        private readonly CancellationTokenSource _animLoopCts = new();
-        private readonly Task _animLoopTask;
+        private readonly DispatcherTimer _metricsTimer;
+        private readonly IReadOnlyList<RendererOption> _rendererOptions;
+        private readonly ObservableCollection<BenchmarkRunRecord> _history = new();
+        private BenchmarkRunner? _runner;
 
         public MainWindow()
         {
             InitializeComponent();
 
-            FastCanvas.Loaded += (_, _) => UpdateStatus(true);
-            _animLoopTask = OnAnimTickAsync(_animLoopCts.Token);
-        }
-
-        private Task OnAnimTickAsync(CancellationToken token)
-        {
-            return Task.Run(() =>
+            _rendererOptions = new[]
             {
-                while (!token.IsCancellationRequested)
-                {
-                    _animPhase += 0.04;
-                    double phase = _animPhase;
+                new RendererOption("Auto", RendererPreference.Auto, "Try Skia, then D3D9, then WPF fallback."),
+                new RendererOption("Skia", RendererPreference.Skia, "Primary accelerated path."),
+                new RendererOption("D3D9", RendererPreference.D3D9, "Native D3D9 command bridge."),
+                new RendererOption("WPF", RendererPreference.Wpf, "Compatibility fallback."),
+                new RendererOption("D3D11 AirSpace", RendererPreference.D3D11AirSpace, "Experimental explicit path.")
+            };
 
-                    try
-                    {
-                        FastCanvas.SubmitDrawing(ctx => DrawFrame(ctx, phase));
-                    }
-                    catch (ObjectDisposedException) when (token.IsCancellationRequested)
-                    {
-                        break;
-                    }
+            RendererCombo.ItemsSource = _rendererOptions;
+            ScenarioCombo.ItemsSource = BenchmarkScenarioCatalog.All;
+            ScaleCombo.ItemsSource = BenchmarkScalePreset.All;
+            PacingCombo.ItemsSource = SubmitPacingPreset.All;
+            DurationCombo.ItemsSource = RunDurationPreset.All;
+            HistoryList.ItemsSource = _history;
 
-                    UpdateFps();
+            RendererCombo.SelectedIndex = 0;
+            ScenarioCombo.SelectedIndex = 1;
+            ScaleCombo.SelectedItem = BenchmarkScalePreset.Medium;
+            PacingCombo.SelectedItem = SubmitPacingPreset.P240;
+            DurationCombo.SelectedItem = RunDurationPreset.Seconds30;
 
-                    Thread.Sleep(4);
-                }
-            }, token);
-        }
-
-        private void DrawFrame(IDrawingContext ctx, double phase)
-        {
-            int w = ctx.Width;
-            int h = ctx.Height;
-
-            ctx.DrawRectangle(_bgBrush, (Pen?)null, new Rect(0, 0, w, h));
-            DrawGrid(ctx, w, h, 40);
-            DrawSineWave(ctx, w, h, phase);
-            DrawShapes(ctx, w, h, phase);
-
-            ctx.DrawText($"FPS: {_fps:F1}  |  {w} x {h} px",
-                         new Point(12, 12), _dimBrush, "Segoe UI", 13);
-
-            _frameCount++;
-        }
-
-        private static void DrawGrid(IDrawingContext ctx, int w, int h, int step)
-        {
-            for (int x = 0; x <= w; x += step)
-                ctx.DrawLine(_gridPen, new Point(x, 0), new Point(x, h));
-            for (int y = 0; y <= h; y += step)
-                ctx.DrawLine(_gridPen, new Point(0, y), new Point(w, y));
-        }
-
-        private static void DrawSineWave(IDrawingContext ctx, int w, int h, double phase)
-        {
-            double cy = h / 2.0;
-            double amp = h * 0.25;
-            const int segments = 200;
-
-            double prevX = 0;
-            double prevY = cy + Math.Sin(phase) * amp;
-
-            for (int i = 1; i <= segments; i++)
+            _metricsTimer = new DispatcherTimer(DispatcherPriority.DataBind)
             {
-                double t = (double)i / segments;
-                double x = t * w;
-                double y = cy + Math.Sin(t * Math.PI * 4 + phase) * amp;
+                Interval = TimeSpan.FromMilliseconds(500)
+            };
+            _metricsTimer.Tick += OnMetricsTick;
+            _metricsTimer.Start();
 
-                ctx.DrawLine(_purplePen, new Point(prevX, prevY), new Point(x, y));
-                prevX = x;
-                prevY = y;
+            UpdateConfigDescription();
+            UpdateRunningState(false);
+        }
+
+        private void OnStartClicked(object sender, RoutedEventArgs e)
+        {
+            StopRunner();
+
+            var config = BuildConfig();
+            FastCanvas.PreferredRenderer = config.Renderer;
+            _runner = new BenchmarkRunner(FastCanvas, config);
+
+            StatusText.Text = "Running";
+            ConfigSummaryText.Text = config.Summary;
+            CanvasOverlayText.Text = $"{config.Renderer} | {config.Scenario.DisplayName}";
+            UpdateRunningState(true);
+            UpdateMetrics(_runner.CreateSnapshot());
+        }
+
+        private void OnStopClicked(object sender, RoutedEventArgs e)
+        {
+            StopRunner();
+        }
+
+        private void OnMetricsTick(object? sender, EventArgs e)
+        {
+            if (_runner == null)
+            {
+                UpdateMetrics(new BenchmarkMetricsSnapshot(
+                    isRunning: false,
+                    stopReason: BenchmarkStopReason.Manual,
+                    elapsed: TimeSpan.Zero,
+                    submittedTotal: 0,
+                    executedTotal: 0,
+                    droppedTotal: 0,
+                    pendingTotal: 0,
+                    submitHz: 0,
+                    executeHz: 0,
+                    recentDropRatePercent: 0,
+                    queueDelay: new RollingValueStatistics(0, 0, 0, 0),
+                    drawDuration: new RollingValueStatistics(0, 0, 0, 0),
+                    endToEndLatency: new RollingValueStatistics(0, 0, 0, 0)));
+                return;
             }
 
-            prevX = 0;
-            prevY = cy + Math.Sin(phase + Math.PI) * amp * 0.6;
-            for (int i = 1; i <= segments; i++)
-            {
-                double t = (double)i / segments;
-                double x = t * w;
-                double y = cy + Math.Sin(t * Math.PI * 4 + phase + Math.PI) * amp * 0.6;
+            var snapshot = _runner.CreateSnapshot();
+            UpdateMetrics(snapshot);
 
-                ctx.DrawLine(_pinkPen, new Point(prevX, prevY), new Point(x, y));
-                prevX = x;
-                prevY = y;
+            if (!snapshot.IsRunning)
+                CompleteRunner(snapshot);
+        }
+
+        private void OnConfigSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateConfigDescription();
+        }
+
+        private BenchmarkConfig BuildConfig()
+        {
+            var renderer = ((RendererOption?)RendererCombo.SelectedItem)?.Value ?? RendererPreference.Auto;
+            var scenario = (IBenchmarkScenario?)ScenarioCombo.SelectedItem ?? BenchmarkScenarioCatalog.All[0];
+            var scale = (BenchmarkScalePreset?)ScaleCombo.SelectedItem ?? BenchmarkScalePreset.Medium;
+            var pacing = (SubmitPacingPreset?)PacingCombo.SelectedItem ?? SubmitPacingPreset.P240;
+            var duration = (RunDurationPreset?)DurationCombo.SelectedItem ?? RunDurationPreset.Seconds30;
+            return new BenchmarkConfig(renderer, scenario, scale, pacing, duration, seed: 20260309);
+        }
+
+        private void UpdateConfigDescription()
+        {
+            var renderer = (RendererOption?)RendererCombo.SelectedItem;
+            var scenario = (IBenchmarkScenario?)ScenarioCombo.SelectedItem;
+            var scale = (BenchmarkScalePreset?)ScaleCombo.SelectedItem;
+            var pacing = (SubmitPacingPreset?)PacingCombo.SelectedItem;
+            var duration = (RunDurationPreset?)DurationCombo.SelectedItem;
+
+            ScenarioTitleText.Text = scenario?.DisplayName ?? "No scenario";
+            ScenarioDescriptionText.Text = scenario?.Description ?? string.Empty;
+            ScaleSummaryText.Text = scale?.Summary ?? string.Empty;
+            PacingDescriptionText.Text = pacing?.Description ?? string.Empty;
+            DurationDescriptionText.Text = duration?.Description ?? string.Empty;
+            RendererDescriptionText.Text = renderer?.Description ?? string.Empty;
+            CanvasOverlayText.Text = renderer == null
+                ? "Idle"
+                : $"{renderer.DisplayName} | {(scenario?.DisplayName ?? "Scenario")}";
+        }
+
+        private void UpdateRunningState(bool isRunning)
+        {
+            RendererCombo.IsEnabled = !isRunning;
+            ScenarioCombo.IsEnabled = !isRunning;
+            ScaleCombo.IsEnabled = !isRunning;
+            PacingCombo.IsEnabled = !isRunning;
+            DurationCombo.IsEnabled = !isRunning;
+            StartButton.IsEnabled = !isRunning;
+            StopButton.IsEnabled = isRunning;
+
+            if (!isRunning)
+            {
+                StatusText.Text = "Idle";
+                ConfigSummaryText.Text = "No benchmark running.";
             }
         }
 
-        private static void DrawShapes(IDrawingContext ctx, int w, int h, double phase)
+        private void UpdateMetrics(BenchmarkMetricsSnapshot snapshot)
         {
-            double cx1 = 80;
-            double cy1 = h - 80;
-            double size = 40 + 10 * Math.Sin(phase * 1.5);
-            ctx.DrawRoundedRectangle(
-                _blueBrush, _whitePen,
-                new Rect(cx1 - size / 2, cy1 - size / 2, size, size),
-                6, 6);
+            SubmitHzText.Text = snapshot.SubmitHz.ToString("F1");
+            ExecuteHzText.Text = snapshot.ExecuteHz.ToString("F1");
+            DropRateText.Text = snapshot.RecentDropRatePercent.ToString("F1");
+            PendingText.Text = snapshot.PendingTotal.ToString("n0");
 
-            double cx2 = w - 80;
-            double cy2 = h - 80;
-            double rx = 30 + 15 * Math.Sin(phase * 2);
-            double ry = 20 + 10 * Math.Cos(phase * 2);
-            ctx.DrawEllipse(_greenBrush, (Pen?)null, new Point(cx2, cy2), rx, ry);
+            DrawAvgText.Text = snapshot.DrawDuration.Average.ToString("F2");
+            DrawP95Text.Text = snapshot.DrawDuration.P95.ToString("F2");
+            DrawMaxText.Text = snapshot.DrawDuration.Max.ToString("F2");
 
-            double bx = w - 80;
-            double by = 60 + 30 * Math.Abs(Math.Sin(phase * 1.2));
-            ctx.DrawEllipse(_yellowBrush, (Pen?)null, new Point(bx, by), 12, 12);
+            QueueAvgText.Text = snapshot.QueueDelay.Average.ToString("F2");
+            QueueP95Text.Text = snapshot.QueueDelay.P95.ToString("F2");
+            QueueMaxText.Text = snapshot.QueueDelay.Max.ToString("F2");
 
-            double lx = 80;
-            double ly = 80;
-            for (int r = 35; r >= 5; r -= 10)
+            LatencyAvgText.Text = snapshot.EndToEndLatency.Average.ToString("F2");
+            LatencyP95Text.Text = snapshot.EndToEndLatency.P95.ToString("F2");
+            LatencyMaxText.Text = snapshot.EndToEndLatency.Max.ToString("F2");
+
+            TotalsText.Text = $"submitted={snapshot.SubmittedTotal:n0} executed={snapshot.ExecutedTotal:n0} dropped={snapshot.DroppedTotal:n0}";
+
+            if (_runner != null)
             {
-                byte alpha = (byte)(60 + r * 3);
-                var brush = new SolidColorBrush(Color.FromArgb(alpha, 0x94, 0xE2, 0xD5));
-                brush.Freeze();
-                ctx.DrawEllipse((Brush?)null, new Pen(brush, 2), new Point(lx, ly), r, r);
+                ConfigSummaryText.Text = $"{_runner.Config.Summary} | {_runner.ScenarioSummary} | elapsed {snapshot.Elapsed:mm\\:ss}";
+                StatusText.Text = snapshot.IsRunning ? "Running" : $"Completed ({snapshot.StopReason})";
             }
-
-            ctx.DrawText("FastDrawingVisual",
-                         new Point(w / 2.0 - 90, h / 2.0 + 60),
-                         _tealBrush, "Segoe UI", 18);
         }
 
-        private void UpdateFps()
+        private void StopRunner()
         {
-            var now = DateTime.Now;
-            if ((now - _lastFpsTime).TotalSeconds < 0.5)
+            if (_runner != null)
+            {
+                _runner.RequestManualStop();
+                _runner.Dispose();
+                var snapshot = _runner.CreateSnapshot();
+                if (snapshot.SubmittedTotal > 0 || snapshot.ExecutedTotal > 0)
+                    AddHistoryRecord(_runner, snapshot);
+                _runner = null;
+            }
+
+            UpdateRunningState(false);
+            UpdateConfigDescription();
+        }
+
+        private void CompleteRunner(BenchmarkMetricsSnapshot snapshot)
+        {
+            if (_runner == null)
                 return;
 
-            if (Interlocked.CompareExchange(ref _fpsUpdatePending, 1, 0) != 0)
-                return;
-
-            Dispatcher.InvokeAsync(() =>
-            {
-                try
-                {
-                    var uiNow = DateTime.Now;
-                    double elapsed = (uiNow - _lastFpsTime).TotalSeconds;
-                    if (elapsed >= 0.5)
-                    {
-                        _fps = _frameCount / elapsed;
-                        _frameCount = 0;
-                        _lastFpsTime = uiNow;
-                        FrameInfoText.Text = $"FPS: {_fps:F1}";
-                    }
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref _fpsUpdatePending, 0);
-                }
-            }, DispatcherPriority.Background);
+            AddHistoryRecord(_runner, snapshot);
+            _runner.Dispose();
+            _runner = null;
+            UpdateRunningState(false);
+            UpdateConfigDescription();
         }
 
-        private void UpdateStatus(bool ready)
+        private void AddHistoryRecord(BenchmarkRunner runner, BenchmarkMetricsSnapshot snapshot)
         {
-            Dispatcher.InvokeAsync(() =>
-            {
-                StatusIndicator.Fill = ready
-                    ? new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1))
-                    : new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8));
-                StatusText.Text = ready ? "FastDrawingVisual ready" : "Initializing...";
-            });
-        }
+            if (_history.Count >= 10)
+                _history.RemoveAt(_history.Count - 1);
 
-        private static T Freeze<T>(T freezable) where T : Freezable
-        {
-            freezable.Freeze();
-            return freezable;
+            _history.Insert(0, new BenchmarkRunRecord(DateTime.Now, runner.Config, runner.ScenarioSummary, snapshot));
         }
 
         protected override void OnClosed(EventArgs e)
         {
-            _animLoopCts.Cancel();
-            try
-            {
-                _animLoopTask.Wait(TimeSpan.FromSeconds(1));
-            }
-            catch (AggregateException)
-            {
-            }
-
-            _animLoopCts.Dispose();
+            _metricsTimer.Stop();
+            StopRunner();
             FastCanvas.Dispose();
             base.OnClosed(e);
+        }
+
+        private sealed class RendererOption
+        {
+            public RendererOption(string displayName, RendererPreference value, string description)
+            {
+                DisplayName = displayName;
+                Value = value;
+                Description = description;
+            }
+
+            public string DisplayName { get; }
+
+            public RendererPreference Value { get; }
+
+            public string Description { get; }
         }
     }
 }

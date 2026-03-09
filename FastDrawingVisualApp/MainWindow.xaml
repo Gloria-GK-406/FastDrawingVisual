@@ -3,50 +3,359 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:FastDrawingVisualApp"
         xmlns:fdv="clr-namespace:FastDrawingVisual.Controls;assembly=FastDrawingVisual"
         mc:Ignorable="d"
-        Title="FastDrawingVisual Demo" Height="600" Width="900"
-        Background="#1E1E2E">
-    <Grid Background="#181825">
+        Title="FastDrawingVisual Benchmark"
+        Height="840"
+        Width="1440"
+        MinWidth="1180"
+        MinHeight="720"
+        Background="#0B0E13">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PageBg" Color="#0B0E13" />
+        <SolidColorBrush x:Key="PanelBg" Color="#131A23" />
+        <SolidColorBrush x:Key="PanelBgAlt" Color="#18212D" />
+        <SolidColorBrush x:Key="Stroke" Color="#253242" />
+        <SolidColorBrush x:Key="Accent" Color="#FFB454" />
+        <SolidColorBrush x:Key="AccentAlt" Color="#55C7F7" />
+        <SolidColorBrush x:Key="TextMain" Color="#E6EDF3" />
+        <SolidColorBrush x:Key="TextMuted" Color="#8B9BAB" />
+
+        <Style x:Key="PanelBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource PanelBg}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Stroke}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+        </Style>
+
+        <Style x:Key="MetricCardStyle" TargetType="Border" BasedOn="{StaticResource PanelBorderStyle}">
+            <Setter Property="Padding" Value="12" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+            <Setter Property="Background" Value="{StaticResource PanelBgAlt}" />
+        </Style>
+
+        <Style x:Key="LabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+
+        <Style x:Key="ValueStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextMain}" />
+            <Setter Property="FontSize" Value="24" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontFamily" Value="Consolas" />
+        </Style>
+
+        <Style x:Key="ComboStyle" TargetType="ComboBox">
+            <Setter Property="Margin" Value="0,0,12,0" />
+            <Setter Property="MinWidth" Value="160" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Foreground" Value="#111111" />
+            <Setter Property="Background" Value="{StaticResource PanelBgAlt}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Stroke}" />
+        </Style>
+
+        <Style x:Key="ActionButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Background="{StaticResource PageBg}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 标题栏 -->
-        <Border Grid.Row="0" Background="#181825" Padding="16,10">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Ellipse Width="12" Height="12" Fill="#CBA6F7" Margin="0,0,8,0"/>
-                <TextBlock Text="FastDrawingVisual" FontSize="16" FontWeight="Bold"
-                           Foreground="#CDD6F4" FontFamily="Segoe UI"/>
-                <TextBlock Text=" · 渲染演示" FontSize="14"
-                           Foreground="#6C7086" FontFamily="Segoe UI" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
-            </StackPanel>
+        <Border Grid.Row="0" Margin="16,16,16,12" Padding="16,14" Style="{StaticResource PanelBorderStyle}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <TextBlock Text="FastDrawingVisual Benchmark Harness"
+                               Foreground="{StaticResource TextMain}"
+                               FontSize="24"
+                               FontFamily="Bahnschrift SemiCondensed"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="Benchmark shell for renderer pressure, instruction throughput, and latest-wins discard behavior."
+                               Foreground="{StaticResource TextMuted}"
+                               FontSize="12"
+                               Margin="0,4,0,0"
+                               FontFamily="Bahnschrift SemiCondensed" />
+
+                    <WrapPanel Margin="0,16,0,0" VerticalAlignment="Center">
+                        <ComboBox x:Name="RendererCombo" Style="{StaticResource ComboStyle}" DisplayMemberPath="DisplayName" SelectionChanged="OnConfigSelectionChanged" />
+                        <ComboBox x:Name="ScenarioCombo" Style="{StaticResource ComboStyle}" DisplayMemberPath="DisplayName" SelectionChanged="OnConfigSelectionChanged" />
+                        <ComboBox x:Name="ScaleCombo" Style="{StaticResource ComboStyle}" DisplayMemberPath="DisplayName" SelectionChanged="OnConfigSelectionChanged" />
+                        <ComboBox x:Name="PacingCombo" Style="{StaticResource ComboStyle}" DisplayMemberPath="DisplayName" SelectionChanged="OnConfigSelectionChanged" />
+                        <ComboBox x:Name="DurationCombo" Style="{StaticResource ComboStyle}" DisplayMemberPath="DisplayName" SelectionChanged="OnConfigSelectionChanged" />
+                    </WrapPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button x:Name="StartButton"
+                            Content="Start"
+                            Click="OnStartClicked"
+                            Background="{StaticResource Accent}"
+                            Foreground="#111111"
+                            Style="{StaticResource ActionButtonStyle}" />
+                    <Button x:Name="StopButton"
+                            Content="Stop"
+                            Click="OnStopClicked"
+                            Background="#243241"
+                            Foreground="{StaticResource TextMain}"
+                            Style="{StaticResource ActionButtonStyle}" />
+                </StackPanel>
+            </Grid>
         </Border>
 
-        <!-- 主画布区域 -->
-        <Border Grid.Row="1" Margin="16" CornerRadius="8"
-                BorderBrush="#313244" BorderThickness="1"
-                Background="#181825">
-            <fdv:FastDrawingVisual x:Name="FastCanvas"
-                                   PreferredRenderer="Wpf"/>
-        </Border>
+        <Grid Grid.Row="1" Margin="16,0,16,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="3.2*" />
+                <ColumnDefinition Width="1.25*" />
+            </Grid.ColumnDefinitions>
 
-        <!-- 底部状态栏 -->
-        <Border Grid.Row="2" Background="#181825" Padding="16,8">
-            <StackPanel Orientation="Horizontal">
-                <Ellipse x:Name="StatusIndicator" Width="8" Height="8"
-                         Fill="#A6E3A1" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                <TextBlock x:Name="StatusText" Text="正在初始化…"
-                           Foreground="#6C7086" FontSize="12" FontFamily="Segoe UI"
-                           VerticalAlignment="Center"/>
-                <TextBlock Text=" | " Foreground="#313244" Margin="8,0" FontSize="12"/>
-                <TextBlock x:Name="FrameInfoText" Text="Frame: —"
-                           Foreground="#6C7086" FontSize="12" FontFamily="Segoe UI"
-                           VerticalAlignment="Center"/>
-            </StackPanel>
+            <Border Grid.Column="0" Margin="0,0,12,0" Style="{StaticResource PanelBorderStyle}">
+                <Grid>
+                    <fdv:FastDrawingVisual x:Name="FastCanvas" Margin="12" />
+                    <Border Margin="24" VerticalAlignment="Top" HorizontalAlignment="Left" Background="#AA111821" CornerRadius="8" Padding="10,8">
+                        <StackPanel>
+                            <TextBlock Text="Canvas Load Focus"
+                                       Foreground="{StaticResource TextMuted}"
+                                       FontSize="11"
+                                       FontFamily="Bahnschrift SemiCondensed" />
+                            <TextBlock x:Name="CanvasOverlayText"
+                                       Foreground="{StaticResource TextMain}"
+                                       FontSize="13"
+                                       FontFamily="Consolas"
+                                       Margin="0,2,0,0"
+                                       Text="Idle" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Scenario"
+                                       Style="{StaticResource LabelStyle}" />
+                            <TextBlock x:Name="RendererDescriptionText"
+                                       Style="{StaticResource LabelStyle}"
+                                       Margin="0,0,0,8" />
+                            <TextBlock x:Name="ScenarioTitleText"
+                                       Foreground="{StaticResource TextMain}"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       FontFamily="Bahnschrift SemiCondensed"
+                                       Margin="0,2,0,0" />
+                            <TextBlock x:Name="ScenarioDescriptionText"
+                                       Style="{StaticResource LabelStyle}"
+                                       Margin="0,8,0,0" />
+                            <TextBlock x:Name="ScaleSummaryText"
+                                       Style="{StaticResource LabelStyle}"
+                                       Margin="0,10,0,0" />
+                            <TextBlock x:Name="PacingDescriptionText"
+                                       Style="{StaticResource LabelStyle}"
+                                       Margin="0,6,0,0" />
+                            <TextBlock x:Name="DurationDescriptionText"
+                                       Style="{StaticResource LabelStyle}"
+                                       Margin="0,6,0,0" />
+                            <TextBlock Text="Requested renderer is shown here. The app does not yet expose the runtime fallback result when Auto or explicit initialization falls back."
+                                       Style="{StaticResource LabelStyle}"
+                                       Margin="0,10,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Submit Hz" Style="{StaticResource LabelStyle}" />
+                                <TextBlock x:Name="SubmitHzText" Style="{StaticResource ValueStyle}" Text="0.0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Execute Hz" Style="{StaticResource LabelStyle}" />
+                                <TextBlock x:Name="ExecuteHzText" Style="{StaticResource ValueStyle}" Text="0.0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Recent Drop %" Style="{StaticResource LabelStyle}" />
+                                <TextBlock x:Name="DropRateText" Style="{StaticResource ValueStyle}" Text="0.0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Pending" Style="{StaticResource LabelStyle}" />
+                                <TextBlock x:Name="PendingText" Style="{StaticResource ValueStyle}" Text="0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Draw Duration" Style="{StaticResource LabelStyle}" />
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="avg ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="DrawAvgText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="p95 ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="DrawP95Text" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="max ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="DrawMaxText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Queue Delay" Style="{StaticResource LabelStyle}" />
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="avg ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="QueueAvgText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="p95 ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="QueueP95Text" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="max ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="QueueMaxText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="End-to-End Latency" Style="{StaticResource LabelStyle}" />
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="avg ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="LatencyAvgText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="p95 ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="LatencyP95Text" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="max ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="LatencyMaxText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Totals" Style="{StaticResource LabelStyle}" />
+                            <TextBlock x:Name="TotalsText"
+                                       Foreground="{StaticResource TextMain}"
+                                       FontSize="14"
+                                       FontFamily="Consolas"
+                                       Margin="0,8,0,0"
+                                       Text="submitted=0 executed=0 dropped=0" />
+                            <TextBlock Text="Renderer internal draw metrics continue to flow through the existing aggregator logs. This panel focuses on submit, execute, drop, and latency behavior."
+                                       Style="{StaticResource LabelStyle}"
+                                       Margin="0,10,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Recent Runs" Style="{StaticResource LabelStyle}" />
+                            <ListBox x:Name="HistoryList"
+                                     Margin="0,8,0,0"
+                                     Background="#101720"
+                                     BorderBrush="{StaticResource Stroke}"
+                                     Foreground="{StaticResource TextMain}"
+                                     MinHeight="180">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,0,0,10">
+                                            <TextBlock Text="{Binding Header}"
+                                                       Foreground="{StaticResource TextMain}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="13" />
+                                            <TextBlock Text="{Binding Detail}"
+                                                       Style="{StaticResource LabelStyle}"
+                                                       Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <Border Grid.Row="2" Margin="16,0,16,16" Padding="14,10" Style="{StaticResource PanelBorderStyle}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText"
+                           Foreground="{StaticResource TextMain}"
+                           FontFamily="Bahnschrift SemiCondensed"
+                           FontSize="13"
+                           Text="Idle" />
+                <TextBlock x:Name="ConfigSummaryText"
+                           Grid.Column="1"
+                           Foreground="{StaticResource TextMuted}"
+                           FontFamily="Consolas"
+                           FontSize="12"
+                           Margin="20,0,0,0"
+                           Text="No benchmark running." />
+                <TextBlock Text="FastDrawingVisualApp / benchmark shell"
+                           Grid.Column="2"
+                           Foreground="{StaticResource AccentAlt}"
+                           FontFamily="Bahnschrift SemiCondensed"
+                           FontSize="12" />
+            </Grid>
         </Border>
     </Grid>
 </Window>
