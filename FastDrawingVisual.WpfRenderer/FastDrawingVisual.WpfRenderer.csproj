@@ -10,5 +10,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
+    <ProjectReference Include="..\FastDrawingVisual.LogClrProxy\FastDrawingVisual.LogClrProxy.vcxproj" />
   </ItemGroup>
 </Project>

@@ -1,5 +1,7 @@
+using FastDrawingVisual.Log;
 using FastDrawingVisual.Rendering;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -32,9 +34,19 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
         private bool _isDeviceLost;
         private bool _isBackBufferBound;
         private bool _isDisposed;
+        private int _drawDurationMetricId;
+        private int _fpsMetricId;
+        private long _lastFrameCompletedTimestamp;
+        private long _submittedFrameCount;
+        private static int s_nextRendererId;
+        private readonly int _rendererId = Interlocked.Increment(ref s_nextRendererId);
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
-
+        private const string LogCategory = "NativeD3D9Renderer";
+        private const int MetricWindowSec = 1;
+        private const string DrawMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
+        private const string FpsMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgFps={avg} minFps={min} maxFps={max}";
+        private static readonly Logger s_logger = new(LogCategory);
         public NativeD3D9Renderer()
         {
             _d3dImage = new D3DImage();
@@ -64,6 +76,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                 return false;
 
             _attachedHost = host;
+            s_logger.Info($"attached to host element.");
             return true;
         }
 
@@ -72,20 +85,28 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             if (_isDisposed) throw new ObjectDisposedException(nameof(NativeD3D9Renderer));
             if (width <= 0 || height <= 0) throw new ArgumentException("Width and height must be greater than zero.");
 
+            s_logger.InfoEtw($"initialize start width={width} height={height}.");
             var renderer = CreateNativeRenderer(width, height);
             if (renderer == IntPtr.Zero)
+            {
+                s_logger.ErrorEtw($"initialize failed: native renderer creation returned null.");
                 return false;
+            }
 
             _nativeRenderer = renderer;
             _width = width;
             _height = height;
+            EnsureMetricsRegistered();
             _isInitialized = true;
             _isDeviceLost = false;
             _isBackBufferBound = false;
+            _lastFrameCompletedTimestamp = 0;
+            _submittedFrameCount = 0;
 
             BindD3DImageToVisual(width, height);
             StartDrawingWorker();
             CompositionTarget.Rendering += OnCompositionTargetRendering;
+            s_logger.InfoEtw($"initialize success width={width} height={height} native=0x{_nativeRenderer.ToInt64():X}.");
             return true;
         }
 
@@ -99,17 +120,23 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             {
                 _width = width;
                 _height = height;
+                s_logger.Warn($"resize ignored during device lost width={width} height={height}.");
                 return;
             }
 
+            s_logger.InfoEtw($"resize start width={width} height={height}.");
             UnbindBackBuffer();
 
             if (!SafeResizeNative(width, height))
+            {
+                s_logger.ErrorEtw($"resize failed width={width} height={height}.");
                 return;
+            }
 
             _width = width;
             _height = height;
             BindD3DImageToVisual(width, height);
+            s_logger.InfoEtw($"resize success width={width} height={height}.");
         }
 
         public void SubmitDrawing(Action<IDrawingContext> drawAction)
@@ -124,6 +151,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
         public void Dispose()
         {
             if (_isDisposed) return;
+            s_logger.Info($"dispose start.");
             _isDisposed = true;
 
             CompositionTarget.Rendering -= OnCompositionTargetRendering;
@@ -135,6 +163,8 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             _fallbackHwndSource?.Dispose();
             _fallbackHwndSource = null;
             DetachFromHost();
+            UnregisterMetrics();
+            s_logger.Info($"dispose complete.");
         }
 
         private void BindD3DImageToVisual(int width, int height)
@@ -157,10 +187,12 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                     var action = Interlocked.Exchange(ref _pendingDrawAction, null);
                     if (action == null) continue;
 
+                    var drawStarted = Stopwatch.GetTimestamp();
                     try
                     {
                         using var ctx = new NativeDrawingContext(_width, _height, SubmitCommandsToNative);
                         action(ctx);
+                        RecordFrameMetrics(drawStarted);
                     }
                     catch
                     {
@@ -239,6 +271,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             var available = (bool)e.NewValue;
             if (!available)
             {
+                s_logger.WarnEtw($"front buffer unavailable; device lost.");
                 _isDeviceLost = true;
                 _uiDispatcher.BeginInvoke(() =>
                 {
@@ -248,10 +281,12 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                     _isInitialized = false;
                     UnbindBackBuffer();
                     TryNotifyFrontBufferAvailable(false);
+                    s_logger.Info($"resources released after device lost.");
                 });
             }
             else
             {
+                s_logger.InfoEtw($"front buffer available; attempting recovery.");
                 _uiDispatcher.BeginInvoke(() =>
                 {
                     if (_isDisposed) return;
@@ -260,17 +295,26 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                     if (_nativeRenderer == IntPtr.Zero)
                     {
                         _nativeRenderer = CreateNativeRenderer(_width, _height);
-                        if (_nativeRenderer == IntPtr.Zero) return;
+                        if (_nativeRenderer == IntPtr.Zero)
+                        {
+                            s_logger.Error($"device recovery failed: native renderer creation returned null.");
+                            return;
+                        }
                     }
 
                     TryNotifyFrontBufferAvailable(true);
-                    if (!SafeResizeNative(_width, _height)) return;
+                    if (!SafeResizeNative(_width, _height))
+                    {
+                        s_logger.ErrorEtw($"device recovery failed: resize failed.");
+                        return;
+                    }
 
                     _isDeviceLost = false;
                     _isInitialized = true;
                     _isBackBufferBound = false;
                     BindD3DImageToVisual(_width, _height);
                     StartDrawingWorker();
+                    s_logger.InfoEtw($"device recovery successful.");
                 });
             }
         }
@@ -468,6 +512,65 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
 
             _attachedHost.DetachVisual(_visual);
             _attachedHost = null;
+        }
+
+        private void EnsureMetricsRegistered()
+        {
+            if (_drawDurationMetricId <= 0)
+            {
+                _drawDurationMetricId = s_logger.RegisterMetric(
+                    $"native.d3d9.r{_rendererId}.draw_ms",
+                    MetricWindowSec,
+                    DrawMetricFormat,
+                    LogLevel.Info);
+            }
+
+            if (_fpsMetricId <= 0)
+            {
+                _fpsMetricId = s_logger.RegisterMetric(
+                    $"native.d3d9.r{_rendererId}.fps",
+                    MetricWindowSec,
+                    FpsMetricFormat,
+                    LogLevel.Info);
+            }
+
+            s_logger.Debug($"rid={_rendererId} metric registration drawMetricId={_drawDurationMetricId} fpsMetricId={_fpsMetricId}.");
+        }
+
+        private void UnregisterMetrics()
+        {
+            if (_drawDurationMetricId > 0)
+                s_logger.UnregisterMetric(_drawDurationMetricId);
+            if (_fpsMetricId > 0)
+                s_logger.UnregisterMetric(_fpsMetricId);
+
+            _drawDurationMetricId = 0;
+            _fpsMetricId = 0;
+        }
+
+        private void RecordFrameMetrics(long drawStartedTimestamp)
+        {
+            _submittedFrameCount++;
+
+            var nowTicks = Stopwatch.GetTimestamp();
+            var drawDurationMs = (nowTicks - drawStartedTimestamp) * 1000d / Stopwatch.Frequency;
+            if (_drawDurationMetricId > 0)
+                s_logger.LogMetric(_drawDurationMetricId, drawDurationMs);
+
+            if (_lastFrameCompletedTimestamp > 0)
+            {
+                var deltaTicks = nowTicks - _lastFrameCompletedTimestamp;
+                if (deltaTicks > 0)
+                {
+                    var fps = Stopwatch.Frequency / (double)deltaTicks;
+                    if (_fpsMetricId > 0)
+                        s_logger.LogMetric(_fpsMetricId, fps);
+                }
+            }
+            _lastFrameCompletedTimestamp = nowTicks;
+
+            if (drawDurationMs >= 33d && (_submittedFrameCount % 120 == 0))
+                s_logger.WarnEtw($"rid={_rendererId} slow frame drawMs={drawDurationMs:F3} frame={_submittedFrameCount} size={_width}x{_height}.");
         }
     }
 }

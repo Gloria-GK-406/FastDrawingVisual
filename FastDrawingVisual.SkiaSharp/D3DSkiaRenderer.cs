@@ -1,6 +1,8 @@
+using FastDrawingVisual.Log;
 using FastDrawingVisual.Rendering;
 using FastDrawingVisual.Rendering.D3D;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -38,8 +40,19 @@ namespace FastDrawingVisual.SkiaSharp
         private bool _isBackBufferBound;
         private bool _isDisposed;
         private bool _isRenderingHooked;
+        private int _drawDurationMetricId;
+        private int _fpsMetricId;
+        private long _lastFrameCompletedTimestamp;
+        private long _submittedFrameCount;
+        private static int s_nextRendererId;
+        private readonly int _rendererId = Interlocked.Increment(ref s_nextRendererId);
 
         private static readonly TimeSpan WorkerShutdownTimeout = TimeSpan.FromSeconds(2);
+        private const string LogCategory = "D3DSkiaRenderer";
+        private const int MetricWindowSec = 1;
+        private const string DrawMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
+        private const string FpsMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgFps={avg} minFps={min} maxFps={max}";
+        private static readonly Logger s_logger = new(LogCategory);
 
         public D3DSkiaRenderer()
         {
@@ -69,6 +82,7 @@ namespace FastDrawingVisual.SkiaSharp
                 return false;
 
             _attachedHost = host;
+            s_logger.Info($"attached to host element.");
             return true;
         }
 
@@ -77,20 +91,29 @@ namespace FastDrawingVisual.SkiaSharp
             if (_isDisposed) throw new ObjectDisposedException(nameof(D3DSkiaRenderer));
             if (width <= 0 || height <= 0) throw new ArgumentException("Width and height must be greater than zero.");
 
+            s_logger.InfoEtw($"initialize start width={width} height={height}.");
+
             if (!_deviceManager.IsInitialized && !_deviceManager.Initialize())
+            {
+                s_logger.ErrorEtw($"initialize failed: device manager initialization failed.");
                 return false;
+            }
 
             _pool.CreateResources(width, height);
             _width = width;
             _height = height;
+            EnsureMetricsRegistered();
             _isInitialized = true;
             _isDeviceLost = false;
             _isBackBufferBound = false;
             _renderRequestQueued = 0;
             _isRenderingHooked = false;
+            _lastFrameCompletedTimestamp = 0;
+            _submittedFrameCount = 0;
 
             BindD3DImageToVisual(width, height);
             StartDrawingWorker();
+            s_logger.InfoEtw($"initialize success width={width} height={height}.");
             return true;
         }
 
@@ -103,9 +126,11 @@ namespace FastDrawingVisual.SkiaSharp
             {
                 _width = width;
                 _height = height;
+                s_logger.Warn($"resize ignored during device lost width={width} height={height}.");
                 return;
             }
 
+            s_logger.InfoEtw($"resize start width={width} height={height}.");
             RebuildResources(width, height);
         }
 
@@ -146,6 +171,7 @@ namespace FastDrawingVisual.SkiaSharp
                         continue;
                     }
 
+                    var drawStarted = Stopwatch.GetTimestamp();
                     try
                     {
                         using (var ctx = frame.OpenCanvas())
@@ -154,6 +180,7 @@ namespace FastDrawingVisual.SkiaSharp
                         }
 
                         RequestFrameSubmission();
+                        RecordFrameMetrics(drawStarted);
                     }
                     catch
                     {
@@ -220,6 +247,7 @@ namespace FastDrawingVisual.SkiaSharp
         {
             if (!(bool)e.NewValue)
             {
+                s_logger.WarnEtw($"front buffer unavailable; device lost.");
                 _isDeviceLost = true;
                 _uiDispatcher.BeginInvoke(new Action(() =>
                 {
@@ -234,10 +262,12 @@ namespace FastDrawingVisual.SkiaSharp
                     _isInitialized = false;
                     UnbindBackBuffer();
                     _pool.ReleaseResources();
+                    s_logger.Info($"resources released after device lost.");
                 }));
             }
             else
             {
+                s_logger.InfoEtw($"front buffer available; attempting recovery.");
                 _uiDispatcher.BeginInvoke(new Action(() =>
                 {
                     try
@@ -246,13 +276,18 @@ namespace FastDrawingVisual.SkiaSharp
                             return;
 
                         if (!_deviceManager.Initialize())
+                        {
+                            s_logger.Error($"device manager reinitialization failed.");
                             return;
+                        }
 
                         if (_width > 0 && _height > 0)
                             RebuildResources(_width, _height);
+                        s_logger.InfoEtw($"device recovery successful.");
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        s_logger.ErrorEtw($"device recovery failed. {ex}");
                         _isDeviceLost = true;
                     }
                 }));
@@ -275,8 +310,12 @@ namespace FastDrawingVisual.SkiaSharp
 
         private void RebuildResources(int width, int height)
         {
+            s_logger.Debug($"rebuild resources start width={width} height={height}.");
             if (!StopDrawingWorker(WorkerShutdownTimeout))
+            {
+                s_logger.ErrorEtw($"drawing worker stop timeout during rebuild.");
                 throw new TimeoutException("Drawing worker did not stop within the timeout during resize.");
+            }
 
             StopRenderingHook();
             Interlocked.Exchange(ref _renderRequestQueued, 0);
@@ -293,6 +332,7 @@ namespace FastDrawingVisual.SkiaSharp
             BindD3DImageToVisual(width, height);
             StartDrawingWorker();
             SignalDrawingWorkerIfPending();
+            s_logger.InfoEtw($"rebuild resources success width={width} height={height}.");
         }
 
         private void StartDrawingWorker()
@@ -441,6 +481,7 @@ namespace FastDrawingVisual.SkiaSharp
             if (_isDisposed)
                 return;
 
+            s_logger.Info($"dispose start.");
             _isDisposed = true;
 
             StopRenderingHook();
@@ -452,6 +493,8 @@ namespace FastDrawingVisual.SkiaSharp
             _deviceManager.Dispose();
             _drawingSignal.Dispose();
             DetachFromHost();
+            UnregisterMetrics();
+            s_logger.Info($"dispose complete.");
         }
 
         private void DetachFromHost()
@@ -461,6 +504,65 @@ namespace FastDrawingVisual.SkiaSharp
 
             _attachedHost.DetachVisual(_visual);
             _attachedHost = null;
+        }
+
+        private void EnsureMetricsRegistered()
+        {
+            if (_drawDurationMetricId <= 0)
+            {
+                _drawDurationMetricId = s_logger.RegisterMetric(
+                    $"skia.d3d.r{_rendererId}.draw_ms",
+                    MetricWindowSec,
+                    DrawMetricFormat,
+                    LogLevel.Info);
+            }
+
+            if (_fpsMetricId <= 0)
+            {
+                _fpsMetricId = s_logger.RegisterMetric(
+                    $"skia.d3d.r{_rendererId}.fps",
+                    MetricWindowSec,
+                    FpsMetricFormat,
+                    LogLevel.Info);
+            }
+
+            s_logger.Debug($"rid={_rendererId} metric registration drawMetricId={_drawDurationMetricId} fpsMetricId={_fpsMetricId}.");
+        }
+
+        private void UnregisterMetrics()
+        {
+            if (_drawDurationMetricId > 0)
+                s_logger.UnregisterMetric(_drawDurationMetricId);
+            if (_fpsMetricId > 0)
+                s_logger.UnregisterMetric(_fpsMetricId);
+
+            _drawDurationMetricId = 0;
+            _fpsMetricId = 0;
+        }
+
+        private void RecordFrameMetrics(long drawStartedTimestamp)
+        {
+            _submittedFrameCount++;
+
+            var nowTicks = Stopwatch.GetTimestamp();
+            var drawDurationMs = (nowTicks - drawStartedTimestamp) * 1000d / Stopwatch.Frequency;
+            if (_drawDurationMetricId > 0)
+                s_logger.LogMetric(_drawDurationMetricId, drawDurationMs);
+
+            if (_lastFrameCompletedTimestamp > 0)
+            {
+                var deltaTicks = nowTicks - _lastFrameCompletedTimestamp;
+                if (deltaTicks > 0)
+                {
+                    var fps = Stopwatch.Frequency / (double)deltaTicks;
+                    if (_fpsMetricId > 0)
+                        s_logger.LogMetric(_fpsMetricId, fps);
+                }
+            }
+            _lastFrameCompletedTimestamp = nowTicks;
+
+            if (drawDurationMs >= 33d && (_submittedFrameCount % 120 == 0))
+                s_logger.WarnEtw($"rid={_rendererId} slow frame drawMs={drawDurationMs:F3} frame={_submittedFrameCount} size={_width}x{_height}.");
         }
     }
 }
