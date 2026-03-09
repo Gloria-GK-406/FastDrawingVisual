@@ -25,9 +25,9 @@ namespace FastDrawingVisual
             {
                 RendererPreference.Auto => true,
                 RendererPreference.Skia => capability.CanUseSkia,
-                RendererPreference.NativeD3D9 => capability.CanUseNativeD3D9,
-                RendererPreference.DCompD3D11 => capability.CanUseDCompD3D11,
-                RendererPreference.WpfFallback => true,
+                RendererPreference.D3D9 => capability.CanUseNativeD3D9,
+                RendererPreference.D3D11AirSpace => capability.CanUseDCompD3D11,
+                RendererPreference.Wpf => true,
                 _ => false,
             };
         }

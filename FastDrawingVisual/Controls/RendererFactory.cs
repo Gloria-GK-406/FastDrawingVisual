@@ -44,9 +44,9 @@ namespace FastDrawingVisual.Controls
             return preference switch
             {
                 RendererPreference.Skia => TryCreateSkia() ?? new WpfFallbackRenderer(),
-                RendererPreference.NativeD3D9 => TryCreateNativeD3D9() ?? new WpfFallbackRenderer(),
-                RendererPreference.DCompD3D11 => TryCreateDCompD3D11() ?? new WpfFallbackRenderer(),
-                RendererPreference.WpfFallback => new WpfFallbackRenderer(),
+                RendererPreference.D3D9 => TryCreateNativeD3D9() ?? new WpfFallbackRenderer(),
+                RendererPreference.D3D11AirSpace => TryCreateDCompD3D11() ?? new WpfFallbackRenderer(),
+                RendererPreference.Wpf => new WpfFallbackRenderer(),
                 _ => CreateAuto(capability),
             };
         }
