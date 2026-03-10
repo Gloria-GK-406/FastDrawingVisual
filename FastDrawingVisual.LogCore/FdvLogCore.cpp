@@ -425,6 +425,8 @@ static std::wstring FormatLocalTimestamp(uint64_t fileTime100ns) {
 
 class LoggerCore {
 public:
+  ~LoggerCore() { Shutdown(0); }
+
   bool Initialize(const FDVLOG_Config *config) {
     LoggerConfig normalized{};
     ApplyJsonConfigOverrides(&normalized);
@@ -472,6 +474,13 @@ public:
   }
 
   void Shutdown(uint32_t flushTimeoutMs) {
+    bool expected = false;
+    if (!shutdownStarted_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      return;
+    }
+
     StopMetricTimer();
     OnMetricTimerFired();
 
@@ -721,6 +730,7 @@ private:
 
   HANDLE metricTimer_ = nullptr;
   std::atomic<bool> metricTickRunning_{false};
+  std::atomic<bool> shutdownStarted_{false};
 };
 
 std::mutex g_loggerGuard;
