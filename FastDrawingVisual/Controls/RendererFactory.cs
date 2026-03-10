@@ -1,9 +1,9 @@
 using FastDrawingVisual.Rendering;
+using FastDrawingVisual.Rendering.Backends;
+using FastDrawingVisual.Rendering.Presentation;
 using FastDrawingVisual.WpfRenderer;
 using System.Runtime.CompilerServices;
-using DCompD3D11Renderer = FastDrawingVisual.DCompD3D11.DCompD3D11Renderer;
 using D3DSkiaRenderer = FastDrawingVisual.SkiaSharp.D3DSkiaRenderer;
-using NativeD3D9Renderer = FastDrawingVisual.Rendering.NativeD3D9Renderer;
 
 namespace FastDrawingVisual.Controls
 {
@@ -56,7 +56,7 @@ namespace FastDrawingVisual.Controls
         {
             try
             {
-                return new NativeD3D9Renderer();
+                return new RenderComposition(new D3D9Backend(), new D3DImagePresenter());
             }
             catch
             {
@@ -82,7 +82,7 @@ namespace FastDrawingVisual.Controls
         {
             try
             {
-                return new DCompD3D11Renderer();
+                return new RenderComposition(new D3D11Backend(), new DCompPresenter());
             }
             catch
             {

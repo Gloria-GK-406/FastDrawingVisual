@@ -1,37 +1,23 @@
 using FastDrawingVisual.CommandRuntime;
-using FastDrawingVisual.Log;
-using FastDrawingVisual.Rendering;
 using System;
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
 
-namespace FastDrawingVisual.DCompD3D11
+namespace FastDrawingVisual.Rendering
 {
-    internal sealed class DCompDrawingContext : IDrawingContext, ILayeredDrawingContextContainer
+    public sealed class LayeredCommandRecordingContext : IDrawingContext, ILayeredDrawingContextContainer
     {
-        private const int MetricWindowSec = 1;
-        private const string CommandEncodeMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
-        private static readonly Logger s_logger = new("DCompDrawingContext");
-        private static readonly int s_commandEncodeMetricId = s_logger.RegisterMetric(
-            "dcomp.d3d11.cmd_encode_ms",
-            MetricWindowSec,
-            CommandEncodeMetricFormat,
-            LogLevel.Info);
-
         private readonly Action<BridgeLayeredFramePacket> _onClose;
-        private readonly DCompLayerDrawingContext?[] _layers = new DCompLayerDrawingContext[BridgeLayeredFramePacket.MaxLayerCount];
-        private readonly object _layerSync = new();
-        private readonly long _encodingStartedTimestamp;
+        private readonly LayerCommandWriter?[] _layers = new LayerCommandWriter[BridgeLayeredFramePacket.MaxLayerCount];
+        private readonly object _sync = new();
         private bool _isDisposed;
 
-        public DCompDrawingContext(int width, int height, Action<BridgeLayeredFramePacket> onClose)
+        public LayeredCommandRecordingContext(int width, int height, Action<BridgeLayeredFramePacket> onClose)
         {
             Width = width;
             Height = height;
             _onClose = onClose ?? throw new ArgumentNullException(nameof(onClose));
-            _layers[0] = new DCompLayerDrawingContext(this, 0);
-            _encodingStartedTimestamp = Stopwatch.GetTimestamp();
+            _layers[0] = new LayerCommandWriter(this, 0);
         }
 
         public int Width { get; }
@@ -44,7 +30,6 @@ namespace FastDrawingVisual.DCompD3D11
         {
             ThrowIfDisposed();
             ValidateLayerIndex(layerIndex);
-
             return GetOrCreateLayer(layerIndex);
         }
 
@@ -97,72 +82,56 @@ namespace FastDrawingVisual.DCompD3D11
 
         public void Dispose()
         {
-            if (_isDisposed) return;
+            if (_isDisposed)
+                return;
 
-            var packet = BuildFramePacket();
-            var encodingCompletedTimestamp = Stopwatch.GetTimestamp();
-            var commandEncodeDurationMs = (encodingCompletedTimestamp - _encodingStartedTimestamp) * 1000d / Stopwatch.Frequency;
-            _isDisposed = true;
+            var packet = new BridgeLayeredFramePacket();
 
             try
             {
-                if (s_commandEncodeMetricId > 0)
-                    s_logger.LogMetric(s_commandEncodeMetricId, commandEncodeDurationMs);
+                for (int i = 0; i < _layers.Length; i++)
+                {
+                    var layer = _layers[i];
+                    if (layer == null)
+                        continue;
+
+                    packet.SetLayer(i, layer.BuildPacket());
+                }
 
                 if (packet.HasAnyCommands)
                     _onClose(packet);
             }
             finally
             {
-                DisposeLayers();
+                _isDisposed = true;
+                for (int i = 0; i < _layers.Length; i++)
+                    _layers[i]?.DisposeWriter();
             }
         }
 
         internal void ThrowIfDisposed()
         {
             if (_isDisposed)
-                throw new ObjectDisposedException(nameof(DCompDrawingContext));
+                throw new ObjectDisposedException(nameof(LayeredCommandRecordingContext));
         }
 
-        private DCompLayerDrawingContext GetOrCreateLayer(int layerIndex)
+        private LayerCommandWriter GetOrCreateLayer(int layerIndex)
         {
             var existing = _layers[layerIndex];
             if (existing != null)
                 return existing;
 
-            lock (_layerSync)
+            lock (_sync)
             {
                 existing = _layers[layerIndex];
                 if (existing == null)
                 {
-                    existing = new DCompLayerDrawingContext(this, layerIndex);
+                    existing = new LayerCommandWriter(this, layerIndex);
                     _layers[layerIndex] = existing;
                 }
 
                 return existing;
             }
-        }
-
-        private BridgeLayeredFramePacket BuildFramePacket()
-        {
-            var packet = new BridgeLayeredFramePacket();
-
-            for (int i = 0; i < _layers.Length; i++)
-            {
-                var layer = _layers[i];
-                if (layer == null)
-                    continue;
-
-                packet.SetLayer(i, layer.BuildPacket());
-            }
-
-            return packet;
-        }
-
-        private void DisposeLayers()
-        {
-            for (int i = 0; i < _layers.Length; i++)
-                _layers[i]?.DisposeWriter();
         }
 
         private static void ValidateLayerIndex(int layerIndex)
@@ -171,12 +140,12 @@ namespace FastDrawingVisual.DCompD3D11
                 throw new ArgumentOutOfRangeException(nameof(layerIndex));
         }
 
-        private sealed class DCompLayerDrawingContext : IDrawingContext
+        private sealed class LayerCommandWriter : IDrawingContext
         {
-            private readonly DCompDrawingContext _root;
+            private readonly LayeredCommandRecordingContext _root;
             private readonly BridgeCommandWriter _commands = new();
 
-            public DCompLayerDrawingContext(DCompDrawingContext root, int layerIndex)
+            public LayerCommandWriter(LayeredCommandRecordingContext root, int layerIndex)
             {
                 _root = root ?? throw new ArgumentNullException(nameof(root));
                 LayerIndex = layerIndex;
@@ -225,98 +194,83 @@ namespace FastDrawingVisual.DCompD3D11
             public void DrawGeometry(Brush brush, Pen pen, Geometry geometry)
             {
                 ThrowIfDisposed();
-                // MVP: complex geometry is intentionally skipped.
             }
 
             public void DrawImage(ImageSource imageSource, Rect rectangle)
             {
                 ThrowIfDisposed();
-                // MVP: image drawing is intentionally skipped.
             }
 
             public void DrawText(string text, Point origin, Brush foreground, string fontFamily = "Segoe UI", double fontSize = 12)
             {
                 ThrowIfDisposed();
-                if (TryGetSolidColor(foreground, out var color))
-                {
-                    if (string.IsNullOrEmpty(text))
-                        return;
+                if (!TryGetSolidColor(foreground, out var color) || string.IsNullOrEmpty(text))
+                    return;
 
-                    if (string.IsNullOrWhiteSpace(fontFamily))
-                        fontFamily = "Segoe UI";
+                if (string.IsNullOrWhiteSpace(fontFamily))
+                    fontFamily = "Segoe UI";
 
-                    if (fontSize <= 0d)
-                        fontSize = 12d;
+                if (fontSize <= 0d)
+                    fontSize = 12d;
 
-                    _commands.WriteDrawText(
-                        (float)origin.X,
-                        (float)origin.Y,
-                        (float)fontSize,
-                        ToProtocolColor(color),
-                        text,
-                        fontFamily);
-                }
+                _commands.WriteDrawText(
+                    (float)origin.X,
+                    (float)origin.Y,
+                    (float)fontSize,
+                    ToProtocolColor(color),
+                    text,
+                    fontFamily);
             }
 
             public void DrawGlyphRun(Brush foregroundBrush, GlyphRun glyphRun)
             {
                 ThrowIfDisposed();
-                // Per current D3D11 scope: glyph drawing is intentionally skipped.
             }
 
             public void DrawDrawing(Drawing drawing)
             {
                 ThrowIfDisposed();
-                // MVP: nested drawing is intentionally skipped.
             }
 
             public void PushClip(Geometry clipGeometry)
             {
                 ThrowIfDisposed();
-                // MVP: clipping is intentionally skipped.
             }
 
             public void PushGuidelineSet(GuidelineSet guidelines)
             {
                 ThrowIfDisposed();
-                // MVP: guidelines are intentionally skipped.
             }
 
             public void PushOpacity(double opacity)
             {
                 ThrowIfDisposed();
-                // MVP: opacity stack is intentionally skipped.
             }
 
             public void PushOpacityMask(Brush opacityMask)
             {
                 ThrowIfDisposed();
-                // MVP: opacity mask is intentionally skipped.
             }
 
             public void PushTransform(Transform transform)
             {
                 ThrowIfDisposed();
-                // MVP: transform stack is intentionally skipped.
             }
 
             public void Pop()
             {
                 ThrowIfDisposed();
-                // MVP: stack operations are intentionally skipped.
             }
 
             public void Close() => Dispose();
 
             public void Dispose()
             {
-                // Layer context lifetime is owned by the root context.
             }
 
             internal BridgeLayerPacket BuildPacket()
             {
-                ThrowIfDisposed();
-                return BridgeLayerPacket.FromCommandPacket(_commands.BuildPacket());
+                return _commands.BuildPacket();
             }
 
             internal void DisposeWriter()

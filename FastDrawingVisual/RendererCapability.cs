@@ -1,5 +1,7 @@
 using FastDrawingVisual.Controls;
 using FastDrawingVisual.Rendering;
+using FastDrawingVisual.Rendering.Backends;
+using FastDrawingVisual.Rendering.Presentation;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -43,7 +45,9 @@ namespace FastDrawingVisual
                     hasD3D9: false,
                     hasD3D11: false,
                     hasD3D12: false,
-                    hasNativeD3D9Bridge: false);
+                    hasNativeD3D9Bridge: false,
+                    hasNativeD3D11Bridge: false,
+                    hasDCompPresentation: false);
             }
 
             var sysDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
@@ -52,6 +56,8 @@ namespace FastDrawingVisual
             bool hasD3D12 = File.Exists(Path.Combine(sysDir, "d3d12.dll"));
             bool isWindows10OrGreater = Environment.OSVersion.Version.Major >= 10;
             bool hasNativeD3D9Bridge = hasD3D9 && NativeD3D9BridgeProbe.IsAvailable;
+            bool hasNativeD3D11Bridge = hasD3D11 && D3D11BridgeProbe.IsAvailable;
+            bool hasDCompPresentation = isWindows10OrGreater && DCompPresentationProbe.IsAvailable;
 
             return new RendererCapabilityInfo(
                 isWindows,
@@ -59,7 +65,9 @@ namespace FastDrawingVisual
                 hasD3D9,
                 hasD3D11,
                 hasD3D12,
-                hasNativeD3D9Bridge);
+                hasNativeD3D9Bridge,
+                hasNativeD3D11Bridge,
+                hasDCompPresentation);
         }
     }
 
@@ -71,7 +79,9 @@ namespace FastDrawingVisual
             bool hasD3D9,
             bool hasD3D11,
             bool hasD3D12,
-            bool hasNativeD3D9Bridge)
+            bool hasNativeD3D9Bridge,
+            bool hasNativeD3D11Bridge,
+            bool hasDCompPresentation)
         {
             IsWindows = isWindows;
             IsWindows10OrGreater = isWindows10OrGreater;
@@ -79,6 +89,8 @@ namespace FastDrawingVisual
             HasD3D11 = hasD3D11;
             HasD3D12 = hasD3D12;
             HasNativeD3D9Bridge = hasNativeD3D9Bridge;
+            HasNativeD3D11Bridge = hasNativeD3D11Bridge;
+            HasDCompPresentation = hasDCompPresentation;
         }
 
         public bool IsWindows { get; }
@@ -93,10 +105,14 @@ namespace FastDrawingVisual
 
         public bool HasNativeD3D9Bridge { get; }
 
+        public bool HasNativeD3D11Bridge { get; }
+
+        public bool HasDCompPresentation { get; }
+
         public bool CanUseSkia => IsWindows10OrGreater && HasD3D9 && HasD3D11 && HasD3D12;
 
         public bool CanUseNativeD3D9 => HasD3D9 && HasNativeD3D9Bridge;
 
-        public bool CanUseDCompD3D11 => IsWindows10OrGreater && HasD3D11;
+        public bool CanUseDCompD3D11 => IsWindows10OrGreater && HasD3D11 && HasNativeD3D11Bridge && HasDCompPresentation;
     }
 }

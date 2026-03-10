@@ -1,7 +1,9 @@
+extern alias D3D9Proxy;
+
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
-using Proxy = FastDrawingVisual.NativeProxy.NativeProxy;
+using Proxy = D3D9Proxy::FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.Rendering
 {

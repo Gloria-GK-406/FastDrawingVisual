@@ -7,4 +7,8 @@
     <RootNamespace>FastDrawingVisual</RootNamespace>
     <Platforms>AnyCPU;x86;x64</Platforms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FastDrawingVisual.CommandRuntime\FastDrawingVisual.CommandRuntime.csproj" />
+  </ItemGroup>
 </Project>

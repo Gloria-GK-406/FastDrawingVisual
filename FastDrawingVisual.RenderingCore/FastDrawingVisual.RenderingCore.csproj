@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net6.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
@@ -19,7 +19,12 @@
     <ProjectReference Include="..\FastDrawingVisual.CommandRuntime\FastDrawingVisual.CommandRuntime.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.LogClrProxy\FastDrawingVisual.LogClrProxy.vcxproj" />
-    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.D3D11\FastDrawingVisual.NativeProxy.D3D11.vcxproj" />
+    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.D3D9\FastDrawingVisual.NativeProxy.D3D9.vcxproj">
+      <Aliases>D3D9Proxy</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.D3D11\FastDrawingVisual.NativeProxy.D3D11.vcxproj">
+      <Aliases>D3D11Proxy</Aliases>
+    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>

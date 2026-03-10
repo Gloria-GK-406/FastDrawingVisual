@@ -11,9 +11,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
-    <ProjectReference Include="..\FastDrawingVisual.DCompD3D11\FastDrawingVisual.DCompD3D11.csproj" />
+    <ProjectReference Include="..\FastDrawingVisual.RenderingCore\FastDrawingVisual.RenderingCore.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.WpfRenderer\FastDrawingVisual.WpfRenderer.csproj" />
-    <ProjectReference Include="..\FastDrawingVisual.NativeD3D9\FastDrawingVisual.NativeD3D9.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.SkiaSharp\FastDrawingVisual.SkiaSharp.csproj" />
   </ItemGroup>
 

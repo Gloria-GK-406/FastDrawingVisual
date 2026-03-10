@@ -58,5 +58,21 @@ namespace FastDrawingVisual.CommandRuntime
                     throw new System.ArgumentOutOfRangeException(nameof(layerIndex));
             }
         }
+
+        public BridgeLayerPacket GetLayer(int layerIndex)
+        {
+            return layerIndex switch
+            {
+                0 => Layer0,
+                1 => Layer1,
+                2 => Layer2,
+                3 => Layer3,
+                4 => Layer4,
+                5 => Layer5,
+                6 => Layer6,
+                7 => Layer7,
+                _ => throw new System.ArgumentOutOfRangeException(nameof(layerIndex)),
+            };
+        }
     }
 }

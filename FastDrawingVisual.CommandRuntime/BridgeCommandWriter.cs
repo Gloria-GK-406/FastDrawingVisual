@@ -32,15 +32,20 @@ namespace FastDrawingVisual.CommandRuntime
             CommandCount = 0;
         }
 
-        public BridgeCommandPacket BuildPacket()
+        public BridgeLayerPacket BuildPacket()
         {
             ThrowIfDisposed();
-            return new BridgeCommandPacket(
-                _commandBuffer.Pointer,
-                _commandBuffer.Length,
-                _blobBuffer.Pointer,
-                _blobBuffer.Length,
-                CommandCount);
+            if (_commandBuffer.Pointer == IntPtr.Zero || _commandBuffer.Length <= 0 || CommandCount <= 0)
+                return default;
+
+            return new BridgeLayerPacket
+            {
+                CommandPointer = _commandBuffer.Pointer,
+                CommandBytes = _commandBuffer.Length,
+                BlobPointer = _blobBuffer.Pointer,
+                BlobBytes = _blobBuffer.Length,
+                CommandCount = CommandCount
+            };
         }
 
         public void WriteClear(BridgeCommandColorArgb8 color)
