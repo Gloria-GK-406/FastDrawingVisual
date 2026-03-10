@@ -294,7 +294,8 @@ bool DrawTriangleList(BridgeRendererD3D11* s, const std::vector<ColorVertex>& v)
 } // namespace
 
 bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
-                              int commandBytes) {
+                              int commandBytes, const void* blobs,
+                              int blobBytes) {
   const auto drawStart = std::chrono::steady_clock::now();
 
   if (!s || !s->context || !s->swapChain || !s->rtv0 || !commands ||
@@ -319,204 +320,132 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
   viewport.MaxDepth = 1.0f;
   s->context->RSSetViewports(1, &viewport);
 
-  const auto* cursor = static_cast<const std::uint8_t*>(commands);
-  const auto* end = cursor + commandBytes;
   std::vector<ColorVertex> vertices;
   vertices.reserve(6 * 8);
 
+  fdv::protocol::CommandReader reader(commands, commandBytes, blobs, blobBytes);
+  fdv::protocol::Command command{};
   bool d2dDrawActive = false;
-  while (cursor < end) {
-    const std::uint8_t cmd = *cursor++;
-
-    switch (cmd) {
-    case fdv::protocol::kCmdClear: {
-      if (cursor + fdv::protocol::kClearPayloadBytes > end) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
+  while (reader.TryReadNext(command)) {
+    switch (command.type) {
+    case fdv::protocol::CommandType::Clear: {
       if (!EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
-      const auto color = fdv::protocol::ReadColorArgb8(
-          cursor + fdv::protocol::kClearColorOffset);
+      const auto& payload =
+          std::get<fdv::protocol::ClearPayload>(command.payload);
+      const auto color = payload.color;
       const ColorF clearPremultiplied = ToPremultipliedColor(color);
       const float clearPremultipliedColor[4] = {clearPremultiplied.r,
                                                 clearPremultiplied.g,
                                                 clearPremultiplied.b,
                                                 clearPremultiplied.a};
       s->context->ClearRenderTargetView(currentRtv, clearPremultipliedColor);
-      cursor += fdv::protocol::kClearPayloadBytes;
       break;
     }
 
-    case fdv::protocol::kCmdFillRect: {
-      if (cursor + fdv::protocol::kFillRectPayloadBytes > end) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
+    case fdv::protocol::CommandType::FillRect: {
       if (!EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
-      const float x =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kFillRectXOffset);
-      const float y =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kFillRectYOffset);
-      const float width =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kFillRectWidthOffset);
-      const float height =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kFillRectHeightOffset);
-      const auto color = fdv::protocol::ReadColorArgb8(
-          cursor + fdv::protocol::kFillRectColorOffset);
+      const auto& payload =
+          std::get<fdv::protocol::FillRectPayload>(command.payload);
       vertices.clear();
-      AppendFilledRect(s, vertices, x, y, width, height,
-                       ToPremultipliedColor(color));
+      AppendFilledRect(s, vertices, payload.x, payload.y, payload.width,
+                       payload.height, ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices)) {
         return false;
       }
-      cursor += fdv::protocol::kFillRectPayloadBytes;
       break;
     }
 
-    case fdv::protocol::kCmdStrokeRect: {
-      if (cursor + fdv::protocol::kStrokeRectPayloadBytes > end) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
+    case fdv::protocol::CommandType::StrokeRect: {
       if (!EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
-      const float x =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kStrokeRectXOffset);
-      const float y =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kStrokeRectYOffset);
-      const float width = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeRectWidthOffset);
-      const float height = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeRectHeightOffset);
-      const float thickness = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeRectThicknessOffset);
-      const auto color = fdv::protocol::ReadColorArgb8(
-          cursor + fdv::protocol::kStrokeRectColorOffset);
+      const auto& payload =
+          std::get<fdv::protocol::StrokeRectPayload>(command.payload);
       vertices.clear();
-      AppendStrokeRect(s, vertices, x, y, width, height, thickness,
-                       ToPremultipliedColor(color));
+      AppendStrokeRect(s, vertices, payload.x, payload.y, payload.width,
+                       payload.height, payload.thickness,
+                       ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices)) {
         return false;
       }
-      cursor += fdv::protocol::kStrokeRectPayloadBytes;
       break;
     }
 
-    case fdv::protocol::kCmdFillEllipse: {
-      if (cursor + fdv::protocol::kFillEllipsePayloadBytes > end) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
+    case fdv::protocol::CommandType::FillEllipse: {
       if (!EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
-      const float centerX = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kFillEllipseCenterXOffset);
-      const float centerY = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kFillEllipseCenterYOffset);
-      const float radiusX = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kFillEllipseRadiusXOffset);
-      const float radiusY = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kFillEllipseRadiusYOffset);
-      const auto color = fdv::protocol::ReadColorArgb8(
-          cursor + fdv::protocol::kFillEllipseColorOffset);
+      const auto& payload =
+          std::get<fdv::protocol::FillEllipsePayload>(command.payload);
       vertices.clear();
-      AppendFilledEllipse(s, vertices, centerX, centerY, radiusX, radiusY,
-                          ToPremultipliedColor(color));
+      AppendFilledEllipse(s, vertices, payload.centerX, payload.centerY,
+                          payload.radiusX, payload.radiusY,
+                          ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices)) {
         return false;
       }
-      cursor += fdv::protocol::kFillEllipsePayloadBytes;
       break;
     }
 
-    case fdv::protocol::kCmdStrokeEllipse: {
-      if (cursor + fdv::protocol::kStrokeEllipsePayloadBytes > end) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
+    case fdv::protocol::CommandType::StrokeEllipse: {
       if (!EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
-      const float centerX = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeEllipseCenterXOffset);
-      const float centerY = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeEllipseCenterYOffset);
-      const float radiusX = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeEllipseRadiusXOffset);
-      const float radiusY = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeEllipseRadiusYOffset);
-      const float thickness = fdv::protocol::ReadF32(
-          cursor + fdv::protocol::kStrokeEllipseThicknessOffset);
-      const auto color = fdv::protocol::ReadColorArgb8(
-          cursor + fdv::protocol::kStrokeEllipseColorOffset);
+      const auto& payload =
+          std::get<fdv::protocol::StrokeEllipsePayload>(command.payload);
       vertices.clear();
-      AppendStrokeEllipse(s, vertices, centerX, centerY, radiusX, radiusY,
-                          thickness, ToPremultipliedColor(color));
+      AppendStrokeEllipse(s, vertices, payload.centerX, payload.centerY,
+                          payload.radiusX, payload.radiusY, payload.thickness,
+                          ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices)) {
         return false;
       }
-      cursor += fdv::protocol::kStrokeEllipsePayloadBytes;
       break;
     }
 
-    case fdv::protocol::kCmdLine: {
-      if (cursor + fdv::protocol::kLinePayloadBytes > end) {
-        SetLastError(s, E_INVALIDARG);
-        return false;
-      }
-
+    case fdv::protocol::CommandType::Line: {
       if (!EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
-      const float x0 =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineX0Offset);
-      const float y0 =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineY0Offset);
-      const float x1 =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineX1Offset);
-      const float y1 =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineY1Offset);
-      const float thickness =
-          fdv::protocol::ReadF32(cursor + fdv::protocol::kLineThicknessOffset);
-      const auto color = fdv::protocol::ReadColorArgb8(
-          cursor + fdv::protocol::kLineColorOffset);
+      const auto& payload =
+          std::get<fdv::protocol::LinePayload>(command.payload);
       vertices.clear();
-      AppendLine(s, vertices, x0, y0, x1, y1, thickness,
-                 ToPremultipliedColor(color));
+      AppendLine(s, vertices, payload.x0, payload.y0, payload.x1, payload.y1,
+                 payload.thickness, ToPremultipliedColor(payload.color));
       if (!DrawTriangleList(s, vertices)) {
         return false;
       }
-      cursor += fdv::protocol::kLinePayloadBytes;
       break;
     }
 
-    case kExperimentalCmdDrawText:
-      if (!ExecuteExperimentalTextCommand(s, cursor, end, d2dDrawActive)) {
+    case fdv::protocol::CommandType::DrawText: {
+      const auto& payload =
+          std::get<fdv::protocol::DrawTextPayload>(command.payload);
+      if (!ExecuteDrawTextCommand(s, payload, reader, d2dDrawActive)) {
         return false;
       }
       break;
+    }
 
     default:
       SetLastError(s, E_INVALIDARG);
       return false;
     }
+  }
+
+  if (reader.HasError()) {
+    SetLastError(s, E_INVALIDARG);
+    return false;
   }
 
   if (!EndD2DDraw(s, d2dDrawActive)) {

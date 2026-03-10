@@ -196,9 +196,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="FDV_GenerateBridgeProtocol"
           BeforeTargets="ClCompile"
-          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\Program.cs"
+          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban"
           Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
-    <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot; -- --schema &quot;$(BridgeProtocolSchema)&quot; --out-dir &quot;$(BridgeProtocolOutDir)&quot;" />
+    <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
   </Target>
   <ImportGroup Label="ExtensionTargets" />
 </Project>

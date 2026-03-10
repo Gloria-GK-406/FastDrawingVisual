@@ -49,5 +49,6 @@ int FindSlotByState(const BridgeRenderer *s, SurfaceState state);
 void DemoteReadyForPresentSlots(BridgeRenderer *s, int keepIndex);
 
 void SetupRenderState(IDirect3DDevice9 *dev);
-bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
-                     int bytes);
+bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
+                     const uint8_t *commandData, int commandBytes,
+                     const uint8_t *blobData, int blobBytes);

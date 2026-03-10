@@ -199,7 +199,9 @@ __declspec(dllexport) bool __cdecl FDV_Resize(void* renderer, int width,
 
 __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void* renderer,
                                                       const void* commands,
-                                                      int commandBytes) {
+                                                      int commandBytes,
+                                                      const void* blobs,
+                                                      int blobBytes) {
   auto* s = static_cast<BridgeRendererD3D11*>(renderer);
   if (!s) {
     LogNative(FDVLOG_LevelWarn,
@@ -209,11 +211,11 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void* renderer,
 
   EnterCriticalSection(&s->cs);
   RegisterRendererMetrics(s);
-  bool ok = SubmitCommandsAndPresent(s, commands, commandBytes);
+  bool ok = SubmitCommandsAndPresent(s, commands, commandBytes, blobs, blobBytes);
   if (!ok) {
     LogNativef(FDVLOG_LevelError, true,
-               L"FDV_SubmitCommands failed renderer=0x%p bytes=%d hr=0x%08X.",
-               static_cast<void*>(s), commandBytes,
+               L"FDV_SubmitCommands failed renderer=0x%p bytes=%d blobBytes=%d hr=0x%08X.",
+               static_cast<void*>(s), commandBytes, blobBytes,
                static_cast<unsigned int>(s->lastErrorHr));
   }
   LeaveCriticalSection(&s->cs);

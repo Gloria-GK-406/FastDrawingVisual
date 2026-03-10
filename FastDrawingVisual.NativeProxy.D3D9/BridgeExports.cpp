@@ -99,7 +99,9 @@ __declspec(dllexport) bool __cdecl FDV_Resize(void *renderer, int width,
 
 __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
                                                       const void *commands,
-                                                      int commandBytes) {
+                                                      int commandBytes,
+                                                      const void *blobs,
+                                                      int blobBytes) {
   auto *s = static_cast<BridgeRenderer *>(renderer);
   if (!s || !commands || commandBytes <= 0)
     return false;
@@ -130,7 +132,8 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
 
   bool result =
       ExecuteCommands(s, drawSlot, static_cast<const uint8_t *>(commands),
-                      commandBytes);
+                      commandBytes, static_cast<const uint8_t *>(blobs),
+                      blobBytes);
   if (result) {
     DemoteReadyForPresentSlots(s, drawSlotIndex);
     drawSlot->state = SurfaceState::ReadyForPresent;

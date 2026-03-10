@@ -1,432 +1,65 @@
 using System.Text;
 using System.Text.Json;
 
-if (!TryParseArgs(args, out var options, out var parseError))
+internal static class Program
 {
-    Console.Error.WriteLine(parseError);
-    Console.Error.WriteLine("Usage: dotnet run --project FastDrawingVisual.CommandProtocol -- --schema <path> --out-dir <path>");
-    return 1;
-}
-
-var schema = LoadSchema(options.SchemaPath);
-ValidateSchema(schema);
-
-Directory.CreateDirectory(options.OutputDirectory);
-
-var csPath = Path.Combine(options.OutputDirectory, "BridgeCommandProtocol.g.cs");
-var cppPath = Path.Combine(options.OutputDirectory, "BridgeCommandProtocol.g.h");
-
-File.WriteAllText(csPath, GenerateCSharp(schema), new UTF8Encoding(false));
-File.WriteAllText(cppPath, GenerateCppHeader(schema), new UTF8Encoding(false));
-
-Console.WriteLine($"Generated:");
-Console.WriteLine($"  {csPath}");
-Console.WriteLine($"  {cppPath}");
-return 0;
-
-static Schema LoadSchema(string schemaPath)
-{
-    if (!File.Exists(schemaPath))
-        throw new FileNotFoundException($"Schema not found: {schemaPath}");
-
-    var json = File.ReadAllText(schemaPath);
-    var schema = JsonSerializer.Deserialize<Schema>(json, new JsonSerializerOptions
+    private static int Main()
     {
-        PropertyNameCaseInsensitive = true
-    });
+        var projectDirectory = ResolveProjectDirectory();
+        var schemaPath = Path.Combine(projectDirectory, "command_protocol.schema.json");
+        var outputDirectory = Path.GetFullPath(Path.Combine(projectDirectory, "..", "artifacts", "generated", "protocol"));
 
-    if (schema is null)
-        throw new InvalidOperationException($"Failed to deserialize schema: {schemaPath}");
+        var schema = LoadSchema(schemaPath);
+        ProtocolSchemaValidator.Validate(schema);
 
-    return schema;
-}
+        Directory.CreateDirectory(outputDirectory);
 
-static void ValidateSchema(Schema schema)
-{
-    if (string.IsNullOrWhiteSpace(schema.Name))
-        throw new InvalidOperationException("Schema.name is required.");
+        var csPath = Path.Combine(outputDirectory, $"{schema.Name}.g.cs");
+        var cppPath = Path.Combine(outputDirectory, $"{schema.Name}.g.h");
 
-    if (!string.Equals(schema.Endianness, "little", StringComparison.OrdinalIgnoreCase))
-        throw new InvalidOperationException("Only little endianness is supported.");
+        var output = new GeneratedOutput(
+            SlotProtocolGenerator.GenerateCSharp(schema),
+            SlotProtocolGenerator.GenerateCppHeader(schema));
 
-    if (schema.Commands.Count == 0)
-        throw new InvalidOperationException("Schema.commands must not be empty.");
+        File.WriteAllText(csPath, output.CSharp, new UTF8Encoding(false));
+        File.WriteAllText(cppPath, output.CppHeader, new UTF8Encoding(false));
 
-    var seenNames = new HashSet<string>(StringComparer.Ordinal);
-    var seenIds = new HashSet<int>();
-    foreach (var cmd in schema.Commands)
-    {
-        if (string.IsNullOrWhiteSpace(cmd.Name))
-            throw new InvalidOperationException("Command.name is required.");
-        if (!seenNames.Add(cmd.Name))
-            throw new InvalidOperationException($"Duplicate command name: {cmd.Name}");
-        if (!seenIds.Add(cmd.Id))
-            throw new InvalidOperationException($"Duplicate command id: {cmd.Id}");
-        if (cmd.Id <= 0 || cmd.Id > 255)
-            throw new InvalidOperationException($"Command id must be 1..255: {cmd.Name}={cmd.Id}");
-        if (cmd.Fields.Count == 0)
-            throw new InvalidOperationException($"Command {cmd.Name} must contain at least one field.");
-
-        var fieldNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var field in cmd.Fields)
-        {
-            if (string.IsNullOrWhiteSpace(field.Name))
-                throw new InvalidOperationException($"Command {cmd.Name} has empty field name.");
-            if (!fieldNames.Add(field.Name))
-                throw new InvalidOperationException($"Command {cmd.Name} has duplicate field name: {field.Name}");
-            _ = GetTypeSize(field.Type);
-        }
+        Console.WriteLine("Generated:");
+        Console.WriteLine($"  {csPath}");
+        Console.WriteLine($"  {cppPath}");
+        return 0;
     }
-}
 
-static bool TryParseArgs(string[] args, out CliOptions options, out string error)
-{
-    options = new CliOptions("", "");
-    error = string.Empty;
-
-    string schema = "";
-    string outDir = "";
-
-    for (var i = 0; i < args.Length; i++)
+    private static string ResolveProjectDirectory()
     {
-        var arg = args[i];
-        if (string.Equals(arg, "--schema", StringComparison.OrdinalIgnoreCase))
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
         {
-            if (i + 1 >= args.Length)
-            {
-                error = "--schema requires a value.";
-                return false;
-            }
+            var projectFile = Path.Combine(current.FullName, "FastDrawingVisual.CommandProtocol.csproj");
+            var schemaFile = Path.Combine(current.FullName, "command_protocol.schema.json");
+            if (File.Exists(projectFile) && File.Exists(schemaFile))
+                return current.FullName;
 
-            schema = args[++i];
-            continue;
+            current = current.Parent;
         }
 
-        if (string.Equals(arg, "--out-dir", StringComparison.OrdinalIgnoreCase))
+        throw new DirectoryNotFoundException("Could not locate FastDrawingVisual.CommandProtocol project directory.");
+    }
+
+    private static ProtocolSchema LoadSchema(string schemaPath)
+    {
+        if (!File.Exists(schemaPath))
+            throw new FileNotFoundException($"Schema not found: {schemaPath}");
+
+        var json = File.ReadAllText(schemaPath);
+        var schema = JsonSerializer.Deserialize<ProtocolSchema>(json, new JsonSerializerOptions
         {
-            if (i + 1 >= args.Length)
-            {
-                error = "--out-dir requires a value.";
-                return false;
-            }
+            PropertyNameCaseInsensitive = true
+        });
 
-            outDir = args[++i];
-            continue;
-        }
+        if (schema is null)
+            throw new InvalidOperationException($"Failed to deserialize schema: {schemaPath}");
 
-        error = $"Unknown argument: {arg}";
-        return false;
+        return schema;
     }
-
-    if (string.IsNullOrWhiteSpace(schema))
-    {
-        error = "Missing required --schema argument.";
-        return false;
-    }
-
-    if (string.IsNullOrWhiteSpace(outDir))
-    {
-        error = "Missing required --out-dir argument.";
-        return false;
-    }
-
-    options = new CliOptions(schema, outDir);
-    return true;
-}
-
-static string GenerateCSharp(Schema schema)
-{
-    var sb = new StringBuilder();
-    sb.AppendLine("// <auto-generated />");
-    sb.AppendLine($"// Source: {Path.GetFileName("command_protocol.schema.json")}");
-    sb.AppendLine("namespace FastDrawingVisual.CommandProtocol");
-    sb.AppendLine("{");
-    sb.AppendLine("    internal enum BridgeCommandType : byte");
-    sb.AppendLine("    {");
-    foreach (var cmd in schema.Commands.OrderBy(c => c.Id))
-    {
-        sb.AppendLine($"        {cmd.Name} = {cmd.Id},");
-    }
-
-    sb.AppendLine("    }");
-    sb.AppendLine();
-    sb.AppendLine("    internal static class BridgeCommandLayout");
-    sb.AppendLine("    {");
-    foreach (var cmd in schema.Commands.OrderBy(c => c.Id))
-    {
-        var payloadSize = GetPayloadSize(cmd);
-        sb.AppendLine($"        internal const int {cmd.Name}PayloadBytes = {payloadSize};");
-        sb.AppendLine($"        internal const int {cmd.Name}CommandBytes = 1 + {cmd.Name}PayloadBytes;");
-
-        var offset = 0;
-        foreach (var field in cmd.Fields)
-        {
-            sb.AppendLine($"        internal const int {cmd.Name}{field.Name}Offset = {offset};");
-            offset += GetTypeSize(field.Type);
-        }
-
-        sb.AppendLine();
-    }
-
-    sb.AppendLine("    }");
-    sb.AppendLine("}");
-    return sb.ToString();
-}
-
-static string GenerateCppHeader(Schema schema)
-{
-    var orderedCommands = schema.Commands.OrderBy(c => c.Id).ToList();
-    var defaultPayloadType = GetPayloadStructName(orderedCommands[0]);
-
-    var sb = new StringBuilder();
-    sb.AppendLine("// <auto-generated />");
-    sb.AppendLine("// Source: command_protocol.schema.json");
-    sb.AppendLine("#pragma once");
-    sb.AppendLine();
-    sb.AppendLine("#include <cstdint>");
-    sb.AppendLine("#include <cstring>");
-    sb.AppendLine("#include <variant>");
-    sb.AppendLine();
-    sb.AppendLine("namespace fdv::protocol {");
-    sb.AppendLine("enum class CommandType : std::uint8_t {");
-    foreach (var cmd in orderedCommands)
-    {
-        sb.AppendLine($"  {cmd.Name} = {cmd.Id},");
-    }
-
-    sb.AppendLine("};");
-    sb.AppendLine();
-    sb.AppendLine("enum class ReaderError : std::uint8_t {");
-    sb.AppendLine("  None = 0,");
-    sb.AppendLine("  UnknownCommand = 1,");
-    sb.AppendLine("  TruncatedPayload = 2,");
-    sb.AppendLine("};");
-    sb.AppendLine();
-    sb.AppendLine("struct ColorArgb8 {");
-    sb.AppendLine("  std::uint8_t a;");
-    sb.AppendLine("  std::uint8_t r;");
-    sb.AppendLine("  std::uint8_t g;");
-    sb.AppendLine("  std::uint8_t b;");
-    sb.AppendLine("};");
-    sb.AppendLine();
-    sb.AppendLine("inline float ReadF32(const std::uint8_t* p) {");
-    sb.AppendLine("  float value = 0.0f;");
-    sb.AppendLine("  std::memcpy(&value, p, sizeof(float));");
-    sb.AppendLine("  return value;");
-    sb.AppendLine("}");
-    sb.AppendLine();
-    sb.AppendLine("inline ColorArgb8 ReadColorArgb8(const std::uint8_t* p) {");
-    sb.AppendLine("  return {p[0], p[1], p[2], p[3]};");
-    sb.AppendLine("}");
-    sb.AppendLine();
-    foreach (var cmd in orderedCommands)
-    {
-        var payloadSize = GetPayloadSize(cmd);
-        sb.AppendLine($"static constexpr std::uint8_t kCmd{cmd.Name} = static_cast<std::uint8_t>(CommandType::{cmd.Name});");
-        sb.AppendLine($"static constexpr int k{cmd.Name}PayloadBytes = {payloadSize};");
-        sb.AppendLine($"static constexpr int k{cmd.Name}CommandBytes = 1 + k{cmd.Name}PayloadBytes;");
-
-        var offset = 0;
-        foreach (var field in cmd.Fields)
-        {
-            sb.AppendLine($"static constexpr int k{cmd.Name}{field.Name}Offset = {offset};");
-            offset += GetTypeSize(field.Type);
-        }
-
-        sb.AppendLine();
-    }
-
-    foreach (var cmd in orderedCommands)
-    {
-        var payloadType = GetPayloadStructName(cmd);
-        sb.AppendLine($"struct {payloadType} {{");
-        foreach (var field in cmd.Fields)
-        {
-            sb.AppendLine($"  {GetCppFieldType(field.Type)} {ToCppFieldName(field.Name)};");
-        }
-
-        sb.AppendLine("};");
-        sb.AppendLine();
-    }
-
-    sb.AppendLine("using CommandPayload = std::variant<");
-    for (var i = 0; i < orderedCommands.Count; i++)
-    {
-        var separator = i == orderedCommands.Count - 1 ? "" : ",";
-        sb.AppendLine($"    {GetPayloadStructName(orderedCommands[i])}{separator}");
-    }
-
-    sb.AppendLine(">;");
-    sb.AppendLine();
-    sb.AppendLine("struct Command {");
-    sb.AppendLine("  CommandType type = CommandType::Clear;");
-    sb.AppendLine($"  CommandPayload payload = {defaultPayloadType}{{}};");
-    sb.AppendLine("};");
-    sb.AppendLine();
-    sb.AppendLine("class CommandReader {");
-    sb.AppendLine(" public:");
-    sb.AppendLine("  CommandReader(const void* data, int bytes) {");
-    sb.AppendLine("    begin_ = static_cast<const std::uint8_t*>(data);");
-    sb.AppendLine("    if (begin_ == nullptr || bytes <= 0) {");
-    sb.AppendLine("      begin_ = nullptr;");
-    sb.AppendLine("      cursor_ = nullptr;");
-    sb.AppendLine("      end_ = nullptr;");
-    sb.AppendLine("      return;");
-    sb.AppendLine("    }");
-    sb.AppendLine();
-    sb.AppendLine("    cursor_ = begin_;");
-    sb.AppendLine("    end_ = begin_ + bytes;");
-    sb.AppendLine("  }");
-    sb.AppendLine();
-    sb.AppendLine("  bool TryReadNext(Command& out) {");
-    sb.AppendLine("    if (error_ != ReaderError::None)");
-    sb.AppendLine("      return false;");
-    sb.AppendLine("    if (cursor_ == nullptr || cursor_ >= end_)");
-    sb.AppendLine("      return false;");
-    sb.AppendLine();
-    sb.AppendLine("    const std::uint8_t cmd = *cursor_++;");
-    sb.AppendLine("    switch (cmd) {");
-    foreach (var cmd in orderedCommands)
-    {
-        var payloadType = GetPayloadStructName(cmd);
-        sb.AppendLine($"    case kCmd{cmd.Name}: {{");
-        sb.AppendLine($"      {payloadType} payload{{}};");
-        sb.AppendLine($"      if (!TryRead{cmd.Name}(payload))");
-        sb.AppendLine("        return false;");
-        sb.AppendLine($"      out.type = CommandType::{cmd.Name};");
-        sb.AppendLine("      out.payload = payload;");
-        sb.AppendLine("      return true;");
-        sb.AppendLine("    }");
-    }
-
-    sb.AppendLine("    default:");
-    sb.AppendLine("      error_ = ReaderError::UnknownCommand;");
-    sb.AppendLine("      return false;");
-    sb.AppendLine("    }");
-    sb.AppendLine("  }");
-    sb.AppendLine();
-    sb.AppendLine("  bool HasError() const { return error_ != ReaderError::None; }");
-    sb.AppendLine("  ReaderError Error() const { return error_; }");
-    sb.AppendLine();
-    sb.AppendLine(" private:");
-    foreach (var cmd in orderedCommands)
-    {
-        var payloadType = GetPayloadStructName(cmd);
-        sb.AppendLine($"  bool TryRead{cmd.Name}({payloadType}& out) {{");
-        sb.AppendLine($"    if (cursor_ + k{cmd.Name}PayloadBytes > end_) {{");
-        sb.AppendLine("      error_ = ReaderError::TruncatedPayload;");
-        sb.AppendLine("      return false;");
-        sb.AppendLine("    }");
-        foreach (var field in cmd.Fields)
-        {
-            sb.AppendLine($"    out.{ToCppFieldName(field.Name)} = {GetCppReadExpression(field.Type, $"cursor_ + k{cmd.Name}{field.Name}Offset")};");
-        }
-
-        sb.AppendLine($"    cursor_ += k{cmd.Name}PayloadBytes;");
-        sb.AppendLine("    return true;");
-        sb.AppendLine("  }");
-        sb.AppendLine();
-    }
-
-    sb.AppendLine("  const std::uint8_t* begin_ = nullptr;");
-    sb.AppendLine("  const std::uint8_t* cursor_ = nullptr;");
-    sb.AppendLine("  const std::uint8_t* end_ = nullptr;");
-    sb.AppendLine("  ReaderError error_ = ReaderError::None;");
-    sb.AppendLine("};");
-    sb.AppendLine();
-    sb.AppendLine("template <typename TVisitor>");
-    sb.AppendLine("bool DecodeAndVisit(const void* data, int bytes, TVisitor&& visitor,");
-    sb.AppendLine("                   ReaderError* outError = nullptr) {");
-    sb.AppendLine("  CommandReader reader(data, bytes);");
-    sb.AppendLine("  Command command{};");
-    sb.AppendLine("  while (reader.TryReadNext(command)) {");
-    sb.AppendLine("    std::visit(visitor, command.payload);");
-    sb.AppendLine("  }");
-    sb.AppendLine();
-    sb.AppendLine("  if (outError != nullptr)");
-    sb.AppendLine("    *outError = reader.Error();");
-    sb.AppendLine();
-    sb.AppendLine("  return !reader.HasError();");
-    sb.AppendLine("}");
-    sb.AppendLine();
-    sb.AppendLine("} // namespace fdv::protocol");
-    return sb.ToString();
-}
-
-static string GetPayloadStructName(CommandSchema command)
-{
-    return $"{command.Name}Payload";
-}
-
-static string GetCppFieldType(string type)
-{
-    return type switch
-    {
-        "f32" => "float",
-        "color_argb8" => "ColorArgb8",
-        _ => throw new InvalidOperationException($"Unsupported field type: {type}")
-    };
-}
-
-static string GetCppReadExpression(string type, string ptrExpression)
-{
-    return type switch
-    {
-        "f32" => $"ReadF32({ptrExpression})",
-        "color_argb8" => $"ReadColorArgb8({ptrExpression})",
-        _ => throw new InvalidOperationException($"Unsupported field type: {type}")
-    };
-}
-
-static string ToCppFieldName(string name)
-{
-    if (string.IsNullOrEmpty(name))
-        return name;
-    if (name.Length == 1)
-        return name.ToLowerInvariant();
-    return char.ToLowerInvariant(name[0]) + name[1..];
-}
-
-static int GetPayloadSize(CommandSchema command)
-{
-    var total = 0;
-    foreach (var field in command.Fields)
-    {
-        total += GetTypeSize(field.Type);
-    }
-
-    return total;
-}
-
-static int GetTypeSize(string type)
-{
-    return type switch
-    {
-        "f32" => 4,
-        "color_argb8" => 4,
-        _ => throw new InvalidOperationException($"Unsupported field type: {type}")
-    };
-}
-
-internal sealed record CliOptions(string SchemaPath, string OutputDirectory);
-
-internal sealed class Schema
-{
-    public string Name { get; init; } = "";
-    public string Endianness { get; init; } = "little";
-    public string ColorLayout { get; init; } = "A,R,G,B";
-    public List<CommandSchema> Commands { get; init; } = new();
-}
-
-internal sealed class CommandSchema
-{
-    public string Name { get; init; } = "";
-    public int Id { get; init; }
-    public List<FieldSchema> Fields { get; init; } = new();
-}
-
-internal sealed class FieldSchema
-{
-    public string Name { get; init; } = "";
-    public string Type { get; init; } = "";
 }

@@ -70,11 +70,9 @@ Evidence:
 - `FastDrawingVisual.CommandProtocol/command_protocol.schema.json` is the source of truth for shared command IDs/layout.
 - Any shared command protocol change must be updated together across:
   - `FastDrawingVisual.CommandProtocol` generator outputs (`BridgeCommandProtocol.g.cs/.g.h`)
-  - managed writers (`NativeCommandBuffer`, related drawing contexts)
+  - managed writers (`BridgeCommandBufferWriter`, related drawing contexts)
   - native parsers (`FastDrawingVisual.NativeProxy.D3D9/BridgeDrawing.cpp`, and D3D11 paths consuming `fdv::protocol` constants)
-- DCompD3D11 currently has an extra experimental text command (`command id 7`) outside schema; byte layout changes there must update both:
-  - `FastDrawingVisual.DCompD3D11/DCompCommandBuffer.cs`
-  - `FastDrawingVisual.NativeProxy.D3D11/BridgeDeviceResources.cpp`
+- Shared protocol is v2 fixed-slot plus external blob buffer; native exports consume command buffer and blob buffer together.
 - Keep `FastDrawingVisual/Document/NativeD3D9Bridge-MVP.md` in sync when NativeD3D9 protocol semantics change.
 
 ## Build and Validation Notes

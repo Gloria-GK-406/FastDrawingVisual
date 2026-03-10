@@ -3,7 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using Proxy = FastDrawingVisual.NativeProxy.NativeProxy;
 
-namespace FastDrawingVisual.Rendering.NativeD3D9
+namespace FastDrawingVisual.Rendering
 {
     public static class NativeD3D9BridgeProbe
     {

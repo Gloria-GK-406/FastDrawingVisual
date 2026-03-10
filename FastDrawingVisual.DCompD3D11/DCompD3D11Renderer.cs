@@ -1,3 +1,4 @@
+using FastDrawingVisual.CommandRuntime;
 using FastDrawingVisual.Rendering;
 using FastDrawingVisual.Log;
 using System;
@@ -29,6 +30,7 @@ namespace FastDrawingVisual.DCompD3D11
         private int _height;
         private readonly object _workerLock = new();
         private readonly SemaphoreSlim _drawSignal = new(0, 1);
+        private readonly BridgeCommandWriter _commandWriter = new();
         private volatile Action<IDrawingContext>? _pendingDrawAction;
         private int _drawSignalState;
         private CancellationTokenSource? _workerCts;
@@ -152,6 +154,7 @@ namespace FastDrawingVisual.DCompD3D11
 
             StopDrawingWorker(Timeout.InfiniteTimeSpan);
             UnregisterMetrics();
+            _commandWriter.Dispose();
 
             UnhookHostElement();
 
@@ -378,7 +381,7 @@ namespace FastDrawingVisual.DCompD3D11
                     var drawStarted = Stopwatch.GetTimestamp();
                     try
                     {
-                        using var context = new DCompDrawingContext(_width, _height, SubmitCommandsToNative);
+                        using var context = new DCompDrawingContext(_width, _height, _commandWriter, SubmitCommandsToNative);
                         action(context);
                     }
                     catch (Exception ex)
@@ -417,17 +420,18 @@ namespace FastDrawingVisual.DCompD3D11
                 SignalDrawingWorker();
         }
 
-        private unsafe void SubmitCommandsToNative(ReadOnlyMemory<byte> commandData)
+        private void SubmitCommandsToNative(BridgeCommandPacket packet)
         {
-            if (_nativeRenderer == IntPtr.Zero || commandData.Length == 0)
+            if (_nativeRenderer == IntPtr.Zero || packet.CommandBytes == 0)
                 return;
 
-            var span = commandData.Span;
-            fixed (byte* ptr = span)
-            {
-                if (!Proxy.SubmitCommands(_nativeRenderer, (IntPtr)ptr, span.Length))
-                    ThrowNativeFailure("FDV_SubmitCommands");
-            }
+            if (!Proxy.SubmitCommands(
+                    _nativeRenderer,
+                    packet.CommandPointer,
+                    packet.CommandBytes,
+                    packet.BlobPointer,
+                    packet.BlobBytes))
+                ThrowNativeFailure("FDV_SubmitCommands");
         }
 
         private static bool IsCancellationOnly(AggregateException ex)

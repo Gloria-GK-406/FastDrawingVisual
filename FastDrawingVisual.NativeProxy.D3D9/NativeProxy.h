@@ -29,7 +29,8 @@ public:
   static void DestroyRenderer(System::IntPtr renderer);
   static bool Resize(System::IntPtr renderer, int width, int height);
   static bool SubmitCommands(System::IntPtr renderer, System::IntPtr commands,
-                             int commandBytes);
+                             int commandBytes, System::IntPtr blobs,
+                             int blobBytes);
   static bool TryAcquirePresentSurface(System::IntPtr renderer,
                                        System::IntPtr % surface9);
   static bool CopyReadyToPresentSurface(System::IntPtr renderer);

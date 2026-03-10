@@ -1,3 +1,4 @@
+using FastDrawingVisual.CommandRuntime;
 using FastDrawingVisual.Log;
 using FastDrawingVisual.Rendering;
 using System;
@@ -11,7 +12,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Proxy = FastDrawingVisual.NativeProxy.NativeProxy;
 
-namespace FastDrawingVisual.Rendering.NativeD3D9
+namespace FastDrawingVisual.Rendering
 {
     internal sealed class NativeD3D9Renderer : IRenderer
     {
@@ -21,6 +22,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
         private readonly DispatcherTimer _retryTimer;
         private readonly object _workerLock = new();
         private readonly SemaphoreSlim _drawSignal = new(0, 1);
+        private readonly BridgeCommandWriter _commandWriter = new();
         private IVisualHostElement? _attachedHost;
 
         private volatile Action<IDrawingContext>? _pendingDrawAction;
@@ -163,6 +165,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
             StopDrawingWorker(Timeout.InfiniteTimeSpan);
             UnbindBackBuffer();
             DestroyNativeRenderer();
+            _commandWriter.Dispose();
             _fallbackHwndSource?.Dispose();
             _fallbackHwndSource = null;
             DetachFromHost();
@@ -194,7 +197,7 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                     var drawStarted = Stopwatch.GetTimestamp();
                     try
                     {
-                        using var ctx = new NativeDrawingContext(_width, _height, SubmitCommandsToNative);
+                        using var ctx = new NativeDrawingContext(_width, _height, _commandWriter, SubmitCommandsToNative);
                         action(ctx);
                     }
                     catch
@@ -232,18 +235,19 @@ namespace FastDrawingVisual.Rendering.NativeD3D9
                 SignalDrawingWorker();
         }
 
-        private unsafe void SubmitCommandsToNative(ReadOnlyMemory<byte> commandData)
+        private void SubmitCommandsToNative(BridgeCommandPacket packet)
         {
-            if (_nativeRenderer == IntPtr.Zero || commandData.Length == 0)
+            if (_nativeRenderer == IntPtr.Zero || packet.CommandBytes == 0)
                 return;
 
             try
             {
-                var span = commandData.Span;
-                fixed (byte* ptr = span)
-                {
-                    Proxy.SubmitCommands(_nativeRenderer, (IntPtr)ptr, span.Length);
-                }
+                Proxy.SubmitCommands(
+                    _nativeRenderer,
+                    packet.CommandPointer,
+                    packet.CommandBytes,
+                    packet.BlobPointer,
+                    packet.BlobBytes);
             }
             catch
             {

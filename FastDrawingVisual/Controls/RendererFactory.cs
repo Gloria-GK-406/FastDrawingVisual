@@ -3,7 +3,7 @@ using FastDrawingVisual.WpfRenderer;
 using System.Runtime.CompilerServices;
 using DCompD3D11Renderer = FastDrawingVisual.DCompD3D11.DCompD3D11Renderer;
 using D3DSkiaRenderer = FastDrawingVisual.SkiaSharp.D3DSkiaRenderer;
-using NativeD3D9Renderer = FastDrawingVisual.Rendering.NativeD3D9.NativeD3D9Renderer;
+using NativeD3D9Renderer = FastDrawingVisual.Rendering.NativeD3D9Renderer;
 
 namespace FastDrawingVisual.Controls
 {

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+    <BridgeProtocolProjectDir>$(MSBuildProjectDirectory)\..\FastDrawingVisual.CommandProtocol</BridgeProtocolProjectDir>
+    <BridgeProtocolSchema>$(BridgeProtocolProjectDir)\command_protocol.schema.json</BridgeProtocolSchema>
+    <BridgeProtocolOutDir>$(MSBuildProjectDirectory)\..\artifacts\generated\protocol</BridgeProtocolOutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs" Link="Generated\BridgeCommandProtocol.g.cs" />
+  </ItemGroup>
+
+  <Target Name="FDV_GenerateBridgeProtocol"
+          BeforeTargets="CoreCompile"
+          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban"
+          Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
+    <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
+  </Target>
+</Project>

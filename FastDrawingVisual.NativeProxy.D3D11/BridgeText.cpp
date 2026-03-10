@@ -1,26 +1,9 @@
 #include "BridgeRendererInternal.h"
-#include "BridgeCommandProtocol.g.h"
 
 #include <algorithm>
-#include <cstddef>
-#include <cstring>
 #include <string>
 
 namespace {
-constexpr int kDrawTextHeaderBytes = 24;
-constexpr int kDrawTextXOffset = 0;
-constexpr int kDrawTextYOffset = 4;
-constexpr int kDrawTextFontSizeOffset = 8;
-constexpr int kDrawTextColorOffset = 12;
-constexpr int kDrawTextTextLengthOffset = 16;
-constexpr int kDrawTextFontLengthOffset = 20;
-
-std::uint32_t ReadU32(const std::uint8_t* p) {
-  std::uint32_t value = 0;
-  std::memcpy(&value, p, sizeof(std::uint32_t));
-  return value;
-}
-
 bool Utf8ToWide(const std::uint8_t* bytes, std::uint32_t count,
                 std::wstring& out) {
   out.clear();
@@ -88,48 +71,34 @@ bool EndD2DDraw(BridgeRendererD3D11* s, bool& d2dDrawActive) {
   return true;
 }
 
-bool ExecuteExperimentalTextCommand(BridgeRendererD3D11* s,
-                                    const std::uint8_t*& cursor,
-                                    const std::uint8_t* end,
-                                    bool& d2dDrawActive) {
-  if (cursor + kDrawTextHeaderBytes > end) {
+bool ExecuteDrawTextCommand(BridgeRendererD3D11* s,
+                            const fdv::protocol::DrawTextPayload& payload,
+                            const fdv::protocol::CommandReader& reader,
+                            bool& d2dDrawActive) {
+  fdv::protocol::BlobSpan textUtf8{};
+  if (!reader.TryResolveBlob(payload.textUtf8, textUtf8)) {
     SetLastError(s, E_INVALIDARG);
     return false;
   }
 
-  const float x = fdv::protocol::ReadF32(cursor + kDrawTextXOffset);
-  const float y = fdv::protocol::ReadF32(cursor + kDrawTextYOffset);
-  const float fontSize =
-      std::max(1.0f, fdv::protocol::ReadF32(cursor + kDrawTextFontSizeOffset));
-  const auto color = fdv::protocol::ReadColorArgb8(cursor + kDrawTextColorOffset);
-  const std::uint32_t textLength = ReadU32(cursor + kDrawTextTextLengthOffset);
-  const std::uint32_t fontLength = ReadU32(cursor + kDrawTextFontLengthOffset);
-
-  const std::uint64_t trailingBytes = static_cast<std::uint64_t>(textLength) +
-                                      static_cast<std::uint64_t>(fontLength);
-  const std::uint64_t availableBytes =
-      static_cast<std::uint64_t>(end - cursor - kDrawTextHeaderBytes);
-  if (trailingBytes > availableBytes) {
-    SetLastError(s, E_INVALIDARG);
-    return false;
-  }
-
-  const auto* textUtf8 = cursor + kDrawTextHeaderBytes;
-  const auto* fontUtf8 = textUtf8 + textLength;
-  cursor += kDrawTextHeaderBytes + static_cast<std::ptrdiff_t>(trailingBytes);
-
-  if (textLength == 0) {
+  if (textUtf8.bytes == 0) {
     return true;
   }
 
+  fdv::protocol::BlobSpan fontUtf8{};
+  if (!reader.TryResolveBlob(payload.fontFamilyUtf8, fontUtf8)) {
+    SetLastError(s, E_INVALIDARG);
+    return false;
+  }
+
   std::wstring textWide;
-  if (!Utf8ToWide(textUtf8, textLength, textWide) || textWide.empty()) {
+  if (!Utf8ToWide(textUtf8.data, textUtf8.bytes, textWide) || textWide.empty()) {
     SetLastError(s, E_INVALIDARG);
     return false;
   }
 
   std::wstring fontWide;
-  if (!Utf8ToWide(fontUtf8, fontLength, fontWide)) {
+  if (!Utf8ToWide(fontUtf8.data, fontUtf8.bytes, fontWide)) {
     SetLastError(s, E_INVALIDARG);
     return false;
   }
@@ -142,6 +111,7 @@ bool ExecuteExperimentalTextCommand(BridgeRendererD3D11* s,
     return false;
   }
 
+  const float fontSize = std::max(1.0f, payload.fontSize);
   IDWriteTextFormat* textFormat = nullptr;
   HRESULT hr = s->dwriteFactory->CreateTextFormat(
       fontWide.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
@@ -157,7 +127,7 @@ bool ExecuteExperimentalTextCommand(BridgeRendererD3D11* s,
   textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
   textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
 
-  D2D1_RECT_F layoutRect = {x, y, static_cast<float>(s->width),
+  D2D1_RECT_F layoutRect = {payload.x, payload.y, static_cast<float>(s->width),
                             static_cast<float>(s->height)};
   if (layoutRect.right <= layoutRect.left) {
     layoutRect.right = layoutRect.left + 1.0f;
@@ -166,7 +136,7 @@ bool ExecuteExperimentalTextCommand(BridgeRendererD3D11* s,
     layoutRect.bottom = layoutRect.top + 1.0f;
   }
 
-  s->d2dSolidBrush->SetColor(ToD2DColor(color));
+  s->d2dSolidBrush->SetColor(ToD2DColor(payload.color));
   s->d2dContext->DrawText(textWide.c_str(), static_cast<UINT32>(textWide.size()),
                           textFormat, &layoutRect, s->d2dSolidBrush,
                           D2D1_DRAW_TEXT_OPTIONS_CLIP,

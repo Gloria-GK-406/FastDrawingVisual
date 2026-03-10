@@ -23,9 +23,10 @@ bool NativeProxy::Resize(System::IntPtr renderer, int width, int height) {
 }
 
 bool NativeProxy::SubmitCommands(System::IntPtr renderer,
-                                 System::IntPtr commands, int commandBytes) {
+                                 System::IntPtr commands, int commandBytes,
+                                 System::IntPtr blobs, int blobBytes) {
   return FDV_SubmitCommands(renderer.ToPointer(), commands.ToPointer(),
-                            commandBytes);
+                            commandBytes, blobs.ToPointer(), blobBytes);
 }
 
 bool NativeProxy::TryAcquirePresentSurface(System::IntPtr renderer,

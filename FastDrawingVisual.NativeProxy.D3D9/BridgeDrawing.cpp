@@ -163,8 +163,9 @@ static bool DrawSdfLine(BridgeRenderer *s, float x0, float y0, float x1,
   return DrawSdfQuad(dev, left, top, right, bottom);
 }
 
-bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
-                     int bytes) {
+bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
+                     const uint8_t *commandData, int commandBytes,
+                     const uint8_t *blobData, int blobBytes) {
   IDirect3DDevice9 *dev = s->device;
   if (!dev || !slot || !slot->renderTarget)
     return false;
@@ -180,7 +181,8 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
   SetupRenderState(dev);
 
   bool commandOk = true;
-  fdv::protocol::CommandReader reader(data, bytes);
+  fdv::protocol::CommandReader reader(commandData, commandBytes, blobData,
+                                      blobBytes);
   fdv::protocol::Command command{};
   while (reader.TryReadNext(command)) {
     switch (command.type) {
@@ -243,6 +245,10 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot, const uint8_t *data,
       }
       break;
     }
+
+    case fdv::protocol::CommandType::DrawText:
+      // NativeD3D9 currently keeps text as a no-op path.
+      break;
     }
   }
 

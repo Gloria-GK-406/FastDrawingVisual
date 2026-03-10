@@ -1,3 +1,4 @@
+using FastDrawingVisual.CommandRuntime;
 using FastDrawingVisual.Rendering;
 using System;
 using System.Windows;
@@ -7,19 +8,20 @@ namespace FastDrawingVisual.DCompD3D11
 {
     internal sealed class DCompDrawingContext : IDrawingContext
     {
-        private readonly DCompCommandBuffer _commands;
-        private readonly Action<ReadOnlyMemory<byte>> _onClose;
+        private readonly BridgeCommandWriter _commands;
+        private readonly Action<BridgeCommandPacket> _onClose;
         private bool _isDisposed;
 
         public int Width { get; }
         public int Height { get; }
 
-        public DCompDrawingContext(int width, int height, Action<ReadOnlyMemory<byte>> onClose)
+        public DCompDrawingContext(int width, int height, BridgeCommandWriter commandWriter, Action<BridgeCommandPacket> onClose)
         {
             Width = width;
             Height = height;
+            _commands = commandWriter ?? throw new ArgumentNullException(nameof(commandWriter));
             _onClose = onClose ?? throw new ArgumentNullException(nameof(onClose));
-            _commands = new DCompCommandBuffer();
+            _commands.Reset();
         }
 
         public void DrawEllipse(Brush brush, Pen pen, Point center, double radiusX, double radiusY)
@@ -27,10 +29,10 @@ namespace FastDrawingVisual.DCompD3D11
             ThrowIfDisposed();
 
             if (TryGetSolidColor(brush, out var fill))
-                _commands.WriteFillEllipse(center, (float)radiusX, (float)radiusY, fill);
+                _commands.WriteFillEllipse((float)center.X, (float)center.Y, (float)radiusX, (float)radiusY, ToProtocolColor(fill));
 
             if (TryGetSolidPen(pen, out var stroke, out var thickness))
-                _commands.WriteStrokeEllipse(center, (float)radiusX, (float)radiusY, thickness, stroke);
+                _commands.WriteStrokeEllipse((float)center.X, (float)center.Y, (float)radiusX, (float)radiusY, thickness, ToProtocolColor(stroke));
         }
 
         public void DrawRectangle(Brush brush, Pen pen, Rect rectangle)
@@ -38,10 +40,10 @@ namespace FastDrawingVisual.DCompD3D11
             ThrowIfDisposed();
 
             if (TryGetSolidColor(brush, out var fill))
-                _commands.WriteFillRect(rectangle, fill);
+                _commands.WriteFillRect((float)rectangle.X, (float)rectangle.Y, (float)rectangle.Width, (float)rectangle.Height, ToProtocolColor(fill));
 
             if (TryGetSolidPen(pen, out var stroke, out var thickness))
-                _commands.WriteStrokeRect(rectangle, thickness, stroke);
+                _commands.WriteStrokeRect((float)rectangle.X, (float)rectangle.Y, (float)rectangle.Width, (float)rectangle.Height, thickness, ToProtocolColor(stroke));
         }
 
         public void DrawRoundedRectangle(Brush brush, Pen pen, Rect rectangle, double radiusX, double radiusY)
@@ -53,7 +55,7 @@ namespace FastDrawingVisual.DCompD3D11
         {
             ThrowIfDisposed();
             if (TryGetSolidPen(pen, out var color, out var thickness))
-                _commands.WriteLine(point0, point1, thickness, color);
+                _commands.WriteLine((float)point0.X, (float)point0.Y, (float)point1.X, (float)point1.Y, thickness, ToProtocolColor(color));
         }
 
         public void DrawGeometry(Brush brush, Pen pen, Geometry geometry)
@@ -72,7 +74,24 @@ namespace FastDrawingVisual.DCompD3D11
         {
             ThrowIfDisposed();
             if (TryGetSolidColor(foreground, out var color))
-                _commands.WriteDrawText(text, origin, fontFamily, (float)fontSize, color);
+            {
+                if (string.IsNullOrEmpty(text))
+                    return;
+
+                if (string.IsNullOrWhiteSpace(fontFamily))
+                    fontFamily = "Segoe UI";
+
+                if (fontSize <= 0d)
+                    fontSize = 12d;
+
+                _commands.WriteDrawText(
+                    (float)origin.X,
+                    (float)origin.Y,
+                    (float)fontSize,
+                    ToProtocolColor(color),
+                    text,
+                    fontFamily);
+            }
         }
 
         public void DrawGlyphRun(Brush foregroundBrush, GlyphRun glyphRun)
@@ -129,7 +148,7 @@ namespace FastDrawingVisual.DCompD3D11
         {
             if (_isDisposed) return;
             _isDisposed = true;
-            _onClose(_commands.WrittenMemory);
+            _onClose(_commands.BuildPacket());
         }
 
         private void ThrowIfDisposed()
@@ -162,6 +181,11 @@ namespace FastDrawingVisual.DCompD3D11
             color = Colors.Transparent;
             thickness = 0f;
             return false;
+        }
+
+        private static BridgeCommandColorArgb8 ToProtocolColor(Color color)
+        {
+            return new BridgeCommandColorArgb8(color.A, color.R, color.G, color.B);
         }
     }
 }

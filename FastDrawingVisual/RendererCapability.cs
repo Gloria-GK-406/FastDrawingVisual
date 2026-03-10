@@ -1,5 +1,5 @@
 using FastDrawingVisual.Controls;
-using FastDrawingVisual.Rendering.NativeD3D9;
+using FastDrawingVisual.Rendering;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;

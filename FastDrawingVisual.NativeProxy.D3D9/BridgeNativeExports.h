@@ -20,7 +20,9 @@ __declspec(dllexport) bool __cdecl FDV_Resize(void *renderer, int width,
                                               int height);
 __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
                                                       const void *commands,
-                                                      int commandBytes);
+                                                      int commandBytes,
+                                                      const void *blobs,
+                                                      int blobBytes);
 __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
     void *renderer, void **outSurface9);
 __declspec(dllexport) bool __cdecl FDV_CopyReadyToPresentSurface(void *renderer);

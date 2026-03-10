@@ -7,29 +7,16 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>FastDrawingVisual</RootNamespace>
     <Platforms>AnyCPU;x86;x64</Platforms>
-    <BridgeProtocolProjectDir>$(MSBuildProjectDirectory)\..\FastDrawingVisual.CommandProtocol</BridgeProtocolProjectDir>
-    <BridgeProtocolSchema>$(BridgeProtocolProjectDir)\command_protocol.schema.json</BridgeProtocolSchema>
-    <BridgeProtocolOutDir>$(MSBuildProjectDirectory)\..\artifacts\generated\protocol</BridgeProtocolOutDir>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FastDrawingVisual.CommandRuntime\FastDrawingVisual.CommandRuntime.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj" />
     <ProjectReference Include="..\FastDrawingVisual.LogClrProxy\FastDrawingVisual.LogClrProxy.vcxproj" />
     <ProjectReference Include="..\FastDrawingVisual.NativeProxy.D3D9\FastDrawingVisual.NativeProxy.D3D9.vcxproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs" Link="Generated\BridgeCommandProtocol.g.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <EditorConfigFiles Remove="D:\Projects\FastDrawingVisual\FastDrawingVisual.NativeD3D9\.editorconfig" />
   </ItemGroup>
-
-  <Target Name="FDV_GenerateBridgeProtocol"
-          BeforeTargets="CoreCompile"
-          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\Program.cs"
-          Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
-    <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot; -- --schema &quot;$(BridgeProtocolSchema)&quot; --out-dir &quot;$(BridgeProtocolOutDir)&quot;" />
-  </Target>
 </Project>
