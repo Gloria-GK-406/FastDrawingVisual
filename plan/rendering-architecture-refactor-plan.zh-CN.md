@@ -211,9 +211,13 @@ public interface ILayeredFrameSink
 示意：
 
 ```csharp
-public interface ID3D9SurfaceProvider
+public interface ID3D9PresentationSource
 {
     IntPtr GetSurface9();
+
+    bool CopyReadyToPresentSurface();
+
+    void NotifyFrontBufferAvailable(bool available);
 }
 
 public interface IDXGISwapChainProvider
@@ -251,7 +255,7 @@ public interface ICapabilityProvider
 
 需要能力：
 
-- `ID3D9SurfaceProvider`
+- `ID3D9PresentationSource`
 
 职责：
 

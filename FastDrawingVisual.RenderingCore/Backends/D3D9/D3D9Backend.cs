@@ -8,7 +8,7 @@ using Proxy = D3D9Proxy::FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.Rendering.Backends
 {
-    public sealed class D3D9Backend : IRenderBackend, ILayeredFrameSink, ID3D9SurfaceProvider, ID3D9PresentationController, IRenderBackendReadiness
+    public sealed class D3D9Backend : IRenderBackend, ILayeredFrameSink, ID3D9PresentationSource, IRenderBackendReadiness
     {
         private IntPtr _nativeRenderer;
         private HwndSource? _fallbackHwndSource;

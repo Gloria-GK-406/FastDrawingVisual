@@ -11,8 +11,7 @@ namespace FastDrawingVisual.Rendering.Presentation
         private readonly D3DImage _d3dImage = new();
         private readonly DrawingVisual _visual = new();
         private IVisualHostElement? _attachedHost;
-        private ID3D9SurfaceProvider? _surfaceProvider;
-        private ID3D9PresentationController? _controller;
+        private ID3D9PresentationSource? _presentationSource;
         private bool _isBackBufferBound;
         private bool _isDisposed;
         private int _width;
@@ -28,8 +27,7 @@ namespace FastDrawingVisual.Rendering.Presentation
         public bool IsPresentationReady =>
             !_isDisposed &&
             _attachedHost != null &&
-            _surfaceProvider != null &&
-            _controller != null;
+            _presentationSource != null;
 
         public event Action? ReadyStateChanged;
 
@@ -42,16 +40,12 @@ namespace FastDrawingVisual.Rendering.Presentation
             if (element is not IVisualHostElement host)
                 return false;
 
-            if (!capabilityProvider.TryGetCapability<ID3D9SurfaceProvider>(out var surfaceProvider) || surfaceProvider == null)
-                return false;
-
-            if (!capabilityProvider.TryGetCapability<ID3D9PresentationController>(out var controller) || controller == null)
+            if (!capabilityProvider.TryGetCapability<ID3D9PresentationSource>(out var presentationSource) || presentationSource == null)
                 return false;
 
             if (ReferenceEquals(_attachedHost, host))
             {
-                _surfaceProvider = surfaceProvider;
-                _controller = controller;
+                _presentationSource = presentationSource;
                 UpdateReadyState();
                 return true;
             }
@@ -61,8 +55,7 @@ namespace FastDrawingVisual.Rendering.Presentation
                 return false;
 
             _attachedHost = host;
-            _surfaceProvider = surfaceProvider;
-            _controller = controller;
+            _presentationSource = presentationSource;
             BindD3DImageToVisual();
             UpdateReadyState();
             return true;
@@ -87,8 +80,7 @@ namespace FastDrawingVisual.Rendering.Presentation
             _d3dImage.IsFrontBufferAvailableChanged -= OnFrontBufferAvailableChanged;
             UnbindBackBuffer();
             DetachFromHost();
-            _surfaceProvider = null;
-            _controller = null;
+            _presentationSource = null;
             _isDisposed = true;
             UpdateReadyState();
         }
@@ -115,7 +107,7 @@ namespace FastDrawingVisual.Rendering.Presentation
                 if (!EnsureBackBufferBound())
                     return;
 
-                if (_controller?.CopyReadyToPresentSurface() != true)
+                if (_presentationSource?.CopyReadyToPresentSurface() != true)
                     return;
 
                 _d3dImage.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
@@ -131,7 +123,7 @@ namespace FastDrawingVisual.Rendering.Presentation
             if (_isBackBufferBound)
                 return true;
 
-            var surface = _surfaceProvider?.GetSurface9() ?? IntPtr.Zero;
+            var surface = _presentationSource?.GetSurface9() ?? IntPtr.Zero;
             if (surface == IntPtr.Zero)
                 return false;
 
@@ -165,7 +157,7 @@ namespace FastDrawingVisual.Rendering.Presentation
             if (!available)
                 UnbindBackBuffer();
 
-            _controller?.NotifyFrontBufferAvailable(available);
+            _presentationSource?.NotifyFrontBufferAvailable(available);
             BindD3DImageToVisual();
             UpdateReadyState();
         }

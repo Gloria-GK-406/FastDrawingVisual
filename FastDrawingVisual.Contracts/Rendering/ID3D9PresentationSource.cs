@@ -1,7 +1,11 @@
+using System;
+
 namespace FastDrawingVisual.Rendering
 {
-    public interface ID3D9PresentationController
+    public interface ID3D9PresentationSource
     {
+        IntPtr GetSurface9();
+
         bool CopyReadyToPresentSurface();
 
         void NotifyFrontBufferAvailable(bool available);
