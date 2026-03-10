@@ -28,6 +28,6 @@ namespace FastDrawingVisualApp.Benchmark
             $"{EndedAt:HH:mm:ss}  {Config.Scenario.DisplayName}  {Config.Scale.Key}  {Config.Renderer}";
 
         public string Detail =>
-            $"submit {Snapshot.SubmitHz:F1}Hz | exec {Snapshot.ExecuteHz:F1}Hz | drop {Snapshot.RecentDropRatePercent:F1}% | draw p95 {Snapshot.DrawDuration.P95:F2}ms | latency p95 {Snapshot.EndToEndLatency.P95:F2}ms | {Snapshot.StopReason}";
+            $"submit {Snapshot.SubmitHz:F1}Hz | exec {Snapshot.ExecuteHz:F1}Hz | drop {Snapshot.RecentDropRatePercent:F1}% | prep p95 {Snapshot.PrepareDuration.P95:F2}ms | draw p95 {Snapshot.DrawDuration.P95:F2}ms | latency p95 {Snapshot.EndToEndLatency.P95:F2}ms | {Snapshot.StopReason}";
     }
 }

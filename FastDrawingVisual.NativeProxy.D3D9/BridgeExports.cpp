@@ -2,9 +2,12 @@
 // C ABI exports only. Implementation is split across helper/source modules.
 
 #include <new>
+#include <chrono>
+#include <cwchar>
 
 #include "BridgeNativeExports.h"
 #include "BridgeRendererInternal.h"
+#include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
 
 // The DXSDK NuGet package injects the correct lib via its .targets file,
 // but list them explicitly so an IDE-only build also links correctly.
@@ -16,6 +19,34 @@ namespace {
 constexpr int kCapabilityCommandStream = 1 << 0;
 constexpr int kCapabilityPresentSurface = 1 << 1;
 constexpr int kCapabilityFrontBufferNotifications = 1 << 2;
+constexpr uint32_t kMetricWindowSec = 1;
+constexpr const wchar_t *kParseSubmitMetricFormat =
+    L"name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
+
+void RegisterRendererMetrics(BridgeRenderer *s) {
+  if (!s || s->parseSubmitDurationMetricId > 0) {
+    return;
+  }
+
+  wchar_t metricName[104]{};
+  swprintf_s(metricName, L"native.d3d9.r%p.parse_submit_ms",
+             static_cast<void *>(s));
+  FDVLOG_MetricSpec spec{};
+  spec.name = metricName;
+  spec.periodSec = kMetricWindowSec;
+  spec.format = kParseSubmitMetricFormat;
+  spec.level = FDVLOG_LevelInfo;
+  s->parseSubmitDurationMetricId = FDVLOG_RegisterMetric(&spec);
+}
+
+void UnregisterRendererMetrics(BridgeRenderer *s) {
+  if (!s || s->parseSubmitDurationMetricId <= 0) {
+    return;
+  }
+
+  FDVLOG_UnregisterMetric(s->parseSubmitDurationMetricId);
+  s->parseSubmitDurationMetricId = 0;
+}
 } // namespace
 
 extern "C" {
@@ -50,6 +81,7 @@ __declspec(dllexport) void *__cdecl FDV_CreateRenderer(void *hwnd, int width,
     return nullptr;
   }
 
+  RegisterRendererMetrics(s);
   return s;
 }
 
@@ -58,6 +90,7 @@ __declspec(dllexport) void __cdecl FDV_DestroyRenderer(void *renderer) {
   if (!s)
     return;
 
+  UnregisterRendererMetrics(s);
   ReleaseDeviceResources(s);
 
   if (s->d3d9) {
@@ -109,6 +142,7 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
     return false;
 
   EnterCriticalSection(&s->cs);
+  RegisterRendererMetrics(s);
 
   HRESULT hr = s->device->TestCooperativeLevel();
   if (hr == D3DERR_DEVICENOTRESET) {
@@ -130,10 +164,19 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void *renderer,
   SurfaceSlot *drawSlot = &s->slots[drawSlotIndex];
   drawSlot->state = SurfaceState::Drawing;
 
+  const auto parseSubmitStart = std::chrono::steady_clock::now();
   bool result =
       ExecuteCommands(s, drawSlot, static_cast<const uint8_t *>(commands),
                       commandBytes, static_cast<const uint8_t *>(blobs),
                       blobBytes);
+  const auto parseSubmitEnd = std::chrono::steady_clock::now();
+  if (s->parseSubmitDurationMetricId > 0) {
+    const double parseSubmitDurationMs =
+        std::chrono::duration<double, std::milli>(parseSubmitEnd -
+                                                  parseSubmitStart)
+            .count();
+    FDVLOG_LogMetric(s->parseSubmitDurationMetricId, parseSubmitDurationMs);
+  }
   if (result) {
     DemoteReadyForPresentSlots(s, drawSlotIndex);
     drawSlot->state = SurfaceState::ReadyForPresent;

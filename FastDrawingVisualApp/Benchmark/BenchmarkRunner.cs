@@ -4,6 +4,8 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Media;
 
 namespace FastDrawingVisualApp.Benchmark
 {
@@ -16,10 +18,13 @@ namespace FastDrawingVisualApp.Benchmark
         private readonly CancellationTokenSource _cts;
         private readonly Stopwatch _elapsed;
         private readonly Task _submitLoopTask;
+        private readonly IPreparedBenchmarkScenarioSession? _preparedScenarioSession;
 
         private long _submittedSequence;
         private long _lastExecutedSequence;
         private long _executedFrameIndex;
+        private int _surfaceWidth;
+        private int _surfaceHeight;
         private bool _isDisposed;
         private volatile bool _loopCompleted;
         private BenchmarkStopReason _stopReason;
@@ -29,10 +34,12 @@ namespace FastDrawingVisualApp.Benchmark
             _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _scenarioSession = config.Scenario.CreateSession(config.Scale, config.Seed);
+            _preparedScenarioSession = _scenarioSession as IPreparedBenchmarkScenarioSession;
             _metrics = new BenchmarkMetricsCollector();
             _cts = new CancellationTokenSource();
             _elapsed = Stopwatch.StartNew();
             _stopReason = BenchmarkStopReason.Running;
+            AttachCanvasSizeTracking();
             _submitLoopTask = Task.Run(() => SubmitLoop(_cts.Token), _cts.Token);
         }
 
@@ -68,6 +75,7 @@ namespace FastDrawingVisualApp.Benchmark
             }
 
             _cts.Dispose();
+            DetachCanvasSizeTracking();
             _scenarioSession.Dispose();
             _elapsed.Stop();
         }
@@ -105,12 +113,31 @@ namespace FastDrawingVisualApp.Benchmark
                 }
 
                 long sequence = Interlocked.Increment(ref _submittedSequence);
+                var submitFrame = new BenchmarkFrameContext(sequence, 0, _elapsed.Elapsed);
+                IPreparedBenchmarkFrame? preparedFrame = null;
+
+                if (_preparedScenarioSession != null)
+                {
+                    var surface = SnapshotRenderSurface();
+                    if (surface.Width <= 0 || surface.Height <= 0)
+                    {
+                        Thread.Sleep(15);
+                        nextTarget = Stopwatch.GetTimestamp();
+                        continue;
+                    }
+
+                    long prepareStartedTicks = Stopwatch.GetTimestamp();
+                    preparedFrame = _preparedScenarioSession.PrepareFrame(surface, submitFrame);
+                    long prepareCompletedTicks = Stopwatch.GetTimestamp();
+                    _metrics.RecordPreparation(prepareStartedTicks, prepareCompletedTicks);
+                }
+
                 long submitTicks = Stopwatch.GetTimestamp();
                 _metrics.RecordSubmission();
 
                 try
                 {
-                    _canvas.SubmitDrawing(ctx => ExecuteFrame(ctx, sequence, submitTicks));
+                    _canvas.SubmitDrawing(ctx => ExecuteFrame(ctx, sequence, submitTicks, preparedFrame));
                 }
                 catch (ObjectDisposedException) when (token.IsCancellationRequested || _isDisposed)
                 {
@@ -124,7 +151,7 @@ namespace FastDrawingVisualApp.Benchmark
             _loopCompleted = true;
         }
 
-        private void ExecuteFrame(IDrawingContext ctx, long sequence, long submitTicks)
+        private void ExecuteFrame(IDrawingContext ctx, long sequence, long submitTicks, IPreparedBenchmarkFrame? preparedFrame)
         {
             long startedTicks = Stopwatch.GetTimestamp();
             long previousSequence = Interlocked.Exchange(ref _lastExecutedSequence, sequence);
@@ -134,9 +161,49 @@ namespace FastDrawingVisualApp.Benchmark
 
             long executedFrameIndex = Interlocked.Increment(ref _executedFrameIndex);
             var frameContext = new BenchmarkFrameContext(sequence, executedFrameIndex, _elapsed.Elapsed);
-            _scenarioSession.RenderFrame(ctx, frameContext);
+            if (_preparedScenarioSession != null && preparedFrame != null)
+                _preparedScenarioSession.RenderPreparedFrame(ctx, preparedFrame);
+            else
+                _scenarioSession.RenderFrame(ctx, frameContext);
             long completedTicks = Stopwatch.GetTimestamp();
             _metrics.RecordExecution(droppedSincePrevious, submitTicks, startedTicks, completedTicks);
+        }
+
+        private void AttachCanvasSizeTracking()
+        {
+            _canvas.Dispatcher.Invoke(() =>
+            {
+                UpdateSurfaceSizeOnUiThread();
+                _canvas.SizeChanged += OnCanvasSizeChanged;
+            });
+        }
+
+        private void DetachCanvasSizeTracking()
+        {
+            var dispatcher = _canvas.Dispatcher;
+            if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+                return;
+
+            dispatcher.Invoke(() => _canvas.SizeChanged -= OnCanvasSizeChanged);
+        }
+
+        private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            UpdateSurfaceSizeOnUiThread();
+        }
+
+        private void UpdateSurfaceSizeOnUiThread()
+        {
+            var dpi = VisualTreeHelper.GetDpi(_canvas);
+            _surfaceWidth = (int)Math.Round(_canvas.ActualWidth * dpi.DpiScaleX);
+            _surfaceHeight = (int)Math.Round(_canvas.ActualHeight * dpi.DpiScaleY);
+        }
+
+        private BenchmarkRenderSurface SnapshotRenderSurface()
+        {
+            return new BenchmarkRenderSurface(
+                Volatile.Read(ref _surfaceWidth),
+                Volatile.Read(ref _surfaceHeight));
         }
 
         private static void WaitUntil(long targetTicks, CancellationToken token)

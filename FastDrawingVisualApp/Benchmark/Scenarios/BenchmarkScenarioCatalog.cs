@@ -9,6 +9,7 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
             {
                 new PrimitiveStressScenario(),
                 new KLineStressScenario(),
+                new KLineEncodeOnlyScenario(),
                 new KLineLiveAppendScenario(),
             };
     }

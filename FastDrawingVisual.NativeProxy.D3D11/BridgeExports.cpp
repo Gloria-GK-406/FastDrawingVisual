@@ -2,6 +2,7 @@
 #include "BridgeRendererInternal.h"
 #include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
 
+#include <chrono>
 #include <cstdarg>
 #include <cwchar>
 #include <new>
@@ -49,6 +50,19 @@ void RegisterRendererMetrics(BridgeRendererD3D11* s) {
 
   bool changed = false;
 
+  if (s->parseSubmitDurationMetricId <= 0) {
+    wchar_t metricName[104]{};
+    swprintf_s(metricName, L"native.d3d11.r%p.parse_submit_ms",
+               static_cast<void*>(s));
+    FDVLOG_MetricSpec spec{};
+    spec.name = metricName;
+    spec.periodSec = kMetricWindowSec;
+    spec.format = kDrawMetricFormat;
+    spec.level = FDVLOG_LevelInfo;
+    s->parseSubmitDurationMetricId = FDVLOG_RegisterMetric(&spec);
+    changed = (s->parseSubmitDurationMetricId > 0) || changed;
+  }
+
   if (s->drawDurationMetricId <= 0) {
     wchar_t metricName[96]{};
     swprintf_s(metricName, L"native.d3d11.r%p.draw_ms", static_cast<void*>(s));
@@ -75,14 +89,20 @@ void RegisterRendererMetrics(BridgeRendererD3D11* s) {
 
   if (changed) {
     LogNativef(FDVLOG_LevelDebug, false,
-               L"renderer=0x%p metric registration drawMetricId=%d fpsMetricId=%d",
-               static_cast<void*>(s), s->drawDurationMetricId, s->fpsMetricId);
+               L"renderer=0x%p metric registration parseSubmitMetricId=%d drawMetricId=%d fpsMetricId=%d",
+               static_cast<void*>(s), s->parseSubmitDurationMetricId,
+               s->drawDurationMetricId, s->fpsMetricId);
   }
 }
 
 void UnregisterRendererMetrics(BridgeRendererD3D11* s) {
   if (!s) {
     return;
+  }
+
+  if (s->parseSubmitDurationMetricId > 0) {
+    FDVLOG_UnregisterMetric(s->parseSubmitDurationMetricId);
+    s->parseSubmitDurationMetricId = 0;
   }
 
   if (s->drawDurationMetricId > 0) {
@@ -211,7 +231,16 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void* renderer,
 
   EnterCriticalSection(&s->cs);
   RegisterRendererMetrics(s);
+  const auto parseSubmitStart = std::chrono::steady_clock::now();
   bool ok = SubmitCommandsAndPresent(s, commands, commandBytes, blobs, blobBytes);
+  const auto parseSubmitEnd = std::chrono::steady_clock::now();
+  if (s->parseSubmitDurationMetricId > 0) {
+    const double parseSubmitDurationMs =
+        std::chrono::duration<double, std::milli>(parseSubmitEnd -
+                                                  parseSubmitStart)
+            .count();
+    FDVLOG_LogMetric(s->parseSubmitDurationMetricId, parseSubmitDurationMs);
+  }
   if (!ok) {
     LogNativef(FDVLOG_LevelError, true,
                L"FDV_SubmitCommands failed renderer=0x%p bytes=%d blobBytes=%d hr=0x%08X.",

@@ -33,6 +33,7 @@ struct BridgeRenderer {
   HWND hwnd = nullptr;
   int width = 0;
   int height = 0;
+  int parseSubmitDurationMetricId = 0;
   bool frontBufferAvailable = true;
   bool csInitialized = false;
   CRITICAL_SECTION cs;

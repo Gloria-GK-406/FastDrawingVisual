@@ -239,6 +239,31 @@
 
                     <Border Style="{StaticResource MetricCardStyle}">
                         <StackPanel>
+                            <TextBlock Text="Prepare" Style="{StaticResource LabelStyle}" />
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="avg ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="PrepareAvgText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="p95 ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="PrepareP95Text" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="max ms" Style="{StaticResource LabelStyle}" />
+                                    <TextBlock x:Name="PrepareMaxText" Foreground="{StaticResource TextMain}" FontFamily="Consolas" FontSize="18" Text="0.00" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
                             <TextBlock Text="Queue Delay" Style="{StaticResource LabelStyle}" />
                             <Grid Margin="0,8,0,0">
                                 <Grid.ColumnDefinitions>

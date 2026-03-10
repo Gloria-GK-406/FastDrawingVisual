@@ -13,6 +13,7 @@ namespace FastDrawingVisualApp.Benchmark
     internal sealed class BenchmarkMetricsCollector
     {
         private readonly object _gate = new();
+        private readonly RollingValueWindow _prepareMs = new(1_024);
         private readonly RollingValueWindow _queueDelayMs = new(1_024);
         private readonly RollingValueWindow _drawMs = new(1_024);
         private readonly RollingValueWindow _endToEndMs = new(1_024);
@@ -30,6 +31,16 @@ namespace FastDrawingVisualApp.Benchmark
             lock (_gate)
             {
                 _submitted++;
+            }
+        }
+
+        public void RecordPreparation(long startedTicks, long completedTicks)
+        {
+            double prepareMs = ToMilliseconds(completedTicks - startedTicks);
+
+            lock (_gate)
+            {
+                _prepareMs.Add(prepareMs);
             }
         }
 
@@ -79,6 +90,7 @@ namespace FastDrawingVisualApp.Benchmark
                     submittedDelta / elapsedSec,
                     executedDelta / elapsedSec,
                     submittedDelta > 0 ? droppedDelta * 100d / submittedDelta : 0,
+                    _prepareMs.CreateSnapshot(),
                     _queueDelayMs.CreateSnapshot(),
                     _drawMs.CreateSnapshot(),
                     _endToEndMs.CreateSnapshot());
@@ -109,6 +121,7 @@ namespace FastDrawingVisualApp.Benchmark
             double submitHz,
             double executeHz,
             double recentDropRatePercent,
+            RollingValueStatistics prepareDuration,
             RollingValueStatistics queueDelay,
             RollingValueStatistics drawDuration,
             RollingValueStatistics endToEndLatency)
@@ -123,6 +136,7 @@ namespace FastDrawingVisualApp.Benchmark
             SubmitHz = submitHz;
             ExecuteHz = executeHz;
             RecentDropRatePercent = recentDropRatePercent;
+            PrepareDuration = prepareDuration;
             QueueDelay = queueDelay;
             DrawDuration = drawDuration;
             EndToEndLatency = endToEndLatency;
@@ -147,6 +161,8 @@ namespace FastDrawingVisualApp.Benchmark
         public double ExecuteHz { get; }
 
         public double RecentDropRatePercent { get; }
+
+        public RollingValueStatistics PrepareDuration { get; }
 
         public RollingValueStatistics QueueDelay { get; }
 

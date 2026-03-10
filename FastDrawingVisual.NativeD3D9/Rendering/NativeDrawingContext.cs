@@ -1,6 +1,8 @@
 using FastDrawingVisual.CommandRuntime;
+using FastDrawingVisual.Log;
 using FastDrawingVisual.Rendering;
 using System;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
 
@@ -8,8 +10,18 @@ namespace FastDrawingVisual.Rendering
 {
     internal sealed class NativeDrawingContext : IDrawingContext
     {
+        private const int MetricWindowSec = 1;
+        private const string CommandEncodeMetricFormat = "name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
+        private static readonly Logger s_logger = new("NativeDrawingContext");
+        private static readonly int s_commandEncodeMetricId = s_logger.RegisterMetric(
+            "native.d3d9.cmd_encode_ms",
+            MetricWindowSec,
+            CommandEncodeMetricFormat,
+            LogLevel.Info);
+
         private readonly BridgeCommandWriter _commands;
         private readonly Action<BridgeCommandPacket> _onClose;
+        private readonly long _encodingStartedTimestamp;
         private bool _isDisposed;
 
         public int Width { get; }
@@ -22,6 +34,7 @@ namespace FastDrawingVisual.Rendering
             _commands = commandWriter ?? throw new ArgumentNullException(nameof(commandWriter));
             _onClose = onClose ?? throw new ArgumentNullException(nameof(onClose));
             _commands.Reset();
+            _encodingStartedTimestamp = Stopwatch.GetTimestamp();
         }
 
         public void DrawEllipse(Brush brush, Pen pen, Point center, double radiusX, double radiusY)
@@ -131,7 +144,12 @@ namespace FastDrawingVisual.Rendering
         {
             if (_isDisposed) return;
             _isDisposed = true;
-            _onClose(_commands.BuildPacket());
+            var packet = _commands.BuildPacket();
+            var encodingCompletedTimestamp = Stopwatch.GetTimestamp();
+            var commandEncodeDurationMs = (encodingCompletedTimestamp - _encodingStartedTimestamp) * 1000d / Stopwatch.Frequency;
+            if (s_commandEncodeMetricId > 0)
+                s_logger.LogMetric(s_commandEncodeMetricId, commandEncodeDurationMs);
+            _onClose(packet);
         }
 
         private void ThrowIfDisposed()

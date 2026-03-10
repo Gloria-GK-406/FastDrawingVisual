@@ -41,6 +41,7 @@ struct BridgeRendererD3D11 {
   int width = 0;
   int height = 0;
   HRESULT lastErrorHr = S_OK;
+  int parseSubmitDurationMetricId = 0;
   int drawDurationMetricId = 0;
   int fpsMetricId = 0;
   uint64_t lastPresentQpc = 0;

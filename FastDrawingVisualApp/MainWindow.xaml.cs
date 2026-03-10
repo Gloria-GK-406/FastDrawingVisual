@@ -89,6 +89,7 @@ namespace FastDrawingVisualApp
                     submitHz: 0,
                     executeHz: 0,
                     recentDropRatePercent: 0,
+                    prepareDuration: new RollingValueStatistics(0, 0, 0, 0),
                     queueDelay: new RollingValueStatistics(0, 0, 0, 0),
                     drawDuration: new RollingValueStatistics(0, 0, 0, 0),
                     endToEndLatency: new RollingValueStatistics(0, 0, 0, 0)));
@@ -159,6 +160,10 @@ namespace FastDrawingVisualApp
             ExecuteHzText.Text = snapshot.ExecuteHz.ToString("F1");
             DropRateText.Text = snapshot.RecentDropRatePercent.ToString("F1");
             PendingText.Text = snapshot.PendingTotal.ToString("n0");
+
+            PrepareAvgText.Text = snapshot.PrepareDuration.Average.ToString("F2");
+            PrepareP95Text.Text = snapshot.PrepareDuration.P95.ToString("F2");
+            PrepareMaxText.Text = snapshot.PrepareDuration.Max.ToString("F2");
 
             DrawAvgText.Text = snapshot.DrawDuration.Average.ToString("F2");
             DrawP95Text.Text = snapshot.DrawDuration.P95.ToString("F2");
