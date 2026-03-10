@@ -23,6 +23,8 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void* renderer,
                                                       int commandBytes,
                                                       const void* blobs,
                                                       int blobBytes);
+__declspec(dllexport) bool __cdecl FDV_SubmitLayeredCommands(
+    void* renderer, const void* framePacket, int framePacketBytes);
 __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
     void* renderer, void** outSurface9);
 __declspec(dllexport) bool __cdecl FDV_CopyReadyToPresentSurface(

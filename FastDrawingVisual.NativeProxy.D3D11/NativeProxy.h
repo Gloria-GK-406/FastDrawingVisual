@@ -31,6 +31,9 @@ public:
   static bool SubmitCommands(System::IntPtr renderer, System::IntPtr commands,
                              int commandBytes, System::IntPtr blobs,
                              int blobBytes);
+  static bool SubmitLayeredCommands(System::IntPtr renderer,
+                                    System::IntPtr framePacket,
+                                    int framePacketBytes);
   static bool TryAcquirePresentSurface(System::IntPtr renderer,
                                        System::IntPtr% surface9);
   static bool CopyReadyToPresentSurface(System::IntPtr renderer);

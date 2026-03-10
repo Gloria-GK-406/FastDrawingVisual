@@ -51,6 +51,19 @@ struct BridgeRendererD3D11 {
   CRITICAL_SECTION cs;
 };
 
+struct BridgeLayerPacketNative {
+  const void* commandData = nullptr;
+  int32_t commandBytes = 0;
+  const void* blobData = nullptr;
+  int32_t blobBytes = 0;
+  int32_t commandCount = 0;
+};
+
+struct BridgeLayeredFramePacketNative {
+  static constexpr int kMaxLayerCount = 8;
+  BridgeLayerPacketNative layers[kMaxLayerCount];
+};
+
 template <typename T> inline void SafeRelease(T** ptr) {
   if (ptr == nullptr || *ptr == nullptr) {
     return;
@@ -72,6 +85,9 @@ bool ResizeSwapChain(BridgeRendererD3D11* s, int width, int height);
 bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
                               int commandBytes, const void* blobs,
                               int blobBytes);
+bool SubmitLayeredCommandsAndPresent(
+    BridgeRendererD3D11* s,
+    const BridgeLayeredFramePacketNative* framePacket);
 bool CreateDrawPipeline(BridgeRendererD3D11* s);
 bool EnsureDynamicVertexBuffer(BridgeRendererD3D11* s, UINT requiredBytes);
 bool BeginD2DDraw(BridgeRendererD3D11* s, bool& d2dDrawActive);

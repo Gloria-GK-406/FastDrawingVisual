@@ -251,6 +251,50 @@ __declspec(dllexport) bool __cdecl FDV_SubmitCommands(void* renderer,
   return ok;
 }
 
+__declspec(dllexport) bool __cdecl FDV_SubmitLayeredCommands(
+    void* renderer, const void* framePacket, int framePacketBytes) {
+  auto* s = static_cast<BridgeRendererD3D11*>(renderer);
+  if (!s) {
+    LogNative(FDVLOG_LevelWarn,
+              L"FDV_SubmitLayeredCommands ignored because renderer is null.",
+              false);
+    return false;
+  }
+
+  if (!framePacket ||
+      framePacketBytes < static_cast<int>(sizeof(BridgeLayeredFramePacketNative))) {
+    EnterCriticalSection(&s->cs);
+    SetLastError(s, E_INVALIDARG);
+    LeaveCriticalSection(&s->cs);
+    LogNativef(FDVLOG_LevelWarn, true,
+               L"FDV_SubmitLayeredCommands rejected invalid packet renderer=0x%p bytes=%d.",
+               static_cast<void*>(s), framePacketBytes);
+    return false;
+  }
+
+  EnterCriticalSection(&s->cs);
+  RegisterRendererMetrics(s);
+  const auto parseSubmitStart = std::chrono::steady_clock::now();
+  bool ok = SubmitLayeredCommandsAndPresent(
+      s, static_cast<const BridgeLayeredFramePacketNative*>(framePacket));
+  const auto parseSubmitEnd = std::chrono::steady_clock::now();
+  if (s->parseSubmitDurationMetricId > 0) {
+    const double parseSubmitDurationMs =
+        std::chrono::duration<double, std::milli>(parseSubmitEnd -
+                                                  parseSubmitStart)
+            .count();
+    FDVLOG_LogMetric(s->parseSubmitDurationMetricId, parseSubmitDurationMs);
+  }
+  if (!ok) {
+    LogNativef(FDVLOG_LevelError, true,
+               L"FDV_SubmitLayeredCommands failed renderer=0x%p packetBytes=%d hr=0x%08X.",
+               static_cast<void*>(s), framePacketBytes,
+               static_cast<unsigned int>(s->lastErrorHr));
+  }
+  LeaveCriticalSection(&s->cs);
+  return ok;
+}
+
 __declspec(dllexport) bool __cdecl FDV_TryAcquirePresentSurface(
     void* renderer, void** outSurface9) {
   (void)renderer;

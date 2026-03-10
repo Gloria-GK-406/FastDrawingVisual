@@ -30,7 +30,6 @@ namespace FastDrawingVisual.DCompD3D11
         private int _height;
         private readonly object _workerLock = new();
         private readonly SemaphoreSlim _drawSignal = new(0, 1);
-        private readonly BridgeCommandWriter _commandWriter = new();
         private volatile Action<IDrawingContext>? _pendingDrawAction;
         private int _drawSignalState;
         private CancellationTokenSource? _workerCts;
@@ -154,8 +153,6 @@ namespace FastDrawingVisual.DCompD3D11
 
             StopDrawingWorker(Timeout.InfiniteTimeSpan);
             UnregisterMetrics();
-            _commandWriter.Dispose();
-
             UnhookHostElement();
 
             DestroyProxy();
@@ -381,7 +378,7 @@ namespace FastDrawingVisual.DCompD3D11
                     var drawStarted = Stopwatch.GetTimestamp();
                     try
                     {
-                        using var context = new DCompDrawingContext(_width, _height, _commandWriter, SubmitCommandsToNative);
+                        using var context = new DCompDrawingContext(_width, _height, SubmitLayeredCommandsToNative);
                         action(context);
                     }
                     catch (Exception ex)
@@ -420,18 +417,16 @@ namespace FastDrawingVisual.DCompD3D11
                 SignalDrawingWorker();
         }
 
-        private void SubmitCommandsToNative(BridgeCommandPacket packet)
+        private unsafe void SubmitLayeredCommandsToNative(BridgeLayeredFramePacket packet)
         {
-            if (_nativeRenderer == IntPtr.Zero || packet.CommandBytes == 0)
+            if (_nativeRenderer == IntPtr.Zero || !packet.HasAnyCommands)
                 return;
 
-            if (!Proxy.SubmitCommands(
+            if (!Proxy.SubmitLayeredCommands(
                     _nativeRenderer,
-                    packet.CommandPointer,
-                    packet.CommandBytes,
-                    packet.BlobPointer,
-                    packet.BlobBytes))
-                ThrowNativeFailure("FDV_SubmitCommands");
+                    new IntPtr(&packet),
+                    sizeof(BridgeLayeredFramePacket)))
+                ThrowNativeFailure("FDV_SubmitLayeredCommands");
         }
 
         private static bool IsCancellationOnly(AggregateException ex)

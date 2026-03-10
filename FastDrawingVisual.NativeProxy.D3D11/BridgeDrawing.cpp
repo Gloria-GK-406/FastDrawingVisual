@@ -291,15 +291,26 @@ bool DrawTriangleList(BridgeRendererD3D11* s, const std::vector<ColorVertex>& v)
   s->context->Draw(static_cast<UINT>(v.size()), 0);
   return true;
 }
-} // namespace
 
-bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
-                              int commandBytes, const void* blobs,
-                              int blobBytes) {
-  const auto drawStart = std::chrono::steady_clock::now();
+bool FlushTriangleBatch(BridgeRendererD3D11* s, std::vector<ColorVertex>& vertices,
+                        bool& d2dDrawActive) {
+  if (!EndD2DDraw(s, d2dDrawActive)) {
+    return false;
+  }
 
-  if (!s || !s->context || !s->swapChain || !s->rtv0 || !commands ||
-      commandBytes <= 0 || s->width <= 0 || s->height <= 0) {
+  if (vertices.empty()) {
+    return true;
+  }
+
+  const bool ok = DrawTriangleList(s, vertices);
+  vertices.clear();
+  return ok;
+}
+
+bool BeginSubmitFrame(BridgeRendererD3D11* s,
+                      ID3D11RenderTargetView*& currentRtv) {
+  if (!s || !s->context || !s->swapChain || !s->rtv0 || s->width <= 0 ||
+      s->height <= 0) {
     SetLastError(s, E_UNEXPECTED);
     return false;
   }
@@ -308,7 +319,7 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
     return false;
   }
 
-  ID3D11RenderTargetView* currentRtv = s->rtv0;
+  currentRtv = s->rtv0;
   s->context->OMSetRenderTargets(1, &currentRtv, nullptr);
 
   D3D11_VIEWPORT viewport = {};
@@ -319,17 +330,24 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
   viewport.MinDepth = 0.0f;
   viewport.MaxDepth = 1.0f;
   s->context->RSSetViewports(1, &viewport);
+  return true;
+}
 
-  std::vector<ColorVertex> vertices;
-  vertices.reserve(6 * 8);
+bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
+                          int commandBytes, const void* blobs, int blobBytes,
+                          ID3D11RenderTargetView* currentRtv,
+                          std::vector<ColorVertex>& vertices,
+                          bool& d2dDrawActive) {
+  if (!commands || commandBytes <= 0) {
+    return true;
+  }
 
   fdv::protocol::CommandReader reader(commands, commandBytes, blobs, blobBytes);
   fdv::protocol::Command command{};
-  bool d2dDrawActive = false;
   while (reader.TryReadNext(command)) {
     switch (command.type) {
     case fdv::protocol::CommandType::Clear: {
-      if (!EndD2DDraw(s, d2dDrawActive)) {
+      if (!FlushTriangleBatch(s, vertices, d2dDrawActive)) {
         return false;
       }
 
@@ -346,89 +364,73 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
     }
 
     case fdv::protocol::CommandType::FillRect: {
-      if (!EndD2DDraw(s, d2dDrawActive)) {
+      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
       const auto& payload =
           std::get<fdv::protocol::FillRectPayload>(command.payload);
-      vertices.clear();
       AppendFilledRect(s, vertices, payload.x, payload.y, payload.width,
                        payload.height, ToPremultipliedColor(payload.color));
-      if (!DrawTriangleList(s, vertices)) {
-        return false;
-      }
       break;
     }
 
     case fdv::protocol::CommandType::StrokeRect: {
-      if (!EndD2DDraw(s, d2dDrawActive)) {
+      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
       const auto& payload =
           std::get<fdv::protocol::StrokeRectPayload>(command.payload);
-      vertices.clear();
       AppendStrokeRect(s, vertices, payload.x, payload.y, payload.width,
                        payload.height, payload.thickness,
                        ToPremultipliedColor(payload.color));
-      if (!DrawTriangleList(s, vertices)) {
-        return false;
-      }
       break;
     }
 
     case fdv::protocol::CommandType::FillEllipse: {
-      if (!EndD2DDraw(s, d2dDrawActive)) {
+      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
       const auto& payload =
           std::get<fdv::protocol::FillEllipsePayload>(command.payload);
-      vertices.clear();
       AppendFilledEllipse(s, vertices, payload.centerX, payload.centerY,
                           payload.radiusX, payload.radiusY,
                           ToPremultipliedColor(payload.color));
-      if (!DrawTriangleList(s, vertices)) {
-        return false;
-      }
       break;
     }
 
     case fdv::protocol::CommandType::StrokeEllipse: {
-      if (!EndD2DDraw(s, d2dDrawActive)) {
+      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
       const auto& payload =
           std::get<fdv::protocol::StrokeEllipsePayload>(command.payload);
-      vertices.clear();
       AppendStrokeEllipse(s, vertices, payload.centerX, payload.centerY,
                           payload.radiusX, payload.radiusY, payload.thickness,
                           ToPremultipliedColor(payload.color));
-      if (!DrawTriangleList(s, vertices)) {
-        return false;
-      }
       break;
     }
 
     case fdv::protocol::CommandType::Line: {
-      if (!EndD2DDraw(s, d2dDrawActive)) {
+      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
         return false;
       }
 
       const auto& payload =
           std::get<fdv::protocol::LinePayload>(command.payload);
-      vertices.clear();
       AppendLine(s, vertices, payload.x0, payload.y0, payload.x1, payload.y1,
                  payload.thickness, ToPremultipliedColor(payload.color));
-      if (!DrawTriangleList(s, vertices)) {
-        return false;
-      }
       break;
     }
 
     case fdv::protocol::CommandType::DrawText: {
+      if (!FlushTriangleBatch(s, vertices, d2dDrawActive)) {
+        return false;
+      }
+
       const auto& payload =
           std::get<fdv::protocol::DrawTextPayload>(command.payload);
       if (!ExecuteDrawTextCommand(s, payload, reader, d2dDrawActive)) {
@@ -446,6 +448,83 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
   if (reader.HasError()) {
     SetLastError(s, E_INVALIDARG);
     return false;
+  }
+
+  return FlushTriangleBatch(s, vertices, d2dDrawActive);
+}
+} // namespace
+
+bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
+                              int commandBytes, const void* blobs,
+                              int blobBytes) {
+  const auto drawStart = std::chrono::steady_clock::now();
+
+  if (!commands || commandBytes <= 0) {
+    SetLastError(s, E_UNEXPECTED);
+    return false;
+  }
+
+  ID3D11RenderTargetView* currentRtv = nullptr;
+  if (!BeginSubmitFrame(s, currentRtv)) {
+    return false;
+  }
+
+  std::vector<ColorVertex> vertices;
+  vertices.reserve(6 * 8);
+  bool d2dDrawActive = false;
+  if (!ExecuteCommandStream(s, commands, commandBytes, blobs, blobBytes,
+                            currentRtv, vertices, d2dDrawActive)) {
+    return false;
+  }
+
+  HRESULT hr = s->swapChain->Present(0, 0);
+
+  const auto drawEnd = std::chrono::steady_clock::now();
+  const double drawDurationMs =
+      std::chrono::duration<double, std::milli>(drawEnd - drawStart).count();
+
+  if (FAILED(hr)) {
+    SetLastError(s, hr);
+    return false;
+  }
+
+  RecordFramePerformance(s, drawDurationMs);
+
+  SetLastError(s, S_OK);
+  return true;
+}
+
+bool SubmitLayeredCommandsAndPresent(
+    BridgeRendererD3D11* s,
+    const BridgeLayeredFramePacketNative* framePacket) {
+  const auto drawStart = std::chrono::steady_clock::now();
+
+  if (!framePacket) {
+    SetLastError(s, E_INVALIDARG);
+    return false;
+  }
+
+  ID3D11RenderTargetView* currentRtv = nullptr;
+  if (!BeginSubmitFrame(s, currentRtv)) {
+    return false;
+  }
+
+  std::vector<ColorVertex> vertices;
+  vertices.reserve(6 * 8);
+  bool d2dDrawActive = false;
+
+  for (int layerIndex = 0; layerIndex < BridgeLayeredFramePacketNative::kMaxLayerCount;
+       ++layerIndex) {
+    const auto& layer = framePacket->layers[layerIndex];
+    if (layer.commandBytes <= 0 || layer.commandData == nullptr) {
+      continue;
+    }
+
+    if (!ExecuteCommandStream(s, layer.commandData, layer.commandBytes,
+                              layer.blobData, layer.blobBytes, currentRtv,
+                              vertices, d2dDrawActive)) {
+      return false;
+    }
   }
 
   if (!EndD2DDraw(s, d2dDrawActive)) {

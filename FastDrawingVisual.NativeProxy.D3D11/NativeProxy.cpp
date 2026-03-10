@@ -29,6 +29,13 @@ bool NativeProxy::SubmitCommands(System::IntPtr renderer,
                             commandBytes, blobs.ToPointer(), blobBytes);
 }
 
+bool NativeProxy::SubmitLayeredCommands(System::IntPtr renderer,
+                                        System::IntPtr framePacket,
+                                        int framePacketBytes) {
+  return FDV_SubmitLayeredCommands(renderer.ToPointer(), framePacket.ToPointer(),
+                                   framePacketBytes);
+}
+
 bool NativeProxy::TryAcquirePresentSurface(System::IntPtr renderer,
                                            System::IntPtr% surface9) {
   void* nativeSurface = nullptr;
