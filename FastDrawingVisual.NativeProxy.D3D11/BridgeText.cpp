@@ -4,6 +4,8 @@
 #include <string>
 
 namespace {
+constexpr std::size_t kMaxCachedTextFormats = 32;
+
 bool Utf8ToWide(const std::uint8_t* bytes, std::uint32_t count,
                 std::wstring& out) {
   out.clear();
@@ -36,6 +38,63 @@ D2D1_COLOR_F ToD2DColor(const fdv::protocol::ColorArgb8& color) {
       static_cast<float>(color.b) / 255.0f,
       static_cast<float>(color.a) / 255.0f,
   };
+}
+
+IDWriteTextFormat* AcquireCachedTextFormat(BridgeRendererD3D11* s,
+                                           const std::wstring& fontFamily,
+                                           float fontSize) {
+  if (!s || !s->dwriteFactory) {
+    SetLastError(s, E_UNEXPECTED);
+    return nullptr;
+  }
+
+  const float normalizedSize = std::max(1.0f, fontSize);
+  const std::wstring& family = fontFamily.empty() ? std::wstring(L"Segoe UI")
+                                                  : fontFamily;
+  const std::uint64_t useTick = ++s->textFormatUseTick;
+
+  for (auto& entry : s->textFormats) {
+    if (entry.fontSize == normalizedSize && entry.fontFamily == family &&
+        entry.format != nullptr) {
+      entry.lastUseTick = useTick;
+      SetLastError(s, S_OK);
+      return entry.format;
+    }
+  }
+
+  IDWriteTextFormat* format = nullptr;
+  HRESULT hr = s->dwriteFactory->CreateTextFormat(
+      family.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+      DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, normalizedSize,
+      L"en-us", &format);
+  if (FAILED(hr) || format == nullptr) {
+    SetLastError(s, FAILED(hr) ? hr : E_FAIL);
+    SafeRelease(&format);
+    return nullptr;
+  }
+
+  format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+  format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+  format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+  if (s->textFormats.size() >= kMaxCachedTextFormats) {
+    auto evictIt = std::min_element(
+        s->textFormats.begin(), s->textFormats.end(),
+        [](const CachedTextFormatD3D11& left,
+           const CachedTextFormatD3D11& right) {
+          return left.lastUseTick < right.lastUseTick;
+        });
+    if (evictIt != s->textFormats.end()) {
+      SafeRelease(&evictIt->format);
+      *evictIt = {family, normalizedSize, format, useTick};
+      SetLastError(s, S_OK);
+      return format;
+    }
+  }
+
+  s->textFormats.push_back({family, normalizedSize, format, useTick});
+  SetLastError(s, S_OK);
+  return format;
 }
 } // namespace
 
@@ -111,21 +170,11 @@ bool ExecuteDrawTextCommand(BridgeRendererD3D11* s,
     return false;
   }
 
-  const float fontSize = std::max(1.0f, payload.fontSize);
-  IDWriteTextFormat* textFormat = nullptr;
-  HRESULT hr = s->dwriteFactory->CreateTextFormat(
-      fontWide.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-      DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"en-us",
-      &textFormat);
-  if (FAILED(hr) || textFormat == nullptr) {
-    SetLastError(s, FAILED(hr) ? hr : E_FAIL);
-    SafeRelease(&textFormat);
+  IDWriteTextFormat* textFormat =
+      AcquireCachedTextFormat(s, fontWide, payload.fontSize);
+  if (textFormat == nullptr) {
     return false;
   }
-
-  textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-  textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-  textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
 
   D2D1_RECT_F layoutRect = {payload.x, payload.y, static_cast<float>(s->width),
                             static_cast<float>(s->height)};
@@ -141,6 +190,5 @@ bool ExecuteDrawTextCommand(BridgeRendererD3D11* s,
                           textFormat, &layoutRect, s->d2dSolidBrush,
                           D2D1_DRAW_TEXT_OPTIONS_CLIP,
                           DWRITE_MEASURING_MODE_NATURAL);
-  textFormat->Release();
   return true;
 }

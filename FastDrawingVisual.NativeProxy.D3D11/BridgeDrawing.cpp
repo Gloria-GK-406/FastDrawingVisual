@@ -15,6 +15,7 @@ constexpr int kEllipseSegmentCount = 48;
 constexpr const wchar_t* kLogCategory = L"NativeProxy.D3D11";
 constexpr double kSlowFrameThresholdMs = 33.0;
 constexpr std::uint64_t kSlowFrameLogEveryNFrames = 120;
+constexpr std::size_t kInitialBatchReserveVertices = 512;
 
 std::uint64_t QueryQpcNow() {
   LARGE_INTEGER value{};
@@ -292,19 +293,24 @@ bool DrawTriangleList(BridgeRendererD3D11* s, const std::vector<ColorVertex>& v)
   return true;
 }
 
-bool FlushTriangleBatch(BridgeRendererD3D11* s, std::vector<ColorVertex>& vertices,
-                        bool& d2dDrawActive) {
-  if (!EndD2DDraw(s, d2dDrawActive)) {
-    return false;
-  }
-
+bool FlushTriangleVertices(BridgeRendererD3D11* s,
+                           std::vector<ColorVertex>& vertices,
+                           bool& d2dDrawActive) {
   if (vertices.empty()) {
     return true;
+  }
+
+  if (!EndD2DDraw(s, d2dDrawActive)) {
+    return false;
   }
 
   const bool ok = DrawTriangleList(s, vertices);
   vertices.clear();
   return ok;
+}
+
+bool CloseTextBatch(BridgeRendererD3D11* s, bool& d2dDrawActive) {
+  return EndD2DDraw(s, d2dDrawActive);
 }
 
 bool BeginSubmitFrame(BridgeRendererD3D11* s,
@@ -347,7 +353,8 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
   while (reader.TryReadNext(command)) {
     switch (command.type) {
     case fdv::protocol::CommandType::Clear: {
-      if (!FlushTriangleBatch(s, vertices, d2dDrawActive)) {
+      if (!FlushTriangleVertices(s, vertices, d2dDrawActive) ||
+          !CloseTextBatch(s, d2dDrawActive)) {
         return false;
       }
 
@@ -364,7 +371,7 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
     }
 
     case fdv::protocol::CommandType::FillRect: {
-      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
+      if (!CloseTextBatch(s, d2dDrawActive)) {
         return false;
       }
 
@@ -376,7 +383,7 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
     }
 
     case fdv::protocol::CommandType::StrokeRect: {
-      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
+      if (!CloseTextBatch(s, d2dDrawActive)) {
         return false;
       }
 
@@ -389,7 +396,7 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
     }
 
     case fdv::protocol::CommandType::FillEllipse: {
-      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
+      if (!CloseTextBatch(s, d2dDrawActive)) {
         return false;
       }
 
@@ -402,7 +409,7 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
     }
 
     case fdv::protocol::CommandType::StrokeEllipse: {
-      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
+      if (!CloseTextBatch(s, d2dDrawActive)) {
         return false;
       }
 
@@ -415,7 +422,7 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
     }
 
     case fdv::protocol::CommandType::Line: {
-      if (d2dDrawActive && !EndD2DDraw(s, d2dDrawActive)) {
+      if (!CloseTextBatch(s, d2dDrawActive)) {
         return false;
       }
 
@@ -427,7 +434,7 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
     }
 
     case fdv::protocol::CommandType::DrawText: {
-      if (!FlushTriangleBatch(s, vertices, d2dDrawActive)) {
+      if (!FlushTriangleVertices(s, vertices, d2dDrawActive)) {
         return false;
       }
 
@@ -450,7 +457,8 @@ bool ExecuteCommandStream(BridgeRendererD3D11* s, const void* commands,
     return false;
   }
 
-  return FlushTriangleBatch(s, vertices, d2dDrawActive);
+  return FlushTriangleVertices(s, vertices, d2dDrawActive) &&
+         CloseTextBatch(s, d2dDrawActive);
 }
 } // namespace
 
@@ -470,7 +478,7 @@ bool SubmitCommandsAndPresent(BridgeRendererD3D11* s, const void* commands,
   }
 
   std::vector<ColorVertex> vertices;
-  vertices.reserve(6 * 8);
+  vertices.reserve(kInitialBatchReserveVertices);
   bool d2dDrawActive = false;
   if (!ExecuteCommandStream(s, commands, commandBytes, blobs, blobBytes,
                             currentRtv, vertices, d2dDrawActive)) {
@@ -510,7 +518,7 @@ bool SubmitLayeredCommandsAndPresent(
   }
 
   std::vector<ColorVertex> vertices;
-  vertices.reserve(6 * 8);
+  vertices.reserve(kInitialBatchReserveVertices);
   bool d2dDrawActive = false;
 
   for (int layerIndex = 0; layerIndex < BridgeLayeredFramePacketNative::kMaxLayerCount;
@@ -527,7 +535,7 @@ bool SubmitLayeredCommandsAndPresent(
     }
   }
 
-  if (!EndD2DDraw(s, d2dDrawActive)) {
+  if (!CloseTextBatch(s, d2dDrawActive)) {
     return false;
   }
 

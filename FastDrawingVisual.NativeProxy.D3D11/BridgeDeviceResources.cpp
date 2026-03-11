@@ -434,6 +434,12 @@ void ReleaseRendererResources(BridgeRendererD3D11* s) {
     return;
   }
 
+  for (auto& entry : s->textFormats) {
+    SafeRelease(&entry.format);
+  }
+  s->textFormats.clear();
+  s->textFormatUseTick = 0;
+
   ReleaseRenderTargetResources(s);
   SafeRelease(&s->dynamicVertexBuffer);
   s->dynamicVertexCapacityBytes = 0;

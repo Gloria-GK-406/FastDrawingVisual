@@ -15,8 +15,17 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include "BridgeCommandProtocol.g.h"
+
+struct CachedTextFormatD3D11 {
+  std::wstring fontFamily;
+  float fontSize = 0.0f;
+  IDWriteTextFormat* format = nullptr;
+  std::uint64_t lastUseTick = 0;
+};
 
 struct BridgeRendererD3D11 {
   ID3D11Device* device = nullptr;
@@ -37,6 +46,8 @@ struct BridgeRendererD3D11 {
   ID2D1Bitmap1* d2dTargetBitmap = nullptr;
   ID2D1SolidColorBrush* d2dSolidBrush = nullptr;
   IDWriteFactory* dwriteFactory = nullptr;
+  std::vector<CachedTextFormatD3D11> textFormats;
+  std::uint64_t textFormatUseTick = 0;
 
   int width = 0;
   int height = 0;
