@@ -3,7 +3,6 @@ using FastDrawingVisual.Rendering.Backends;
 using FastDrawingVisual.Rendering.Presentation;
 using FastDrawingVisual.WpfRenderer;
 using System.Runtime.CompilerServices;
-using D3DSkiaRenderer = FastDrawingVisual.SkiaSharp.D3DSkiaRenderer;
 
 namespace FastDrawingVisual.Controls
 {
@@ -69,7 +68,7 @@ namespace FastDrawingVisual.Controls
         {
             try
             {
-                return new D3DSkiaRenderer();
+                return new RenderComposition(new SkiaSharpBackend(), new D3DImagePresenter());
             }
             catch
             {

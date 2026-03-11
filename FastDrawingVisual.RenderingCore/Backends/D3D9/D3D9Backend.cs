@@ -8,7 +8,7 @@ using Proxy = D3D9Proxy::FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.Rendering.Backends
 {
-    public sealed class D3D9Backend : IRenderBackend, ILayeredFrameSink, ID3D9PresentationSource, IRenderBackendReadiness
+    public sealed class D3D9Backend : IRenderBackend, ID3D9PresentationSource, IRenderBackendReadiness
     {
         private IntPtr _nativeRenderer;
         private HwndSource? _fallbackHwndSource;
@@ -67,7 +67,16 @@ namespace FastDrawingVisual.Rendering.Backends
             UpdateReadyState();
         }
 
-        public void SubmitFrame(in BridgeLayeredFramePacket frame)
+        public IDrawingContext? CreateDrawingContext(int width, int height)
+        {
+            ThrowIfDisposed();
+            if (!IsReadyForRendering)
+                return null;
+
+            return new LayeredCommandRecordingContext(width, height, SubmitFrame);
+        }
+
+        private void SubmitFrame(BridgeLayeredFramePacket frame)
         {
             ThrowIfDisposed();
             if (!IsReadyForRendering || !frame.HasAnyCommands)

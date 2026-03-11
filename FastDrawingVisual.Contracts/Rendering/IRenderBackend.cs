@@ -5,5 +5,7 @@ namespace FastDrawingVisual.Rendering
         bool Initialize(int width, int height);
 
         void Resize(int width, int height);
+
+        IDrawingContext? CreateDrawingContext(int width, int height);
     }
 }

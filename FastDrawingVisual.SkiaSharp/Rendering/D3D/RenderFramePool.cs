@@ -74,6 +74,17 @@ namespace FastDrawingVisual.Rendering.D3D
             return null;
         }
 
+        public bool HasAvailableFrameForDrawing()
+        {
+            foreach (var frame in _frames)
+            {
+                if (frame.State == FrameState.Ready)
+                    return true;
+            }
+
+            return false;
+        }
+
         private void OnFrameDrawingComplete(RenderFrame completedFrame)
         {
             var frameAvailable = false;

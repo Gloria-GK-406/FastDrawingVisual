@@ -108,13 +108,23 @@ namespace FastDrawingVisual.Rendering.D3D
             ComPtrExtensions.Release(ref _d3d11Texture);
         }
 
-        public IDrawingContext OpenCanvas()
+        public IDrawingContext OpenCanvas(Action? onClosed = null)
         {
             if (_skiaSurface == null)
                 throw new InvalidOperationException("Resources are not created. Call CreateResources first.");
 
             _skiaSurface.Canvas.Clear(SKColors.Transparent);
-            return new SkiaDrawingContext(_skiaSurface.Canvas, _width, _height, OnCanvasClosed);
+            return new SkiaDrawingContext(_skiaSurface.Canvas, _width, _height, () =>
+            {
+                try
+                {
+                    OnCanvasClosed();
+                }
+                finally
+                {
+                    onClosed?.Invoke();
+                }
+            });
         }
 
         private void OnCanvasClosed()

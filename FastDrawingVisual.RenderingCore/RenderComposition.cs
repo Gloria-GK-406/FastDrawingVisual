@@ -1,4 +1,3 @@
-using FastDrawingVisual.CommandRuntime;
 using System;
 using System.Windows.Controls;
 
@@ -8,7 +7,6 @@ namespace FastDrawingVisual.Rendering
     {
         private readonly IRenderBackend _backend;
         private readonly IRenderPresenter _presenter;
-        private readonly ILayeredFrameSink _frameSink;
         private readonly IRenderBackendReadiness? _backendReadiness;
         private readonly LatestWinsRenderWorker _worker;
         private int _width;
@@ -21,7 +19,6 @@ namespace FastDrawingVisual.Rendering
         {
             _backend = backend ?? throw new ArgumentNullException(nameof(backend));
             _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
-            _frameSink = backend.GetRequiredCapability<ILayeredFrameSink>(nameof(RenderComposition));
             _backendReadiness = backend as IRenderBackendReadiness;
             _worker = new LatestWinsRenderWorker(CanExecute, CreateDrawingContext, OnWorkerFault);
 
@@ -103,14 +100,9 @@ namespace FastDrawingVisual.Rendering
             _backend.Dispose();
         }
 
-        private IDrawingContext CreateDrawingContext()
+        private IDrawingContext? CreateDrawingContext()
         {
-            return new LayeredCommandRecordingContext(_width, _height, SubmitFrame);
-        }
-
-        private void SubmitFrame(BridgeLayeredFramePacket frame)
-        {
-            _frameSink.SubmitFrame(frame);
+            return _backend.CreateDrawingContext(_width, _height);
         }
 
         private bool CanExecute()

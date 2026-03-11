@@ -7,7 +7,7 @@ namespace FastDrawingVisual.Rendering
     public sealed class LatestWinsRenderWorker : IDisposable
     {
         private readonly Func<bool> _canExecute;
-        private readonly Func<IDrawingContext> _contextFactory;
+        private readonly Func<IDrawingContext?> _contextFactory;
         private readonly Action<Exception> _onExecutionFault;
         private readonly object _sync = new();
         private readonly SemaphoreSlim _signal = new(0, 1);
@@ -19,7 +19,7 @@ namespace FastDrawingVisual.Rendering
 
         public LatestWinsRenderWorker(
             Func<bool> canExecute,
-            Func<IDrawingContext> contextFactory,
+            Func<IDrawingContext?> contextFactory,
             Action<Exception> onExecutionFault)
         {
             _canExecute = canExecute ?? throw new ArgumentNullException(nameof(canExecute));
@@ -127,14 +127,30 @@ namespace FastDrawingVisual.Rendering
                     if (!_canExecute())
                         continue;
 
-                    var action = Interlocked.Exchange(ref _pendingDrawAction, null);
-                    if (action == null)
+                    IDrawingContext? context;
+                    try
+                    {
+                        context = _contextFactory();
+                    }
+                    catch (Exception ex)
+                    {
+                        SafeReportFault(ex);
+                        continue;
+                    }
+
+                    if (context == null)
                         continue;
 
                     try
                     {
-                        using var context = _contextFactory();
-                        action(context);
+                        using (context)
+                        {
+                            var action = Interlocked.Exchange(ref _pendingDrawAction, null);
+                            if (action == null)
+                                continue;
+
+                            action(context);
+                        }
                     }
                     catch (Exception ex)
                     {

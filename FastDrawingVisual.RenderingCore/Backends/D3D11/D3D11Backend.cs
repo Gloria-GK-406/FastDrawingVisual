@@ -6,7 +6,7 @@ using Proxy = D3D11Proxy::FastDrawingVisual.NativeProxy.NativeProxy;
 
 namespace FastDrawingVisual.Rendering.Backends
 {
-    public sealed class D3D11Backend : IRenderBackend, ILayeredFrameSink, IDXGISwapChainProvider, IRenderBackendReadiness
+    public sealed class D3D11Backend : IRenderBackend, IDXGISwapChainProvider, IRenderBackendReadiness
     {
         private IntPtr _nativeRenderer;
         private int _width;
@@ -79,7 +79,16 @@ namespace FastDrawingVisual.Rendering.Backends
             UpdateReadyState();
         }
 
-        public unsafe void SubmitFrame(in BridgeLayeredFramePacket frame)
+        public IDrawingContext? CreateDrawingContext(int width, int height)
+        {
+            ThrowIfDisposed();
+            if (!IsReadyForRendering)
+                return null;
+
+            return new LayeredCommandRecordingContext(width, height, SubmitFrame);
+        }
+
+        private unsafe void SubmitFrame(BridgeLayeredFramePacket frame)
         {
             ThrowIfDisposed();
             if (!IsReadyForRendering || !frame.HasAnyCommands)
