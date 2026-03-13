@@ -24,7 +24,7 @@
     <Keyword>ManagedCProj</Keyword>
     <RootNamespace>FastDrawingVisualNativeProxyD3D11</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net6.0-windows</TargetFramework>
     <WindowsTargetPlatformMinVersion>7.0</WindowsTargetPlatformMinVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -64,6 +64,9 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
@@ -141,6 +144,7 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PreprocessorDefinitions>_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(BridgeProtocolOutDir);..\FastDrawingVisual.LogCore;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4945</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -168,36 +172,48 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="BridgeExports.cpp">
+    <ClCompile Include="BatchComplier.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
-    <ClCompile Include="BridgeDeviceResources.cpp">
+    <ClCompile Include="D3DBatchDraw.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
-    <ClCompile Include="BridgeDrawing.cpp">
+    <ClCompile Include="TextFormatCacheStore.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
-    <ClCompile Include="BridgeText.cpp">
+    <ClCompile Include="D3D11SwapChainRenderer.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
-    <ClCompile Include="NativeProxy.cpp" />
+    <ClCompile Include="D3D11SwapChainBackend.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="BridgeNativeExports.h" />
-    <ClInclude Include="BridgeRendererInternal.h" />
-    <ClInclude Include="NativeProxy.h" />
+    <ClInclude Include="BatchComplier.h" />
+    <ClInclude Include="D3DBatchDraw.h" />
+    <ClInclude Include="D3DBatchTypes.h" />
+    <ClInclude Include="D3DBatchDrawTypes.h" />
+    <ClInclude Include="D3D11SwapChainRenderer.h" />
+    <ClInclude Include="D3D11SwapChainBackend.h" />
+    <ClInclude Include="TextFormatCacheStore.h" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\FastDrawingVisual.CommandRuntime\FastDrawingVisual.CommandRuntime.csproj">
+      <Project>{A8B1BF24-4EE0-4638-A6F5-1CB71303167B}</Project>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj">
+      <Project>{FFA3578A-4D0D-4562-83FD-03CD3E32C937}</Project>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
     <ProjectReference Include="..\FastDrawingVisual.LogCore\FastDrawingVisual.LogCore.vcxproj">
       <Project>{4355A1C9-77AE-447D-8138-CB52E2076A0E}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.RenderingCore\FastDrawingVisual.RenderingCore.csproj">
+      <Project>{6e8d21e0-5d42-4e13-9b71-3fba7f84a901}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <Target Name="FDV_GenerateBridgeProtocol"
-          BeforeTargets="ClCompile"
-          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban"
-          Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
+  <Target Name="FDV_GenerateBridgeProtocol" BeforeTargets="ClCompile" Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban" Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
     <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
   </Target>
   <ImportGroup Label="ExtensionTargets" />

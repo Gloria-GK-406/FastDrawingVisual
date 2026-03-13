@@ -253,7 +253,7 @@ namespace FastDrawingVisual.Rendering
                 origin = TransformPoint(origin);
                 fontSize = Math.Max(1d, fontSize * GetApproximateFontScale());
 
-                _commands.WriteDrawText(
+                _commands.WriteDrawTextRun(
                     (float)origin.X,
                     (float)origin.Y,
                     (float)fontSize,

@@ -81,7 +81,7 @@ namespace FastDrawingVisual.Controls
         {
             try
             {
-                return new RenderComposition(new D3D11Backend(), new DCompPresenter());
+                return new RenderComposition(new D3D11SwapChainBackend(), new DCompPresenter());
             }
             catch
             {

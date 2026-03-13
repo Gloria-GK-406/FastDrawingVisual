@@ -56,7 +56,7 @@ namespace FastDrawingVisual
             bool hasD3D12 = File.Exists(Path.Combine(sysDir, "d3d12.dll"));
             bool isWindows10OrGreater = Environment.OSVersion.Version.Major >= 10;
             bool hasNativeD3D9Bridge = hasD3D9 && NativeD3D9BridgeProbe.IsAvailable;
-            bool hasNativeD3D11Bridge = hasD3D11 && D3D11BridgeProbe.IsAvailable;
+            bool hasNativeD3D11Bridge = hasD3D11 && NativeD3D11BackendProbe.IsAvailable;
             bool hasDCompPresentation = isWindows10OrGreater && DCompPresentationProbe.IsAvailable;
 
             return new RendererCapabilityInfo(
@@ -114,5 +114,25 @@ namespace FastDrawingVisual
         public bool CanUseNativeD3D9 => HasD3D9 && HasNativeD3D9Bridge;
 
         public bool CanUseDCompD3D11 => IsWindows10OrGreater && HasD3D11 && HasNativeD3D11Bridge && HasDCompPresentation;
+    }
+
+    internal static class NativeD3D11BackendProbe
+    {
+        private static readonly Lazy<bool> s_isAvailable = new(CheckAvailable, isThreadSafe: true);
+
+        public static bool IsAvailable => s_isAvailable.Value;
+
+        private static bool CheckAvailable()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return false;
+
+            var sysDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            if (!File.Exists(Path.Combine(sysDir, "d3d11.dll")))
+                return false;
+
+            var backendAssemblyPath = typeof(D3D11SwapChainBackend).Assembly.Location;
+            return !string.IsNullOrWhiteSpace(backendAssemblyPath) && File.Exists(backendAssemblyPath);
+        }
     }
 }

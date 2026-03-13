@@ -107,17 +107,17 @@ namespace FastDrawingVisual.CommandRuntime
             WriteColor(span.Slice(BridgeCommandLayout.LineColorOffset), color);
         }
 
-        public void WriteDrawText(float x, float y, float fontSize, BridgeCommandColorArgb8 color, string textUtf8, string fontFamilyUtf8)
+        public void WriteDrawTextRun(float x, float y, float fontSize, BridgeCommandColorArgb8 color, string textUtf8, string fontFamilyUtf8)
         {
             var textUtf8Ref = AppendUtf8(textUtf8);
             var fontFamilyUtf8Ref = AppendUtf8(fontFamilyUtf8);
-            var span = BeginCommand((ushort)BridgeCommandType.DrawText, BridgeCommandLayout.DrawTextSlotCount, 0);
-            WriteSingle(span.Slice(BridgeCommandLayout.DrawTextXOffset), x);
-            WriteSingle(span.Slice(BridgeCommandLayout.DrawTextYOffset), y);
-            WriteSingle(span.Slice(BridgeCommandLayout.DrawTextFontSizeOffset), fontSize);
-            WriteColor(span.Slice(BridgeCommandLayout.DrawTextColorOffset), color);
-            WriteBlobRef(span.Slice(BridgeCommandLayout.DrawTextTextUtf8Offset), textUtf8Ref);
-            WriteBlobRef(span.Slice(BridgeCommandLayout.DrawTextFontFamilyUtf8Offset), fontFamilyUtf8Ref);
+            var span = BeginCommand((ushort)BridgeCommandType.DrawTextRun, BridgeCommandLayout.DrawTextRunSlotCount, 0);
+            WriteSingle(span.Slice(BridgeCommandLayout.DrawTextRunXOffset), x);
+            WriteSingle(span.Slice(BridgeCommandLayout.DrawTextRunYOffset), y);
+            WriteSingle(span.Slice(BridgeCommandLayout.DrawTextRunFontSizeOffset), fontSize);
+            WriteColor(span.Slice(BridgeCommandLayout.DrawTextRunColorOffset), color);
+            WriteBlobRef(span.Slice(BridgeCommandLayout.DrawTextRunTextUtf8Offset), textUtf8Ref);
+            WriteBlobRef(span.Slice(BridgeCommandLayout.DrawTextRunFontFamilyUtf8Offset), fontFamilyUtf8Ref);
         }
 
         public void Dispose()

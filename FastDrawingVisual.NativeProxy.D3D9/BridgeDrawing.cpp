@@ -246,7 +246,7 @@ bool ExecuteCommands(BridgeRenderer *s, SurfaceSlot *slot,
       break;
     }
 
-    case fdv::protocol::CommandType::DrawText:
+    case fdv::protocol::CommandType::DrawTextRun:
       // NativeD3D9 currently keeps text as a no-op path.
       break;
     }
