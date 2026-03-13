@@ -24,7 +24,7 @@
     <Keyword>ManagedCProj</Keyword>
     <RootNamespace>FastDrawingVisualNativeProxy</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net6.0-windows</TargetFramework>
     <WindowsTargetPlatformMinVersion>7.0</WindowsTargetPlatformMinVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -70,6 +70,9 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
@@ -82,22 +85,22 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy.D3D9</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy.D3D9</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy.D3D9</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(SolutionDir)artifacts\obj\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>FastDrawingVisual.NativeProxy</TargetName>
+    <TargetName>FastDrawingVisual.NativeProxy.D3D9</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -141,6 +144,7 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PreprocessorDefinitions>_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(BridgeProtocolOutDir);..\FastDrawingVisual.LogCore;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4945</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -168,55 +172,50 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="BridgeExports.cpp">
+    <ClCompile Include="D3DBatchDraw.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
-    <ClCompile Include="BridgeDeviceResources.cpp">
+    <ClCompile Include="D3D9Renderer.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
-    <ClCompile Include="BridgeDrawing.cpp">
-      <CompileAsManaged>false</CompileAsManaged>
-    </ClCompile>
-    <ClCompile Include="BridgePathUtils.cpp">
-      <CompileAsManaged>false</CompileAsManaged>
-    </ClCompile>
-    <ClCompile Include="NativeProxy.cpp" />
+    <ClCompile Include="D3D9Backend.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="BridgeNativeExports.h" />
-    <ClInclude Include="BridgePathUtils.h" />
-    <ClInclude Include="BridgeRendererInternal.h" />
-    <ClInclude Include="NativeProxy.h" />
+    <ClInclude Include="BatchComplier.h" />
+    <ClInclude Include="D3DBatchDraw.h" />
+    <ClInclude Include="D3DBatchDrawTypes.h" />
+    <ClInclude Include="D3DBatchTypes.h" />
+    <ClInclude Include="D3D9RendererTypes.h" />
+    <ClInclude Include="D3D9Renderer.h" />
+    <ClInclude Include="D3D9Backend.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="PixelShader.hlsl">
-      <FileType>Document</FileType>
-    </None>
-    <FxCompile Include="PixelShaderEllipse.hlsl">
-      <ShaderType>Pixel</ShaderType>
-      <ShaderModel>2.0</ShaderModel>
-      <EntryPointName>main</EntryPointName>
-      <ObjectFileOutput>$(OutDir)PixelShader_ellipse.cso</ObjectFileOutput>
-    </FxCompile>
-    <FxCompile Include="PixelShaderLine.hlsl">
-      <ShaderType>Pixel</ShaderType>
-      <ShaderModel>2.0</ShaderModel>
-      <EntryPointName>main</EntryPointName>
-      <ObjectFileOutput>$(OutDir)PixelShader_line.cso</ObjectFileOutput>
-    </FxCompile>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\FastDrawingVisual.CommandRuntime\FastDrawingVisual.CommandRuntime.csproj">
+      <Project>{A8B1BF24-4EE0-4638-A6F5-1CB71303167B}</Project>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj">
+      <Project>{FFA3578A-4D0D-4562-83FD-03CD3E32C937}</Project>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.Shared\FastDrawingVisual.NativeProxy.Shared.vcxproj">
+      <Project>{AD473786-9CD6-4DD2-AE55-DA642E40BA9D}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
     <ProjectReference Include="..\FastDrawingVisual.LogCore\FastDrawingVisual.LogCore.vcxproj">
       <Project>{4355A1C9-77AE-447D-8138-CB52E2076A0E}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.RenderingCore\FastDrawingVisual.RenderingCore.csproj">
+      <Project>{6E8D21E0-5D42-4E13-9B71-3FBA7F84A901}</Project>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <Target Name="FDV_GenerateBridgeProtocol"
-          BeforeTargets="ClCompile"
-          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban"
-          Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
+  <Target Name="FDV_GenerateBridgeProtocol" BeforeTargets="ClCompile" Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban" Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
     <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
   </Target>
   <ImportGroup Label="ExtensionTargets">

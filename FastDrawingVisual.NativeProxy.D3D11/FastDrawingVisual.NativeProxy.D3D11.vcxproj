@@ -172,9 +172,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="BatchComplier.cpp">
-      <CompileAsManaged>false</CompileAsManaged>
-    </ClCompile>
     <ClCompile Include="D3DBatchDraw.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
@@ -203,6 +200,10 @@
     <ProjectReference Include="..\FastDrawingVisual.Contracts\FastDrawingVisual.Contracts.csproj">
       <Project>{FFA3578A-4D0D-4562-83FD-03CD3E32C937}</Project>
       <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.Shared\FastDrawingVisual.NativeProxy.Shared.vcxproj">
+      <Project>{AD473786-9CD6-4DD2-AE55-DA642E40BA9D}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\FastDrawingVisual.LogCore\FastDrawingVisual.LogCore.vcxproj">
       <Project>{4355A1C9-77AE-447D-8138-CB52E2076A0E}</Project>

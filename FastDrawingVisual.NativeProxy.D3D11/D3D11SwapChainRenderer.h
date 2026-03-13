@@ -11,41 +11,14 @@
 #include <windows.h>
 #include <cstdint>
 
+#include "../FastDrawingVisual.NativeProxy.Shared/FramePacket.h"
+#include "../FastDrawingVisual.NativeProxy.Shared/RendererLockGuard.h"
+
 namespace fdv::d3d11 {
 
-struct LayerPacket {
-  const void* commandData = nullptr;
-  int32_t commandBytes = 0;
-  const void* blobData = nullptr;
-  int32_t blobBytes = 0;
-  int32_t commandCount = 0;
-};
-
-struct LayeredFramePacket {
-  static constexpr int kMaxLayerCount = 8;
-  LayerPacket layers[kMaxLayerCount];
-};
-
-class RendererLockGuard final {
- public:
-  explicit RendererLockGuard(CRITICAL_SECTION* cs) : cs_(cs) {
-    if (cs_ != nullptr) {
-      EnterCriticalSection(cs_);
-    }
-  }
-
-  ~RendererLockGuard() {
-    if (cs_ != nullptr) {
-      LeaveCriticalSection(cs_);
-    }
-  }
-
-  RendererLockGuard(const RendererLockGuard&) = delete;
-  RendererLockGuard& operator=(const RendererLockGuard&) = delete;
-
- private:
-  CRITICAL_SECTION* cs_ = nullptr;
-};
+using LayerPacket = fdv::nativeproxy::shared::LayerPacket;
+using LayeredFramePacket = fdv::nativeproxy::shared::LayeredFramePacket;
+using RendererLockGuard = fdv::nativeproxy::shared::RendererLockGuard;
 
 struct D3D11SwapChainRendererState;
 

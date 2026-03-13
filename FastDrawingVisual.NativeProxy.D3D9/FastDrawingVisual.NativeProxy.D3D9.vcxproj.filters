@@ -1,59 +1,48 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="NativeProxy.cpp">
+    <ClCompile Include="D3DBatchDraw.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="BridgeExports.cpp">
+    <ClCompile Include="D3D9Renderer.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="BridgeDeviceResources.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="BridgeDrawing.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="BridgePathUtils.cpp">
+    <ClCompile Include="D3D9Backend.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="BridgeNativeExports.h">
+    <ClInclude Include="BatchComplier.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="BridgePathUtils.h">
+    <ClInclude Include="D3DBatchDraw.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="BridgeRendererInternal.h">
+    <ClInclude Include="D3DBatchDrawTypes.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="NativeProxy.h">
+    <ClInclude Include="D3DBatchTypes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D9RendererTypes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D9Renderer.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D9Backend.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
-    <None Include="PixelShader.hlsl">
-      <Filter>HLSL</Filter>
-    </None>
   </ItemGroup>
   <ItemGroup>
-    <Filter Include="HLSL">
-      <UniqueIdentifier>{b11f7d64-77c9-44a5-ace5-af6d7f6336d0}</UniqueIdentifier>
-    </Filter>
     <Filter Include="头文件">
       <UniqueIdentifier>{823852ba-3529-4cd7-b02e-754303e828c1}</UniqueIdentifier>
     </Filter>
     <Filter Include="源文件">
       <UniqueIdentifier>{f7fb2cca-23ca-4c27-a010-cd2fe6fc6520}</UniqueIdentifier>
     </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <FxCompile Include="PixelShaderEllipse.hlsl">
-      <Filter>HLSL</Filter>
-    </FxCompile>
-    <FxCompile Include="PixelShaderLine.hlsl">
-      <Filter>HLSL</Filter>
-    </FxCompile>
   </ItemGroup>
 </Project>

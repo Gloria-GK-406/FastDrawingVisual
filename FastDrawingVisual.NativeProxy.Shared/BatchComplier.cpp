@@ -4,7 +4,7 @@
 #include <cmath>
 #include <stringapiset.h>
 
-namespace fdv::d3d11::batch {
+namespace fdv::nativeproxy::shared::batch {
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr int kEllipseSegmentCount = 48;
@@ -81,7 +81,6 @@ void AppendFilledRect(float width, float height,
   out.push_back(MakeVertex(width, height, x0, y0, color));
   out.push_back(MakeVertex(width, height, x1, y0, color));
   out.push_back(MakeVertex(width, height, x0, y1, color));
-
   out.push_back(MakeVertex(width, height, x1, y0, color));
   out.push_back(MakeVertex(width, height, x1, y1, color));
   out.push_back(MakeVertex(width, height, x0, y1, color));
@@ -171,7 +170,6 @@ void AppendStrokeEllipse(float width, float height,
     out.push_back(MakeVertex(width, height, ox0, oy0, color));
     out.push_back(MakeVertex(width, height, ox1, oy1, color));
     out.push_back(MakeVertex(width, height, ix0, iy0, color));
-
     out.push_back(MakeVertex(width, height, ox1, oy1, color));
     out.push_back(MakeVertex(width, height, ix1, iy1, color));
     out.push_back(MakeVertex(width, height, ix0, iy0, color));
@@ -204,7 +202,6 @@ void AppendLine(float width, float height,
   out.push_back(v0);
   out.push_back(v1);
   out.push_back(v2);
-
   out.push_back(v0);
   out.push_back(v2);
   out.push_back(v3);
@@ -459,4 +456,4 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
   return true;
 }
 
-} // namespace fdv::d3d11::batch
+} // namespace fdv::nativeproxy::shared::batch
