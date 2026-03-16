@@ -26,7 +26,12 @@ class BatchCompiler {
 
   void Reset(int width, int height, const void* commands, int commandBytes,
              const void* blobs, int blobBytes);
-  bool TryGetNextBatch(CompiledBatchView& out, HRESULT& outErrorHr);
+  HRESULT TryGetNextBatch(CompiledBatchView& out);
+  HRESULT TryGetNextBatch2(CompiledBatchView& out);
+  const std::vector<ShapeInstance>& GetShapeInstances() const {
+    return shapeInstances_;
+  }
+  const std::vector<TextBatchItem>& GetTextItems() const { return textItems_; }
   const BatchCompileStats& lastBatchStats() const { return lastBatchStats_; }
 
  private:
@@ -35,8 +40,6 @@ class BatchCompiler {
   int height_ = 0;
   float widthF_ = 0.0f;
   float heightF_ = 0.0f;
-  fdv::protocol::RawCommandView pendingCommand_{};
-  bool hasPendingCommand_ = false;
   BatchCompileStats lastBatchStats_{};
   std::vector<ShapeInstance> shapeInstances_;
   std::vector<TextBatchItem> textItems_;

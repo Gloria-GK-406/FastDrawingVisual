@@ -145,6 +145,21 @@ class CommandReader {
     }
   }
 
+  bool TryGetCurrentRaw(RawCommandView& out) {
+    if (!EnsureCurrentRaw())
+      return false;
+    out = currentRaw_;
+    return true;
+  }
+
+  bool Next() {
+    if (!EnsureCurrentRaw())
+      return false;
+    cursor_ = currentNextCursor_;
+    hasCurrentRaw_ = false;
+    return true;
+  }
+
   bool TryReadNext(Command& out) {
     if (error_ != ReaderError::None)
       return false;
@@ -195,6 +210,7 @@ class CommandReader {
       out.flags = flags;
       out.payload = payload;
       cursor_ += k{{ command.Name }}CommandBytes;
+      hasCurrentRaw_ = false;
       return true;
     }
 {{~ end ~}}
@@ -254,6 +270,7 @@ class CommandReader {
       out.flags = flags;
       out.{{ command.Name }} = payload;
       cursor_ += k{{ command.Name }}CommandBytes;
+      hasCurrentRaw_ = false;
       return true;
     }
 {{~ end ~}}
@@ -264,56 +281,12 @@ class CommandReader {
   }
 
   bool TryReadNextRaw(RawCommandView& out) {
-    if (error_ != ReaderError::None)
+    if (!EnsureCurrentRaw())
       return false;
-    if (cursor_ == nullptr || cursor_ >= commandEnd_)
-      return false;
-    if (cursor_ + kCommandHeaderBytes > commandEnd_) {
-      error_ = ReaderError::TruncatedCommandHeader;
-      return false;
-    }
-
-    const auto* command = cursor_;
-    const std::uint16_t kind = ReadU16(command + kCommandKindOffset);
-    const std::uint16_t slotCount = ReadU16(command + kCommandSlotCountOffset);
-    const std::uint16_t flags = ReadU16(command + kCommandFlagsOffset);
-    if (slotCount == 0) {
-      error_ = ReaderError::InvalidSlotCount;
-      return false;
-    }
-
-    const std::uint64_t commandBytes64 =
-        static_cast<std::uint64_t>(slotCount) * static_cast<std::uint64_t>(kSlotBytes);
-    if (commandBytes64 >
-        static_cast<std::uint64_t>(commandEnd_ - cursor_)) {
-      error_ = ReaderError::TruncatedCommand;
-      return false;
-    }
-
-    switch (kind) {
-{{~ for command in Commands ~}}
-    case kCmd{{ command.Name }}:
-      if (slotCount != k{{ command.Name }}SlotCount) {
-        error_ = ReaderError::InvalidSlotCount;
-        return false;
-      }
-{{~ for field in command.BlobFields ~}}
-      if (!ValidateBlobRef({{ field.CppReadExpression }})) {
-        error_ = ReaderError::BlobOutOfRange;
-        return false;
-      }
-{{~ end ~}}
-      out.type = CommandType::{{ command.Name }};
-      out.slotCount = slotCount;
-      out.flags = flags;
-      out.commandData = command;
-      cursor_ += k{{ command.Name }}CommandBytes;
-      return true;
-{{~ end ~}}
-    default:
-      error_ = ReaderError::UnknownCommand;
-      return false;
-    }
+    out = currentRaw_;
+    cursor_ = currentNextCursor_;
+    hasCurrentRaw_ = false;
+    return true;
   }
 
   bool TryResolveBlob(BlobRef blobRef, BlobSpan& out) const {
@@ -349,6 +322,67 @@ class CommandReader {
   }
 
  private:
+  bool EnsureCurrentRaw() {
+    if (hasCurrentRaw_)
+      return true;
+    return ParseRawCommand(cursor_, currentRaw_, currentNextCursor_);
+  }
+
+  bool ParseRawCommand(const std::uint8_t* commandCursor, RawCommandView& out,
+                       const std::uint8_t*& outNextCursor) {
+    if (error_ != ReaderError::None)
+      return false;
+    if (commandCursor == nullptr || commandCursor >= commandEnd_)
+      return false;
+    if (commandCursor + kCommandHeaderBytes > commandEnd_) {
+      error_ = ReaderError::TruncatedCommandHeader;
+      return false;
+    }
+
+    const auto* command = commandCursor;
+    const std::uint16_t kind = ReadU16(command + kCommandKindOffset);
+    const std::uint16_t slotCount = ReadU16(command + kCommandSlotCountOffset);
+    const std::uint16_t flags = ReadU16(command + kCommandFlagsOffset);
+    if (slotCount == 0) {
+      error_ = ReaderError::InvalidSlotCount;
+      return false;
+    }
+
+    const std::uint64_t commandBytes64 =
+        static_cast<std::uint64_t>(slotCount) * static_cast<std::uint64_t>(kSlotBytes);
+    if (commandBytes64 >
+        static_cast<std::uint64_t>(commandEnd_ - commandCursor)) {
+      error_ = ReaderError::TruncatedCommand;
+      return false;
+    }
+
+    switch (kind) {
+{{~ for command in Commands ~}}
+    case kCmd{{ command.Name }}:
+      if (slotCount != k{{ command.Name }}SlotCount) {
+        error_ = ReaderError::InvalidSlotCount;
+        return false;
+      }
+{{~ for field in command.BlobFields ~}}
+      if (!ValidateBlobRef({{ field.CppReadExpression | string.replace "cursor_" "commandCursor" }})) {
+        error_ = ReaderError::BlobOutOfRange;
+        return false;
+      }
+{{~ end ~}}
+      out.type = CommandType::{{ command.Name }};
+      out.slotCount = slotCount;
+      out.flags = flags;
+      out.commandData = command;
+      outNextCursor = command + k{{ command.Name }}CommandBytes;
+      hasCurrentRaw_ = true;
+      return true;
+{{~ end ~}}
+    default:
+      error_ = ReaderError::UnknownCommand;
+      return false;
+    }
+  }
+
   bool ValidateBlobRef(BlobRef blobRef) const {
     BlobSpan ignored{};
     return TryResolveBlob(blobRef, ignored);
@@ -359,6 +393,9 @@ class CommandReader {
   const std::uint8_t* commandEnd_ = nullptr;
   const std::uint8_t* blobBegin_ = nullptr;
   const std::uint8_t* blobEnd_ = nullptr;
+  RawCommandView currentRaw_{};
+  const std::uint8_t* currentNextCursor_ = nullptr;
+  bool hasCurrentRaw_ = false;
   ReaderError error_ = ReaderError::None;
 };
 

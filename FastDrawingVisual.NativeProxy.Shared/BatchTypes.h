@@ -12,6 +12,7 @@ enum class BatchKind : std::uint8_t {
   Triangles = 1,
   ShapeInstances = 2,
   Text = 3,
+  Unknown = 255,
 };
 
 enum class ShapeInstanceType : std::uint8_t {
@@ -114,12 +115,6 @@ struct BatchCompileStats {
 struct CompiledBatchView {
   BatchKind kind = BatchKind::Clear;
   float clearColor[4] = {};
-  const TriangleVertex* triangleVertices = nullptr;
-  int32_t triangleVertexCount = 0;
-  const ShapeInstance* shapeInstances = nullptr;
-  int32_t shapeInstanceCount = 0;
-  const TextBatchItem* textItems = nullptr;
-  int32_t textItemCount = 0;
 };
 
 } // namespace fdv::nativeproxy::shared::batch

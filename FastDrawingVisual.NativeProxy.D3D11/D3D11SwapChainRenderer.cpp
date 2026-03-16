@@ -484,11 +484,11 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
   int batchIndex = 0;
   while (true) {
     const auto compileStart = std::chrono::steady_clock::now();
-    const bool hasBatch = state_->batchCompiler.TryGetNextBatch(batch, batchHr);
+    batchHr = state_->batchCompiler.TryGetNextBatch(batch);
     const auto compileEnd = std::chrono::steady_clock::now();
     diagnostics.compileMs += DurationMs(compileStart, compileEnd);
     AccumulateCompileStats(diagnostics, state_->batchCompiler.lastBatchStats());
-    if (!hasBatch) {
+    if (batchHr != S_OK) {
       break;
     }
 
@@ -500,61 +500,13 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
       break;
 
     case batch::BatchKind::Triangles: {
-      ++diagnostics.triangleBatchCount;
-      diagnostics.maxTriangleBatchVertexCount =
-          (std::max)(diagnostics.maxTriangleBatchVertexCount,
-                     batch.triangleVertexCount);
-      draw::TriangleBatchDrawContext triangleContext{};
-      triangleContext.context = state_->context;
-      triangleContext.inputLayout = state_->triangleInputLayout;
-      triangleContext.vertexShader = state_->triangleVertexShader;
-      triangleContext.pixelShader = state_->trianglePixelShader;
-      triangleContext.blendState = state_->blendState;
-      triangleContext.rasterizerState = state_->rasterizerState;
-      triangleContext.vertexBuffer = state_->dynamicVertexBuffer;
-      triangleContext.vertexBufferCapacityBytes =
-          state_->dynamicVertexCapacityBytes;
-
-      const draw::TriangleVertexData vertexData{batch.triangleVertices,
-                                                batch.triangleVertexCount};
-      draw::TriangleBatchDrawStats triangleStats{};
-      const auto triangleStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = draw::DrawTriangleBatch(triangleContext, vertexData,
-                                                     &triangleStats);
-      const auto triangleEnd = std::chrono::steady_clock::now();
-      diagnostics.triangleCpuMs += DurationMs(triangleStart, triangleEnd);
-      diagnostics.triangleEnsureVertexBufferMs +=
-          triangleStats.ensureVertexBufferMs;
-      diagnostics.triangleUploadMs += triangleStats.uploadVertexDataMs;
-      diagnostics.triangleDrawCallMs += triangleStats.issueDrawMs;
-      diagnostics.vertexBytesUploaded += triangleStats.uploadedBytes;
-      diagnostics.maxVertexBufferCapacityBytes =
-          (std::max)(diagnostics.maxVertexBufferCapacityBytes,
-                     triangleStats.vertexBufferCapacityBytes);
-      if (triangleStats.resizedVertexBuffer) {
-        ++diagnostics.vertexBufferResizeCount;
-      }
-      state_->dynamicVertexBuffer = triangleContext.vertexBuffer;
-      state_->dynamicVertexCapacityBytes =
-          triangleContext.vertexBufferCapacityBytes;
-      if (FAILED(drawHr)) {
-        wchar_t message[512]{};
-        swprintf_s(
-            message,
-            L"triangle batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X vertices=%d uploadedBytes=%u vbBytes=%u.",
-            static_cast<void*>(this), layerIndex, batchIndex,
-            static_cast<unsigned int>(drawHr), batch.triangleVertexCount,
-            triangleStats.uploadedBytes,
-            triangleStats.vertexBufferCapacityBytes);
-        FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
-        FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
-        return drawHr;
-      }
-      break;
+      return E_NOTIMPL;
     }
 
     case batch::BatchKind::ShapeInstances: {
       ++diagnostics.shapeBatchCount;
+      const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
+      const int shapeInstanceCount = static_cast<int>(shapeInstances.size());
       draw::InstanceBatchDrawContext instanceContext{};
       instanceContext.context = state_->context;
       instanceContext.inputLayout = state_->rectInputLayout;
@@ -572,8 +524,8 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
       instanceContext.viewportWidth = static_cast<float>(width_);
       instanceContext.viewportHeight = static_cast<float>(height_);
 
-      const draw::ShapeInstanceData instanceData{batch.shapeInstances,
-                                                 batch.shapeInstanceCount};
+      const draw::ShapeInstanceData instanceData{shapeInstances.data(),
+                                                 shapeInstanceCount};
       draw::InstanceBatchDrawStats instanceStats{};
       const auto instanceStart = std::chrono::steady_clock::now();
       const HRESULT drawHr = draw::DrawShapeInstanceBatch(instanceContext,
@@ -601,7 +553,7 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
             message,
             L"shape instance batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X instances=%d uploadedBytes=%u vbBytes=%u.",
             static_cast<void*>(this), layerIndex, batchIndex,
-            static_cast<unsigned int>(drawHr), batch.shapeInstanceCount,
+            static_cast<unsigned int>(drawHr), shapeInstanceCount,
             instanceStats.uploadedBytes,
             instanceStats.instanceBufferCapacityBytes);
         FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
@@ -613,8 +565,10 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
 
     case batch::BatchKind::Text: {
       ++diagnostics.textBatchCount;
+      const auto& textItems = state_->batchCompiler.GetTextItems();
+      const int textItemCount = static_cast<int>(textItems.size());
       diagnostics.maxTextBatchItemCount =
-          (std::max)(diagnostics.maxTextBatchItemCount, batch.textItemCount);
+          (std::max)(diagnostics.maxTextBatchItemCount, textItemCount);
       if (state_->textFormatCacheStore == nullptr || state_->d2dContext == nullptr ||
           state_->d2dSolidBrush == nullptr) {
         return E_UNEXPECTED;
@@ -625,7 +579,7 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
       textContext.d2dContext = state_->d2dContext;
       textContext.solidBrush = state_->d2dSolidBrush;
 
-      const draw::DrawTextData textData{batch.textItems, batch.textItemCount};
+      const draw::DrawTextData textData{textItems.data(), textItemCount};
       draw::TextBatchDrawStats textStats{};
       const auto textStart = std::chrono::steady_clock::now();
       const HRESULT drawHr = draw::DrawTextBatch(
@@ -641,7 +595,7 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
             message,
             L"text batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X items=%d.",
             static_cast<void*>(this), layerIndex, batchIndex,
-            static_cast<unsigned int>(drawHr), batch.textItemCount);
+            static_cast<unsigned int>(drawHr), textItemCount);
         FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
         FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
         return drawHr;

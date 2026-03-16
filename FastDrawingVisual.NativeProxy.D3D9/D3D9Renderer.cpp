@@ -510,7 +510,7 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
   HRESULT submitHr = S_OK;
   batch::CompiledBatchView batch{};
   HRESULT batchHr = S_OK;
-  while (state_->batchCompiler.TryGetNextBatch(batch, batchHr)) {
+  while ((batchHr = state_->batchCompiler.TryGetNextBatch(batch)) == S_OK) {
     switch (batch.kind) {
     case batch::BatchKind::Clear:
       device->Clear(0, nullptr, D3DCLEAR_TARGET,
@@ -518,18 +518,12 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       break;
 
     case batch::BatchKind::Triangles: {
-      draw::TriangleBatchDrawContext triangleContext{};
-      triangleContext.device = device;
-      triangleContext.vertexDeclaration = state_->vertexDeclaration;
-      triangleContext.vertexShader = state_->vertexShader;
-      triangleContext.pixelShader = state_->pixelShader;
-      const draw::TriangleVertexData vertexData{batch.triangleVertices,
-                                                batch.triangleVertexCount};
-      submitHr = draw::DrawTriangleBatch(triangleContext, vertexData);
+      submitHr = E_NOTIMPL;
       break;
     }
 
     case batch::BatchKind::ShapeInstances: {
+      const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
       draw::InstanceBatchDrawContext instanceContext{};
       instanceContext.device = device;
       instanceContext.vertexDeclaration = state_->vertexDeclaration;
@@ -537,15 +531,17 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       instanceContext.pixelShader = state_->pixelShader;
       instanceContext.viewportWidth = state_->width;
       instanceContext.viewportHeight = state_->height;
-      const draw::ShapeInstanceData instanceData{batch.shapeInstances,
-                                                 batch.shapeInstanceCount};
+      const draw::ShapeInstanceData instanceData{
+          shapeInstances.data(), static_cast<int>(shapeInstances.size())};
       submitHr = draw::DrawShapeBatch(instanceContext, instanceData);
       break;
     }
 
     case batch::BatchKind::Text: {
+      const auto& textItems = state_->batchCompiler.GetTextItems();
       const draw::TextBatchDrawContext textContext{};
-      const draw::DrawTextData textData{batch.textItems, batch.textItemCount};
+      const draw::DrawTextData textData{textItems.data(),
+                                        static_cast<int>(textItems.size())};
       submitHr = draw::DrawTextBatch(textContext, textData);
       break;
     }
