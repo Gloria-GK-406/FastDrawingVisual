@@ -15,6 +15,14 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <FxCompile Include="TriangleBatchPS.hlsl">
+      <Filter>Shader Files</Filter>
+    </FxCompile>
+    <FxCompile Include="TriangleBatchVS.hlsl">
+      <Filter>Shader Files</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
     <ClInclude Include="BatchComplier.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -43,6 +51,9 @@
     </Filter>
     <Filter Include="Source Files">
       <UniqueIdentifier>{4A42EBF3-E166-4968-8CFA-C19FAF5958F5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader Files">
+      <UniqueIdentifier>{C5D88692-725A-4529-B3D4-4F7462E26A3B}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

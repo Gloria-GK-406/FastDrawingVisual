@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <cwchar>
 #include <d3dcompiler.h>
 #include <d2d1_1.h>
@@ -58,6 +57,8 @@ constexpr const wchar_t* kFpsMetricFormat =
 constexpr UINT kBufferCount = 3;
 constexpr UINT kCreationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 constexpr DXGI_FORMAT kSwapChainFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+constexpr const wchar_t* kTriangleVertexShaderObject = L"TriangleBatchVS.cso";
+constexpr const wchar_t* kTrianglePixelShaderObject = L"TriangleBatchPS.cso";
 
 std::uint64_t QueryQpcNow() {
   LARGE_INTEGER value{};
@@ -74,22 +75,18 @@ std::uint64_t QueryQpcFrequency() {
   return cached;
 }
 
-bool CompileShader(const char* source, const char* target,
-                   ComPtr<ID3DBlob>& blobOut, HRESULT* hrOut) {
-  if (!source || !target) {
-    return false;
+HRESULT LoadShaderBlob(const wchar_t* filePath, ComPtr<ID3DBlob>& blobOut) {
+  if (filePath == nullptr || *filePath == L'\0') {
+    return E_INVALIDARG;
   }
 
-  ComPtr<ID3DBlob> errorBlob;
-  const HRESULT hr = D3DCompile(source, std::strlen(source), nullptr, nullptr,
-                                nullptr, "main", target, 0, 0,
-                                blobOut.ReleaseAndGetAddressOf(),
-                                errorBlob.GetAddressOf());
-  if (hrOut != nullptr) {
-    *hrOut = hr;
+  blobOut.Reset();
+  const HRESULT hr =
+      D3DReadFileToBlob(filePath, blobOut.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || blobOut == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
   }
-
-  return SUCCEEDED(hr) && blobOut != nullptr;
+  return S_OK;
 }
 } // namespace
 
@@ -592,51 +589,16 @@ HRESULT D3D11SwapChainRenderer::CreateDrawPipeline() {
     return S_OK;
   }
 
-  static const char* kVertexShaderSrc = R"(
-struct VSInput
-{
-    float3 pos : POSITION;
-    float4 color : COLOR;
-};
-
-struct PSInput
-{
-    float4 pos : SV_Position;
-    float4 color : COLOR;
-};
-
-PSInput main(VSInput input)
-{
-    PSInput output;
-    output.pos = float4(input.pos, 1.0f);
-    output.color = input.color;
-    return output;
-}
-)";
-
-  static const char* kPixelShaderSrc = R"(
-struct PSInput
-{
-    float4 pos : SV_Position;
-    float4 color : COLOR;
-};
-
-float4 main(PSInput input) : SV_Target
-{
-    return input.color;
-}
-)";
-
   ComPtr<ID3DBlob> vsBlob;
   ComPtr<ID3DBlob> psBlob;
-  HRESULT hr = S_OK;
-
-  if (!CompileShader(kVertexShaderSrc, "vs_4_0_level_9_1", vsBlob, &hr)) {
-    return FAILED(hr) ? hr : E_FAIL;
+  HRESULT hr = LoadShaderBlob(kTriangleVertexShaderObject, vsBlob);
+  if (FAILED(hr)) {
+    return hr;
   }
 
-  if (!CompileShader(kPixelShaderSrc, "ps_4_0_level_9_1", psBlob, &hr)) {
-    return FAILED(hr) ? hr : E_FAIL;
+  hr = LoadShaderBlob(kTrianglePixelShaderObject, psBlob);
+  if (FAILED(hr)) {
+    return hr;
   }
 
   hr = state_->device->CreateVertexShader(

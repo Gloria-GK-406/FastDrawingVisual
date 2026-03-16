@@ -7,6 +7,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>FastDrawingVisual</RootNamespace>
     <Platforms>AnyCPU;x86;x64</Platforms>
+    <NativePlatform Condition="'$(Platform)' == 'x86'">Win32</NativePlatform>
+    <NativePlatform Condition="'$(Platform)' == 'AnyCPU'">x64</NativePlatform>
+    <NativePlatform Condition="'$(NativePlatform)' == ''">$(Platform)</NativePlatform>
+    <NativeArtifactsRoot>$(MSBuildProjectDirectory)\..\artifacts</NativeArtifactsRoot>
+    <NativeD3D11ArtifactsDir>$(NativeArtifactsRoot)\FastDrawingVisual.NativeProxy.D3D11\$(Configuration)\$(NativePlatform)</NativeD3D11ArtifactsDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,5 +25,16 @@
 
   <ItemGroup>
     <Folder Include="Document\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="$(NativeD3D11ArtifactsDir)\TriangleBatchVS.cso">
+      <Link>TriangleBatchVS.cso</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(NativeD3D11ArtifactsDir)\TriangleBatchPS.cso">
+      <Link>TriangleBatchPS.cso</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>
