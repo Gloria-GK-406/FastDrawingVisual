@@ -14,10 +14,12 @@
 namespace fdv::d3d11::draw {
 
 HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
-                          const TriangleVertexData& vertexData);
+                          const TriangleVertexData& vertexData,
+                          TriangleBatchDrawStats* stats = nullptr);
 
 HRESULT DrawTextBatch(const TextBatchDrawContext& context,
                       TextFormatCacheStore& textFormatCache,
-                      const DrawTextData& textData);
+                      const DrawTextData& textData,
+                      TextBatchDrawStats* stats = nullptr);
 
 } // namespace fdv::d3d11::draw

@@ -21,6 +21,7 @@ using LayeredFramePacket = fdv::nativeproxy::shared::LayeredFramePacket;
 using RendererLockGuard = fdv::nativeproxy::shared::RendererLockGuard;
 
 struct D3D11SwapChainRendererState;
+struct SubmitFrameDiagnostics;
 
 class D3D11SwapChainRenderer final {
  public:
@@ -47,7 +48,9 @@ class D3D11SwapChainRenderer final {
   HRESULT SubmitLayeredCommandsAndPresent(
       const LayeredFramePacket* framePacket);
   HRESULT BeginSubmitFrame(void*& currentRtv);
-  HRESULT SubmitCompiledBatches(const LayerPacket& layer, void* currentRtv);
+  HRESULT SubmitCompiledBatches(const LayerPacket& layer, int layerIndex,
+                                void* currentRtv,
+                                SubmitFrameDiagnostics& diagnostics);
   void RecordFramePerformance(double drawDurationMs);
 
   HRESULT CreateDeviceAndSwapChain();
@@ -67,6 +70,14 @@ class D3D11SwapChainRenderer final {
   int parseSubmitDurationMetricId_ = 0;
   int drawDurationMetricId_ = 0;
   int fpsMetricId_ = 0;
+  int compileDurationMetricId_ = 0;
+  int commandReadDurationMetricId_ = 0;
+  int commandBuildDurationMetricId_ = 0;
+  int triangleCpuDurationMetricId_ = 0;
+  int triangleUploadDurationMetricId_ = 0;
+  int triangleDrawCallDurationMetricId_ = 0;
+  int textDurationMetricId_ = 0;
+  int presentDurationMetricId_ = 0;
   std::uint64_t lastPresentQpc_ = 0;
   std::uint64_t submittedFrameCount_ = 0;
 

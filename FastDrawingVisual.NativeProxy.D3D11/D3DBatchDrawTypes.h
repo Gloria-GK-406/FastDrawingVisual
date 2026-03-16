@@ -36,6 +36,15 @@ struct TriangleVertexData {
   int vertexCount = 0;
 };
 
+struct TriangleBatchDrawStats {
+  double ensureVertexBufferMs = 0.0;
+  double uploadVertexDataMs = 0.0;
+  double issueDrawMs = 0.0;
+  UINT uploadedBytes = 0;
+  UINT vertexBufferCapacityBytes = 0;
+  bool resizedVertexBuffer = false;
+};
+
 struct TextBatchDrawContext {
   ComPtr<ID3D11DeviceContext> d3dContext = nullptr;
   ComPtr<ID2D1DeviceContext> d2dContext = nullptr;
@@ -45,6 +54,12 @@ struct TextBatchDrawContext {
 struct DrawTextData {
   const batch::TextBatchItem* items = nullptr;
   int count = 0;
+};
+
+struct TextBatchDrawStats {
+  double flushMs = 0.0;
+  double recordTextMs = 0.0;
+  double endDrawMs = 0.0;
 };
 
 } // namespace fdv::d3d11::draw

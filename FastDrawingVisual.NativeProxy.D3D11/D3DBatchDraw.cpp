@@ -1,13 +1,20 @@
 #include "D3DBatchDraw.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 namespace fdv::d3d11::draw {
 namespace {
 
+double DurationMs(const std::chrono::steady_clock::time_point& start,
+                  const std::chrono::steady_clock::time_point& end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
 HRESULT EnsureDynamicVertexBuffer(TriangleBatchDrawContext& context,
-                                  UINT requiredBytes) {
+                                  UINT requiredBytes,
+                                  TriangleBatchDrawStats* stats) {
   if (context.context == nullptr) {
     return E_POINTER;
   }
@@ -15,6 +22,9 @@ HRESULT EnsureDynamicVertexBuffer(TriangleBatchDrawContext& context,
   const UINT minBytes = (std::max)(requiredBytes, 1024u);
   if (context.vertexBuffer != nullptr &&
       context.vertexBufferCapacityBytes >= minBytes) {
+    if (stats != nullptr) {
+      stats->vertexBufferCapacityBytes = context.vertexBufferCapacityBytes;
+    }
     return S_OK;
   }
 
@@ -39,6 +49,10 @@ HRESULT EnsureDynamicVertexBuffer(TriangleBatchDrawContext& context,
 
   context.vertexBuffer = newBuffer;
   context.vertexBufferCapacityBytes = minBytes;
+  if (stats != nullptr) {
+    stats->resizedVertexBuffer = true;
+    stats->vertexBufferCapacityBytes = minBytes;
+  }
   return S_OK;
 }
 
@@ -54,7 +68,8 @@ D2D1_COLOR_F ToD2DColor(const fdv::protocol::ColorArgb8& color) {
 } // namespace
 
 HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
-                          const TriangleVertexData& vertexData) {
+                          const TriangleVertexData& vertexData,
+                          TriangleBatchDrawStats* stats) {
   if (vertexData.vertices == nullptr || vertexData.vertexCount <= 0) {
     return S_OK;
   }
@@ -67,12 +82,19 @@ HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
 
   const UINT byteSize = static_cast<UINT>(vertexData.vertexCount *
                                           sizeof(batch::TriangleVertex));
-  const HRESULT ensureHr = EnsureDynamicVertexBuffer(context, byteSize);
+  const auto ensureStart = std::chrono::steady_clock::now();
+  const HRESULT ensureHr = EnsureDynamicVertexBuffer(context, byteSize, stats);
+  const auto ensureEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->ensureVertexBufferMs += DurationMs(ensureStart, ensureEnd);
+    stats->vertexBufferCapacityBytes = context.vertexBufferCapacityBytes;
+  }
   if (FAILED(ensureHr)) {
     return ensureHr;
   }
 
   D3D11_MAPPED_SUBRESOURCE mapped = {};
+  const auto uploadStart = std::chrono::steady_clock::now();
   const HRESULT mapHr = context.context->Map(context.vertexBuffer.Get(), 0,
                                              D3D11_MAP_WRITE_DISCARD, 0,
                                              &mapped);
@@ -82,6 +104,11 @@ HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
 
   std::memcpy(mapped.pData, vertexData.vertices, byteSize);
   context.context->Unmap(context.vertexBuffer.Get(), 0);
+  const auto uploadEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->uploadVertexDataMs += DurationMs(uploadStart, uploadEnd);
+    stats->uploadedBytes += byteSize;
+  }
 
   UINT stride = sizeof(batch::TriangleVertex);
   UINT offset = 0;
@@ -97,13 +124,19 @@ HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
   context.context->OMSetBlendState(context.blendState.Get(), blendFactor,
                                    0xFFFFFFFF);
   context.context->RSSetState(context.rasterizerState.Get());
+  const auto drawStart = std::chrono::steady_clock::now();
   context.context->Draw(static_cast<UINT>(vertexData.vertexCount), 0);
+  const auto drawEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->issueDrawMs += DurationMs(drawStart, drawEnd);
+  }
   return S_OK;
 }
 
 HRESULT DrawTextBatch(const TextBatchDrawContext& context,
                       TextFormatCacheStore& textFormatCache,
-                      const DrawTextData& textData) {
+                      const DrawTextData& textData,
+                      TextBatchDrawStats* stats) {
   if (textData.items == nullptr || textData.count <= 0) {
     return S_OK;
   }
@@ -113,10 +146,17 @@ HRESULT DrawTextBatch(const TextBatchDrawContext& context,
     return E_POINTER;
   }
 
+  const auto flushStart = std::chrono::steady_clock::now();
   context.d3dContext->Flush();
+  const auto flushEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->flushMs += DurationMs(flushStart, flushEnd);
+  }
+
   context.d2dContext->BeginDraw();
 
   HRESULT result = S_OK;
+  const auto recordStart = std::chrono::steady_clock::now();
   for (int i = 0; i < textData.count; ++i) {
     const auto& item = textData.items[i];
     if (item.text.empty()) {
@@ -143,8 +183,17 @@ HRESULT DrawTextBatch(const TextBatchDrawContext& context,
         &layoutRect, context.solidBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP,
         DWRITE_MEASURING_MODE_NATURAL);
   }
+  const auto recordEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->recordTextMs += DurationMs(recordStart, recordEnd);
+  }
 
+  const auto endDrawStart = std::chrono::steady_clock::now();
   const HRESULT endDrawHr = context.d2dContext->EndDraw();
+  const auto endDrawEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->endDrawMs += DurationMs(endDrawStart, endDrawEnd);
+  }
   if (FAILED(endDrawHr)) {
     return endDrawHr;
   }

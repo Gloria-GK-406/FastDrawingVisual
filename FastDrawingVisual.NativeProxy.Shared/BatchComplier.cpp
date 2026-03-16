@@ -1,6 +1,7 @@
 #include "BatchComplier.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stringapiset.h>
 
@@ -223,6 +224,41 @@ BatchKind GetBatchKind(fdv::protocol::CommandType type) {
     return BatchKind::Clear;
   }
 }
+
+double DurationMs(const std::chrono::steady_clock::time_point& start,
+                  const std::chrono::steady_clock::time_point& end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+void AccumulateCommandStats(BatchCompileStats& stats,
+                            fdv::protocol::CommandType type) {
+  ++stats.commandCount;
+  switch (type) {
+  case fdv::protocol::CommandType::Clear:
+    ++stats.commands.clearCount;
+    break;
+  case fdv::protocol::CommandType::FillRect:
+    ++stats.commands.fillRectCount;
+    break;
+  case fdv::protocol::CommandType::StrokeRect:
+    ++stats.commands.strokeRectCount;
+    break;
+  case fdv::protocol::CommandType::FillEllipse:
+    ++stats.commands.fillEllipseCount;
+    break;
+  case fdv::protocol::CommandType::StrokeEllipse:
+    ++stats.commands.strokeEllipseCount;
+    break;
+  case fdv::protocol::CommandType::Line:
+    ++stats.commands.lineCount;
+    break;
+  case fdv::protocol::CommandType::DrawTextRun:
+    ++stats.commands.drawTextRunCount;
+    break;
+  default:
+    break;
+  }
+}
 } // namespace
 
 void BatchCompiler::Reset(int width, int height, const void* commands,
@@ -233,6 +269,7 @@ void BatchCompiler::Reset(int width, int height, const void* commands,
   widthF_ = static_cast<float>(width);
   heightF_ = static_cast<float>(height);
   hasPendingCommand_ = false;
+  lastBatchStats_ = {};
   triangleVertices_.clear();
   textItems_.clear();
 }
@@ -257,6 +294,7 @@ bool BatchCompiler::TryReadNextCommand(fdv::protocol::Command& out,
 bool BatchCompiler::AppendTriangleCommand(const fdv::protocol::Command& command,
                                           HRESULT& outErrorHr) {
   outErrorHr = S_OK;
+  const std::size_t vertexCountBefore = triangleVertices_.size();
 
   switch (command.type) {
   case fdv::protocol::CommandType::FillRect: {
@@ -265,7 +303,7 @@ bool BatchCompiler::AppendTriangleCommand(const fdv::protocol::Command& command,
     AppendFilledRect(widthF_, heightF_, triangleVertices_, payload.x, payload.y,
                      payload.width, payload.height,
                      ToPremultipliedColor(payload.color));
-    return true;
+    break;
   }
 
   case fdv::protocol::CommandType::StrokeRect: {
@@ -274,7 +312,7 @@ bool BatchCompiler::AppendTriangleCommand(const fdv::protocol::Command& command,
     AppendStrokeRect(widthF_, heightF_, triangleVertices_, payload.x, payload.y,
                      payload.width, payload.height, payload.thickness,
                      ToPremultipliedColor(payload.color));
-    return true;
+    break;
   }
 
   case fdv::protocol::CommandType::FillEllipse: {
@@ -283,7 +321,7 @@ bool BatchCompiler::AppendTriangleCommand(const fdv::protocol::Command& command,
     AppendFilledEllipse(widthF_, heightF_, triangleVertices_, payload.centerX,
                         payload.centerY, payload.radiusX, payload.radiusY,
                         ToPremultipliedColor(payload.color));
-    return true;
+    break;
   }
 
   case fdv::protocol::CommandType::StrokeEllipse: {
@@ -292,7 +330,7 @@ bool BatchCompiler::AppendTriangleCommand(const fdv::protocol::Command& command,
     AppendStrokeEllipse(widthF_, heightF_, triangleVertices_, payload.centerX,
                         payload.centerY, payload.radiusX, payload.radiusY,
                         payload.thickness, ToPremultipliedColor(payload.color));
-    return true;
+    break;
   }
 
   case fdv::protocol::CommandType::Line: {
@@ -300,13 +338,18 @@ bool BatchCompiler::AppendTriangleCommand(const fdv::protocol::Command& command,
     AppendLine(widthF_, heightF_, triangleVertices_, payload.x0, payload.y0,
                payload.x1, payload.y1, payload.thickness,
                ToPremultipliedColor(payload.color));
-    return true;
+    break;
   }
 
   default:
     outErrorHr = E_INVALIDARG;
     return false;
   }
+
+  AccumulateCommandStats(lastBatchStats_, command.type);
+  lastBatchStats_.triangleVertexCount +=
+      static_cast<int32_t>(triangleVertices_.size() - vertexCountBefore);
+  return true;
 }
 
 bool BatchCompiler::AppendTextCommand(const fdv::protocol::Command& command,
@@ -331,6 +374,7 @@ bool BatchCompiler::AppendTextCommand(const fdv::protocol::Command& command,
   }
 
   if (textUtf8.bytes == 0) {
+    AccumulateCommandStats(lastBatchStats_, command.type);
     return true;
   }
 
@@ -361,6 +405,9 @@ bool BatchCompiler::AppendTextCommand(const fdv::protocol::Command& command,
     item.layoutBottom = item.layoutTop + 1.0f;
   }
   item.color = payload.color;
+  AccumulateCommandStats(lastBatchStats_, command.type);
+  ++lastBatchStats_.textItemCount;
+  lastBatchStats_.textCharCount += static_cast<int32_t>(item.text.size());
   textItems_.push_back(item);
   return true;
 }
@@ -369,6 +416,7 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
                                     HRESULT& outErrorHr) {
   out = {};
   outErrorHr = S_OK;
+  lastBatchStats_ = {};
 
   triangleVertices_.clear();
   textItems_.clear();
@@ -382,8 +430,14 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
   if (hasPendingCommand_) {
     command = pendingCommand_;
     hasPendingCommand_ = false;
-  } else if (!TryReadNextCommand(command, outErrorHr)) {
-    return false;
+  } else {
+    const auto readStart = std::chrono::steady_clock::now();
+    const bool hasCommand = TryReadNextCommand(command, outErrorHr);
+    const auto readEnd = std::chrono::steady_clock::now();
+    lastBatchStats_.commandReadMs += DurationMs(readStart, readEnd);
+    if (!hasCommand) {
+      return false;
+    }
   }
 
   const BatchKind kind = GetBatchKind(command.type);
@@ -394,6 +448,7 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
       outErrorHr = E_INVALIDARG;
       return false;
     }
+    AccumulateCommandStats(lastBatchStats_, command.type);
 
     const auto& payload =
         std::get<fdv::protocol::ClearPayload>(command.payload);
@@ -417,14 +472,21 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
     }
   };
 
+  const auto appendStart = std::chrono::steady_clock::now();
   if (!appendCurrent(command)) {
     return false;
   }
+  const auto appendEnd = std::chrono::steady_clock::now();
+  lastBatchStats_.commandBuildMs += DurationMs(appendStart, appendEnd);
 
   while (true) {
     fdv::protocol::Command next{};
     HRESULT readHr = S_OK;
-    if (!TryReadNextCommand(next, readHr)) {
+    const auto readStart = std::chrono::steady_clock::now();
+    const bool hasNext = TryReadNextCommand(next, readHr);
+    const auto readEnd = std::chrono::steady_clock::now();
+    lastBatchStats_.commandReadMs += DurationMs(readStart, readEnd);
+    if (!hasNext) {
       if (readHr == S_FALSE) {
         break;
       }
@@ -440,9 +502,13 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
       break;
     }
 
+    const auto nextAppendStart = std::chrono::steady_clock::now();
     if (!appendCurrent(next)) {
       return false;
     }
+    const auto nextAppendEnd = std::chrono::steady_clock::now();
+    lastBatchStats_.commandBuildMs +=
+        DurationMs(nextAppendStart, nextAppendEnd);
   }
 
   if (kind == BatchKind::Triangles) {

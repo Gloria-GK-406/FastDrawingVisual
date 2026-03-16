@@ -34,6 +34,26 @@ struct TextBatchItem {
   fdv::protocol::ColorArgb8 color{};
 };
 
+struct BatchCommandStats {
+  int32_t clearCount = 0;
+  int32_t fillRectCount = 0;
+  int32_t strokeRectCount = 0;
+  int32_t fillEllipseCount = 0;
+  int32_t strokeEllipseCount = 0;
+  int32_t lineCount = 0;
+  int32_t drawTextRunCount = 0;
+};
+
+struct BatchCompileStats {
+  int32_t commandCount = 0;
+  int32_t triangleVertexCount = 0;
+  int32_t textItemCount = 0;
+  int32_t textCharCount = 0;
+  double commandReadMs = 0.0;
+  double commandBuildMs = 0.0;
+  BatchCommandStats commands{};
+};
+
 struct CompiledBatchView {
   BatchKind kind = BatchKind::Clear;
   float clearColor[4] = {};

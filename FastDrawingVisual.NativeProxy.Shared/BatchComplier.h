@@ -27,6 +27,7 @@ class BatchCompiler {
   void Reset(int width, int height, const void* commands, int commandBytes,
              const void* blobs, int blobBytes);
   bool TryGetNextBatch(CompiledBatchView& out, HRESULT& outErrorHr);
+  const BatchCompileStats& lastBatchStats() const { return lastBatchStats_; }
 
  private:
   bool TryReadNextCommand(fdv::protocol::Command& out, HRESULT& outErrorHr);
@@ -42,6 +43,7 @@ class BatchCompiler {
   float heightF_ = 0.0f;
   fdv::protocol::Command pendingCommand_{};
   bool hasPendingCommand_ = false;
+  BatchCompileStats lastBatchStats_{};
   std::vector<TriangleVertex> triangleVertices_;
   std::vector<TextBatchItem> textItems_;
 };

@@ -45,10 +45,47 @@ struct D3D11SwapChainRendererState {
   batch::BatchCompiler batchCompiler;
 };
 
+struct SubmitFrameDiagnostics {
+  int layerCount = 0;
+  int commandCount = 0;
+  int clearCommandCount = 0;
+  int fillRectCommandCount = 0;
+  int strokeRectCommandCount = 0;
+  int fillEllipseCommandCount = 0;
+  int strokeEllipseCommandCount = 0;
+  int lineCommandCount = 0;
+  int textRunCommandCount = 0;
+  int clearBatchCount = 0;
+  int triangleBatchCount = 0;
+  int textBatchCount = 0;
+  int triangleVertexCount = 0;
+  int maxTriangleBatchVertexCount = 0;
+  int textItemCount = 0;
+  int maxTextBatchItemCount = 0;
+  int textCharCount = 0;
+  int vertexBufferResizeCount = 0;
+  UINT vertexBytesUploaded = 0;
+  UINT maxVertexBufferCapacityBytes = 0;
+  double beginFrameMs = 0.0;
+  double compileMs = 0.0;
+  double commandReadMs = 0.0;
+  double commandBuildMs = 0.0;
+  double triangleCpuMs = 0.0;
+  double triangleEnsureVertexBufferMs = 0.0;
+  double triangleUploadMs = 0.0;
+  double triangleDrawCallMs = 0.0;
+  double textDrawMs = 0.0;
+  double textFlushMs = 0.0;
+  double textRecordMs = 0.0;
+  double textEndDrawMs = 0.0;
+  double presentMs = 0.0;
+};
+
 namespace {
 constexpr const wchar_t* kLogCategory = L"NativeProxy.D3D11";
 constexpr double kSlowFrameThresholdMs = 33.0;
 constexpr std::uint64_t kSlowFrameLogEveryNFrames = 120;
+constexpr std::uint64_t kDetailedFrameLogEveryNFrames = 30;
 constexpr uint32_t kMetricWindowSec = 1;
 constexpr const wchar_t* kDrawMetricFormat =
     L"name={name} periodSec={periodSec}s samples={count} avgMs={avg} minMs={min} maxMs={max}";
@@ -88,32 +125,130 @@ HRESULT LoadShaderBlob(const wchar_t* filePath, ComPtr<ID3DBlob>& blobOut) {
   }
   return S_OK;
 }
+
+double DurationMs(const std::chrono::steady_clock::time_point& start,
+                  const std::chrono::steady_clock::time_point& end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+void RegisterDurationMetric(int& metricId, const void* renderer,
+                            const wchar_t* suffix) {
+  if (metricId > 0) {
+    return;
+  }
+
+  wchar_t metricName[112]{};
+  swprintf_s(metricName, L"native.d3d11.r%p.%ls", renderer, suffix);
+  FDVLOG_MetricSpec spec{};
+  spec.name = metricName;
+  spec.periodSec = kMetricWindowSec;
+  spec.format = kDrawMetricFormat;
+  spec.level = FDVLOG_LevelInfo;
+  metricId = FDVLOG_RegisterMetric(&spec);
+}
+
+void UnregisterMetric(int& metricId) {
+  if (metricId > 0) {
+    FDVLOG_UnregisterMetric(metricId);
+    metricId = 0;
+  }
+}
+
+void AccumulateCompileStats(SubmitFrameDiagnostics& diagnostics,
+                            const batch::BatchCompileStats& stats) {
+  diagnostics.commandCount += stats.commandCount;
+  diagnostics.clearCommandCount += stats.commands.clearCount;
+  diagnostics.fillRectCommandCount += stats.commands.fillRectCount;
+  diagnostics.strokeRectCommandCount += stats.commands.strokeRectCount;
+  diagnostics.fillEllipseCommandCount += stats.commands.fillEllipseCount;
+  diagnostics.strokeEllipseCommandCount += stats.commands.strokeEllipseCount;
+  diagnostics.lineCommandCount += stats.commands.lineCount;
+  diagnostics.textRunCommandCount += stats.commands.drawTextRunCount;
+  diagnostics.triangleVertexCount += stats.triangleVertexCount;
+  diagnostics.textItemCount += stats.textItemCount;
+  diagnostics.textCharCount += stats.textCharCount;
+  diagnostics.commandReadMs += stats.commandReadMs;
+  diagnostics.commandBuildMs += stats.commandBuildMs;
+}
+
+void LogFrameBreakdown(const void* renderer, std::uint64_t frameId, int width,
+                       int height, double drawDurationMs,
+                       const SubmitFrameDiagnostics& diagnostics, int level) {
+  wchar_t message[1536]{};
+  swprintf_s(
+      message,
+      L"frame breakdown renderer=0x%p frame=%llu size=%dx%d layers=%d cmds=%d "
+      L"cmds(clear=%d fillRect=%d strokeRect=%d fillEllipse=%d strokeEllipse=%d line=%d textRun=%d) "
+      L"batches(clear=%d tri=%d text=%d) triVerts=%d maxTriBatchVerts=%d textItems=%d maxTextBatchItems=%d textChars=%d "
+      L"beginMs=%.3f compileMs=%.3f readMs=%.3f buildMs=%.3f triCpuMs=%.3f triEnsureMs=%.3f triUploadMs=%.3f triDrawMs=%.3f "
+      L"textMs=%.3f textFlushMs=%.3f textRecordMs=%.3f textEndMs=%.3f presentMs=%.3f vbResizes=%d uploadedBytes=%u maxVbBytes=%u totalMs=%.3f.",
+      renderer, static_cast<unsigned long long>(frameId), width, height,
+      diagnostics.layerCount, diagnostics.commandCount,
+      diagnostics.clearCommandCount, diagnostics.fillRectCommandCount,
+      diagnostics.strokeRectCommandCount,
+      diagnostics.fillEllipseCommandCount,
+      diagnostics.strokeEllipseCommandCount, diagnostics.lineCommandCount,
+      diagnostics.textRunCommandCount, diagnostics.clearBatchCount,
+      diagnostics.triangleBatchCount, diagnostics.textBatchCount,
+      diagnostics.triangleVertexCount, diagnostics.maxTriangleBatchVertexCount,
+      diagnostics.textItemCount, diagnostics.maxTextBatchItemCount,
+      diagnostics.textCharCount, diagnostics.beginFrameMs,
+      diagnostics.compileMs, diagnostics.commandReadMs,
+      diagnostics.commandBuildMs, diagnostics.triangleCpuMs,
+      diagnostics.triangleEnsureVertexBufferMs,
+      diagnostics.triangleUploadMs, diagnostics.triangleDrawCallMs,
+      diagnostics.textDrawMs, diagnostics.textFlushMs,
+      diagnostics.textRecordMs, diagnostics.textEndDrawMs,
+      diagnostics.presentMs, diagnostics.vertexBufferResizeCount,
+      diagnostics.vertexBytesUploaded, diagnostics.maxVertexBufferCapacityBytes,
+      drawDurationMs);
+  FDVLOG_Log(level, kLogCategory, message, false);
+  if (level >= FDVLOG_LevelWarn) {
+    FDVLOG_WriteETW(level, kLogCategory, message, false);
+  }
+}
+
+void LogStageFailure(const void* renderer, std::uint64_t frameId,
+                     const wchar_t* stage, HRESULT hr,
+                     const SubmitFrameDiagnostics& diagnostics, int width,
+                     int height) {
+  wchar_t message[768]{};
+  swprintf_s(
+      message,
+      L"submit failed renderer=0x%p frame=%llu stage=%ls hr=0x%08X size=%dx%d "
+      L"layers=%d cmds=%d triVerts=%d textItems=%d compileMs=%.3f triCpuMs=%.3f textMs=%.3f presentMs=%.3f.",
+      renderer, static_cast<unsigned long long>(frameId), stage,
+      static_cast<unsigned int>(hr), width, height, diagnostics.layerCount,
+      diagnostics.commandCount, diagnostics.triangleVertexCount,
+      diagnostics.textItemCount, diagnostics.compileMs,
+      diagnostics.triangleCpuMs, diagnostics.textDrawMs,
+      diagnostics.presentMs);
+  FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
+  FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
+}
 } // namespace
 
 void D3D11SwapChainRenderer::RegisterMetrics() {
-  if (parseSubmitDurationMetricId_ <= 0) {
-    wchar_t metricName[104]{};
-    swprintf_s(metricName, L"native.d3d11.r%p.parse_submit_ms",
-               static_cast<void*>(this));
-    FDVLOG_MetricSpec spec{};
-    spec.name = metricName;
-    spec.periodSec = kMetricWindowSec;
-    spec.format = kDrawMetricFormat;
-    spec.level = FDVLOG_LevelInfo;
-    parseSubmitDurationMetricId_ = FDVLOG_RegisterMetric(&spec);
-  }
-
-  if (drawDurationMetricId_ <= 0) {
-    wchar_t metricName[96]{};
-    swprintf_s(metricName, L"native.d3d11.r%p.draw_ms",
-               static_cast<void*>(this));
-    FDVLOG_MetricSpec spec{};
-    spec.name = metricName;
-    spec.periodSec = kMetricWindowSec;
-    spec.format = kDrawMetricFormat;
-    spec.level = FDVLOG_LevelInfo;
-    drawDurationMetricId_ = FDVLOG_RegisterMetric(&spec);
-  }
+  RegisterDurationMetric(parseSubmitDurationMetricId_, static_cast<void*>(this),
+                         L"parse_submit_ms");
+  RegisterDurationMetric(drawDurationMetricId_, static_cast<void*>(this),
+                         L"draw_ms");
+  RegisterDurationMetric(compileDurationMetricId_, static_cast<void*>(this),
+                         L"compile_ms");
+  RegisterDurationMetric(commandReadDurationMetricId_,
+                         static_cast<void*>(this), L"command_read_ms");
+  RegisterDurationMetric(commandBuildDurationMetricId_,
+                         static_cast<void*>(this), L"command_build_ms");
+  RegisterDurationMetric(triangleCpuDurationMetricId_,
+                         static_cast<void*>(this), L"triangle_cpu_ms");
+  RegisterDurationMetric(triangleUploadDurationMetricId_,
+                         static_cast<void*>(this), L"triangle_upload_ms");
+  RegisterDurationMetric(triangleDrawCallDurationMetricId_,
+                         static_cast<void*>(this), L"triangle_drawcall_ms");
+  RegisterDurationMetric(textDurationMetricId_, static_cast<void*>(this),
+                         L"text_draw_ms");
+  RegisterDurationMetric(presentDurationMetricId_, static_cast<void*>(this),
+                         L"present_ms");
 
   if (fpsMetricId_ <= 0) {
     wchar_t metricName[96]{};
@@ -128,20 +263,17 @@ void D3D11SwapChainRenderer::RegisterMetrics() {
 }
 
 void D3D11SwapChainRenderer::UnregisterMetrics() {
-  if (parseSubmitDurationMetricId_ > 0) {
-    FDVLOG_UnregisterMetric(parseSubmitDurationMetricId_);
-    parseSubmitDurationMetricId_ = 0;
-  }
-
-  if (drawDurationMetricId_ > 0) {
-    FDVLOG_UnregisterMetric(drawDurationMetricId_);
-    drawDurationMetricId_ = 0;
-  }
-
-  if (fpsMetricId_ > 0) {
-    FDVLOG_UnregisterMetric(fpsMetricId_);
-    fpsMetricId_ = 0;
-  }
+  UnregisterMetric(parseSubmitDurationMetricId_);
+  UnregisterMetric(drawDurationMetricId_);
+  UnregisterMetric(fpsMetricId_);
+  UnregisterMetric(compileDurationMetricId_);
+  UnregisterMetric(commandReadDurationMetricId_);
+  UnregisterMetric(commandBuildDurationMetricId_);
+  UnregisterMetric(triangleCpuDurationMetricId_);
+  UnregisterMetric(triangleUploadDurationMetricId_);
+  UnregisterMetric(triangleDrawCallDurationMetricId_);
+  UnregisterMetric(textDurationMetricId_);
+  UnregisterMetric(presentDurationMetricId_);
 }
 
 HRESULT D3D11SwapChainRenderer::BeginSubmitFrame(void*& currentRtv) {
@@ -172,7 +304,8 @@ HRESULT D3D11SwapChainRenderer::BeginSubmitFrame(void*& currentRtv) {
 }
 
 HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
-    const LayerPacket& layer, void* currentRtv) {
+    const LayerPacket& layer, int layerIndex, void* currentRtv,
+    SubmitFrameDiagnostics& diagnostics) {
   if (state_ == nullptr) {
     return E_UNEXPECTED;
   }
@@ -181,6 +314,7 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
     return S_OK;
   }
 
+  ++diagnostics.layerCount;
   auto* nativeRtv = static_cast<ID3D11RenderTargetView*>(currentRtv);
   state_->batchCompiler.Reset(width_, height_, layer.commandData,
                               layer.commandBytes, layer.blobData,
@@ -188,13 +322,29 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
 
   batch::CompiledBatchView batch{};
   HRESULT batchHr = S_OK;
-  while (state_->batchCompiler.TryGetNextBatch(batch, batchHr)) {
+  int batchIndex = 0;
+  while (true) {
+    const auto compileStart = std::chrono::steady_clock::now();
+    const bool hasBatch = state_->batchCompiler.TryGetNextBatch(batch, batchHr);
+    const auto compileEnd = std::chrono::steady_clock::now();
+    diagnostics.compileMs += DurationMs(compileStart, compileEnd);
+    AccumulateCompileStats(diagnostics, state_->batchCompiler.lastBatchStats());
+    if (!hasBatch) {
+      break;
+    }
+
+    ++batchIndex;
     switch (batch.kind) {
     case batch::BatchKind::Clear:
+      ++diagnostics.clearBatchCount;
       state_->context->ClearRenderTargetView(nativeRtv, batch.clearColor);
       break;
 
     case batch::BatchKind::Triangles: {
+      ++diagnostics.triangleBatchCount;
+      diagnostics.maxTriangleBatchVertexCount =
+          (std::max)(diagnostics.maxTriangleBatchVertexCount,
+                     batch.triangleVertexCount);
       draw::TriangleBatchDrawContext triangleContext{};
       triangleContext.context = state_->context;
       triangleContext.inputLayout = state_->inputLayout;
@@ -208,18 +358,46 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
 
       const draw::TriangleVertexData vertexData{batch.triangleVertices,
                                                 batch.triangleVertexCount};
-      const HRESULT drawHr =
-          draw::DrawTriangleBatch(triangleContext, vertexData);
+      draw::TriangleBatchDrawStats triangleStats{};
+      const auto triangleStart = std::chrono::steady_clock::now();
+      const HRESULT drawHr = draw::DrawTriangleBatch(triangleContext, vertexData,
+                                                     &triangleStats);
+      const auto triangleEnd = std::chrono::steady_clock::now();
+      diagnostics.triangleCpuMs += DurationMs(triangleStart, triangleEnd);
+      diagnostics.triangleEnsureVertexBufferMs +=
+          triangleStats.ensureVertexBufferMs;
+      diagnostics.triangleUploadMs += triangleStats.uploadVertexDataMs;
+      diagnostics.triangleDrawCallMs += triangleStats.issueDrawMs;
+      diagnostics.vertexBytesUploaded += triangleStats.uploadedBytes;
+      diagnostics.maxVertexBufferCapacityBytes =
+          (std::max)(diagnostics.maxVertexBufferCapacityBytes,
+                     triangleStats.vertexBufferCapacityBytes);
+      if (triangleStats.resizedVertexBuffer) {
+        ++diagnostics.vertexBufferResizeCount;
+      }
       state_->dynamicVertexBuffer = triangleContext.vertexBuffer;
       state_->dynamicVertexCapacityBytes =
           triangleContext.vertexBufferCapacityBytes;
       if (FAILED(drawHr)) {
+        wchar_t message[512]{};
+        swprintf_s(
+            message,
+            L"triangle batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X vertices=%d uploadedBytes=%u vbBytes=%u.",
+            static_cast<void*>(this), layerIndex, batchIndex,
+            static_cast<unsigned int>(drawHr), batch.triangleVertexCount,
+            triangleStats.uploadedBytes,
+            triangleStats.vertexBufferCapacityBytes);
+        FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
+        FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
         return drawHr;
       }
       break;
     }
 
     case batch::BatchKind::Text: {
+      ++diagnostics.textBatchCount;
+      diagnostics.maxTextBatchItemCount =
+          (std::max)(diagnostics.maxTextBatchItemCount, batch.textItemCount);
       if (state_->textFormatCacheStore == nullptr || state_->d2dContext == nullptr ||
           state_->d2dSolidBrush == nullptr) {
         return E_UNEXPECTED;
@@ -231,9 +409,24 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
       textContext.solidBrush = state_->d2dSolidBrush;
 
       const draw::DrawTextData textData{batch.textItems, batch.textItemCount};
+      draw::TextBatchDrawStats textStats{};
+      const auto textStart = std::chrono::steady_clock::now();
       const HRESULT drawHr = draw::DrawTextBatch(
-          textContext, *state_->textFormatCacheStore, textData);
+          textContext, *state_->textFormatCacheStore, textData, &textStats);
+      const auto textEnd = std::chrono::steady_clock::now();
+      diagnostics.textDrawMs += DurationMs(textStart, textEnd);
+      diagnostics.textFlushMs += textStats.flushMs;
+      diagnostics.textRecordMs += textStats.recordTextMs;
+      diagnostics.textEndDrawMs += textStats.endDrawMs;
       if (FAILED(drawHr)) {
+        wchar_t message[512]{};
+        swprintf_s(
+            message,
+            L"text batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X items=%d.",
+            static_cast<void*>(this), layerIndex, batchIndex,
+            static_cast<unsigned int>(drawHr), batch.textItemCount);
+        FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
+        FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
         return drawHr;
       }
       break;
@@ -242,7 +435,17 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
   }
 
   if (batchHr != S_FALSE) {
-    return FAILED(batchHr) ? batchHr : E_INVALIDARG;
+    const HRESULT hr = FAILED(batchHr) ? batchHr : E_INVALIDARG;
+    wchar_t message[512]{};
+    swprintf_s(
+        message,
+        L"batch compilation failed renderer=0x%p layer=%d hr=0x%08X commandBytes=%d blobBytes=%d compileMs=%.3f readMs=%.3f buildMs=%.3f.",
+        static_cast<void*>(this), layerIndex, static_cast<unsigned int>(hr),
+        layer.commandBytes, layer.blobBytes, diagnostics.compileMs,
+        diagnostics.commandReadMs, diagnostics.commandBuildMs);
+    FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
+    FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
+    return hr;
   }
 
   return S_OK;
@@ -312,15 +515,22 @@ HRESULT D3D11SwapChainRenderer::SubmitLayeredCommands(const void* framePacket,
 
 HRESULT D3D11SwapChainRenderer::SubmitLayeredCommandsAndPresent(
     const LayeredFramePacket* framePacket) {
+  SubmitFrameDiagnostics diagnostics{};
   const auto drawStart = std::chrono::steady_clock::now();
+  const std::uint64_t frameId = submittedFrameCount_ + 1;
 
   if (framePacket == nullptr) {
     return E_INVALIDARG;
   }
 
   void* currentRtv = nullptr;
+  const auto beginStart = std::chrono::steady_clock::now();
   const HRESULT beginHr = BeginSubmitFrame(currentRtv);
+  const auto beginEnd = std::chrono::steady_clock::now();
+  diagnostics.beginFrameMs = DurationMs(beginStart, beginEnd);
   if (FAILED(beginHr)) {
+    LogStageFailure(static_cast<void*>(this), frameId, L"begin_frame", beginHr,
+                    diagnostics, width_, height_);
     return beginHr;
   }
 
@@ -331,8 +541,11 @@ HRESULT D3D11SwapChainRenderer::SubmitLayeredCommandsAndPresent(
       continue;
     }
 
-    const HRESULT submitHr = SubmitCompiledBatches(layer, currentRtv);
+    const HRESULT submitHr =
+        SubmitCompiledBatches(layer, layerIndex, currentRtv, diagnostics);
     if (FAILED(submitHr)) {
+      LogStageFailure(static_cast<void*>(this), frameId, L"submit_batches",
+                      submitHr, diagnostics, width_, height_);
       return submitHr;
     }
   }
@@ -341,17 +554,56 @@ HRESULT D3D11SwapChainRenderer::SubmitLayeredCommandsAndPresent(
     return E_UNEXPECTED;
   }
 
+  const auto presentStart = std::chrono::steady_clock::now();
   const HRESULT hr = state_->swapChain->Present(0, 0);
+  const auto presentEnd = std::chrono::steady_clock::now();
+  diagnostics.presentMs = DurationMs(presentStart, presentEnd);
 
   const auto drawEnd = std::chrono::steady_clock::now();
-  const double drawDurationMs =
-      std::chrono::duration<double, std::milli>(drawEnd - drawStart).count();
+  const double drawDurationMs = DurationMs(drawStart, drawEnd);
 
   if (FAILED(hr)) {
+    LogStageFailure(static_cast<void*>(this), frameId, L"present", hr,
+                    diagnostics, width_, height_);
     return hr;
   }
 
+  if (compileDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(compileDurationMetricId_, diagnostics.compileMs);
+  }
+  if (commandReadDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(commandReadDurationMetricId_, diagnostics.commandReadMs);
+  }
+  if (commandBuildDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(commandBuildDurationMetricId_, diagnostics.commandBuildMs);
+  }
+  if (triangleCpuDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(triangleCpuDurationMetricId_, diagnostics.triangleCpuMs);
+  }
+  if (triangleUploadDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(triangleUploadDurationMetricId_,
+                     diagnostics.triangleUploadMs);
+  }
+  if (triangleDrawCallDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(triangleDrawCallDurationMetricId_,
+                     diagnostics.triangleDrawCallMs);
+  }
+  if (textDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(textDurationMetricId_, diagnostics.textDrawMs);
+  }
+  if (presentDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(presentDurationMetricId_, diagnostics.presentMs);
+  }
+
   RecordFramePerformance(drawDurationMs);
+  if (drawDurationMs >= kSlowFrameThresholdMs &&
+      (frameId % kSlowFrameLogEveryNFrames) == 0) {
+    LogFrameBreakdown(static_cast<void*>(this), frameId, width_, height_,
+                      drawDurationMs, diagnostics, FDVLOG_LevelWarn);
+  } else if ((frameId % kDetailedFrameLogEveryNFrames) == 0) {
+    LogFrameBreakdown(static_cast<void*>(this), frameId, width_, height_,
+                      drawDurationMs, diagnostics, FDVLOG_LevelInfo);
+  }
   return S_OK;
 }
 
