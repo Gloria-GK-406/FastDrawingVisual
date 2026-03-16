@@ -106,6 +106,22 @@ struct Command {
   CommandPayload payload = {{ FirstCommandName }}Payload{};
 };
 
+struct CommandView {
+  CommandType type = CommandType::{{ FirstCommandName }};
+  std::uint16_t slotCount = 0;
+  std::uint16_t flags = 0;
+{{~ for command in Commands ~}}
+  {{ command.Name }}Payload {{ command.Name }}{};
+{{~ end ~}}
+};
+
+struct RawCommandView {
+  CommandType type = CommandType::{{ FirstCommandName }};
+  std::uint16_t slotCount = 0;
+  std::uint16_t flags = 0;
+  const std::uint8_t* commandData = nullptr;
+};
+
 class CommandReader {
  public:
   CommandReader(const void* commandData, int commandBytes,
@@ -181,6 +197,118 @@ class CommandReader {
       cursor_ += k{{ command.Name }}CommandBytes;
       return true;
     }
+{{~ end ~}}
+    default:
+      error_ = ReaderError::UnknownCommand;
+      return false;
+    }
+  }
+
+  bool TryReadNextView(CommandView& out) {
+    if (error_ != ReaderError::None)
+      return false;
+    if (cursor_ == nullptr || cursor_ >= commandEnd_)
+      return false;
+    if (cursor_ + kCommandHeaderBytes > commandEnd_) {
+      error_ = ReaderError::TruncatedCommandHeader;
+      return false;
+    }
+
+    const auto* command = cursor_;
+    const std::uint16_t kind = ReadU16(command + kCommandKindOffset);
+    const std::uint16_t slotCount = ReadU16(command + kCommandSlotCountOffset);
+    const std::uint16_t flags = ReadU16(command + kCommandFlagsOffset);
+    if (slotCount == 0) {
+      error_ = ReaderError::InvalidSlotCount;
+      return false;
+    }
+
+    const std::uint64_t commandBytes64 =
+        static_cast<std::uint64_t>(slotCount) * static_cast<std::uint64_t>(kSlotBytes);
+    if (commandBytes64 >
+        static_cast<std::uint64_t>(commandEnd_ - cursor_)) {
+      error_ = ReaderError::TruncatedCommand;
+      return false;
+    }
+
+    switch (kind) {
+{{~ for command in Commands ~}}
+    case kCmd{{ command.Name }}: {
+      if (slotCount != k{{ command.Name }}SlotCount) {
+        error_ = ReaderError::InvalidSlotCount;
+        return false;
+      }
+
+      {{ command.Name }}Payload payload{};
+{{~ for field in command.Fields ~}}
+      payload.{{ field.CppName }} = {{ field.CppReadExpression }};
+{{~ end ~}}
+{{~ for field in command.BlobFields ~}}
+      if (!ValidateBlobRef(payload.{{ field.CppName }})) {
+        error_ = ReaderError::BlobOutOfRange;
+        return false;
+      }
+{{~ end ~}}
+      out.type = CommandType::{{ command.Name }};
+      out.slotCount = slotCount;
+      out.flags = flags;
+      out.{{ command.Name }} = payload;
+      cursor_ += k{{ command.Name }}CommandBytes;
+      return true;
+    }
+{{~ end ~}}
+    default:
+      error_ = ReaderError::UnknownCommand;
+      return false;
+    }
+  }
+
+  bool TryReadNextRaw(RawCommandView& out) {
+    if (error_ != ReaderError::None)
+      return false;
+    if (cursor_ == nullptr || cursor_ >= commandEnd_)
+      return false;
+    if (cursor_ + kCommandHeaderBytes > commandEnd_) {
+      error_ = ReaderError::TruncatedCommandHeader;
+      return false;
+    }
+
+    const auto* command = cursor_;
+    const std::uint16_t kind = ReadU16(command + kCommandKindOffset);
+    const std::uint16_t slotCount = ReadU16(command + kCommandSlotCountOffset);
+    const std::uint16_t flags = ReadU16(command + kCommandFlagsOffset);
+    if (slotCount == 0) {
+      error_ = ReaderError::InvalidSlotCount;
+      return false;
+    }
+
+    const std::uint64_t commandBytes64 =
+        static_cast<std::uint64_t>(slotCount) * static_cast<std::uint64_t>(kSlotBytes);
+    if (commandBytes64 >
+        static_cast<std::uint64_t>(commandEnd_ - cursor_)) {
+      error_ = ReaderError::TruncatedCommand;
+      return false;
+    }
+
+    switch (kind) {
+{{~ for command in Commands ~}}
+    case kCmd{{ command.Name }}:
+      if (slotCount != k{{ command.Name }}SlotCount) {
+        error_ = ReaderError::InvalidSlotCount;
+        return false;
+      }
+{{~ for field in command.BlobFields ~}}
+      if (!ValidateBlobRef({{ field.CppReadExpression }})) {
+        error_ = ReaderError::BlobOutOfRange;
+        return false;
+      }
+{{~ end ~}}
+      out.type = CommandType::{{ command.Name }};
+      out.slotCount = slotCount;
+      out.flags = flags;
+      out.commandData = command;
+      cursor_ += k{{ command.Name }}CommandBytes;
+      return true;
 {{~ end ~}}
     default:
       error_ = ReaderError::UnknownCommand;

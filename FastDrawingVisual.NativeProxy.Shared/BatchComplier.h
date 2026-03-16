@@ -35,7 +35,7 @@ class BatchCompiler {
   int height_ = 0;
   float widthF_ = 0.0f;
   float heightF_ = 0.0f;
-  fdv::protocol::Command pendingCommand_{};
+  fdv::protocol::RawCommandView pendingCommand_{};
   bool hasPendingCommand_ = false;
   BatchCompileStats lastBatchStats_{};
   std::vector<ShapeInstance> shapeInstances_;

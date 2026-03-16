@@ -95,13 +95,42 @@ ShapeInstance MakeFillRectInstance(const fdv::protocol::FillRectPayload& payload
                            ShapeInstanceType::FillRect);
 }
 
+ShapeInstance MakeFillRectInstance(const std::uint8_t* command) {
+  return MakeShapeInstance(
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillRectXOffset),
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillRectYOffset),
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillRectWidthOffset),
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillRectHeightOffset),
+      0.0f, 0.0f, 0.0f, 0.0f,
+      ToPremultipliedColor(
+          fdv::protocol::ReadColorArgb8(command +
+                                        fdv::protocol::kFillRectColorOffset)),
+      TransparentColor(), 0.0f, 0.0f, ShapeInstanceType::FillRect);
+}
+
 ShapeInstance MakeStrokeRectInstance(
     const fdv::protocol::StrokeRectPayload& payload) {
   return MakeShapeInstance(payload.x, payload.y, payload.width, payload.height,
                            0.0f, 0.0f, 0.0f, 0.0f, TransparentColor(),
                            ToPremultipliedColor(payload.color),
-                           (std::max)(1.0f, payload.thickness), 0.0f,
-                           ShapeInstanceType::StrokeRect);
+                            (std::max)(1.0f, payload.thickness), 0.0f,
+                            ShapeInstanceType::StrokeRect);
+}
+
+ShapeInstance MakeStrokeRectInstance(const std::uint8_t* command) {
+  return MakeShapeInstance(
+      fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRectXOffset),
+      fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRectYOffset),
+      fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRectWidthOffset),
+      fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRectHeightOffset),
+      0.0f, 0.0f, 0.0f, 0.0f, TransparentColor(),
+      ToPremultipliedColor(
+          fdv::protocol::ReadColorArgb8(command +
+                                        fdv::protocol::kStrokeRectColorOffset)),
+      (std::max)(
+          1.0f, fdv::protocol::ReadF32(command +
+                                       fdv::protocol::kStrokeRectThicknessOffset)),
+      0.0f, ShapeInstanceType::StrokeRect);
 }
 
 ShapeInstance MakeFillEllipseInstance(
@@ -115,6 +144,24 @@ ShapeInstance MakeFillEllipseInstance(
                            ShapeInstanceType::FillEllipse);
 }
 
+ShapeInstance MakeFillEllipseInstance(const std::uint8_t* command) {
+  const float centerX =
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillEllipseCenterXOffset);
+  const float centerY =
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillEllipseCenterYOffset);
+  const float radiusX =
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillEllipseRadiusXOffset);
+  const float radiusY =
+      fdv::protocol::ReadF32(command + fdv::protocol::kFillEllipseRadiusYOffset);
+  return MakeShapeInstance(
+      centerX - radiusX, centerY - radiusY, radiusX * 2.0f, radiusY * 2.0f,
+      0.0f, 0.0f, 0.0f, 0.0f,
+      ToPremultipliedColor(
+          fdv::protocol::ReadColorArgb8(command +
+                                        fdv::protocol::kFillEllipseColorOffset)),
+      TransparentColor(), 0.0f, 0.0f, ShapeInstanceType::FillEllipse);
+}
+
 ShapeInstance MakeStrokeEllipseInstance(
     const fdv::protocol::StrokeEllipsePayload& payload) {
   const float thickness = (std::max)(1.0f, payload.thickness);
@@ -125,6 +172,29 @@ ShapeInstance MakeStrokeEllipseInstance(
       outerRadiusX * 2.0f, outerRadiusY * 2.0f, 0.0f, 0.0f, 0.0f, 0.0f,
       TransparentColor(), ToPremultipliedColor(payload.color), thickness, 0.0f,
       ShapeInstanceType::StrokeEllipse);
+}
+
+ShapeInstance MakeStrokeEllipseInstance(const std::uint8_t* command) {
+  const float centerX = fdv::protocol::ReadF32(
+      command + fdv::protocol::kStrokeEllipseCenterXOffset);
+  const float centerY = fdv::protocol::ReadF32(
+      command + fdv::protocol::kStrokeEllipseCenterYOffset);
+  const float radiusX = fdv::protocol::ReadF32(
+      command + fdv::protocol::kStrokeEllipseRadiusXOffset);
+  const float radiusY = fdv::protocol::ReadF32(
+      command + fdv::protocol::kStrokeEllipseRadiusYOffset);
+  const float thickness =
+      (std::max)(1.0f, fdv::protocol::ReadF32(
+                           command +
+                           fdv::protocol::kStrokeEllipseThicknessOffset));
+  const float outerRadiusX = radiusX + thickness * 0.5f;
+  const float outerRadiusY = radiusY + thickness * 0.5f;
+  return MakeShapeInstance(
+      centerX - outerRadiusX, centerY - outerRadiusY, outerRadiusX * 2.0f,
+      outerRadiusY * 2.0f, 0.0f, 0.0f, 0.0f, 0.0f, TransparentColor(),
+      ToPremultipliedColor(fdv::protocol::ReadColorArgb8(
+          command + fdv::protocol::kStrokeEllipseColorOffset)),
+      thickness, 0.0f, ShapeInstanceType::StrokeEllipse);
 }
 
 ShapeInstance MakeLineInstance(const fdv::protocol::LinePayload& payload) {
@@ -141,6 +211,47 @@ ShapeInstance MakeLineInstance(const fdv::protocol::LinePayload& payload) {
       payload.y0 - centerY, payload.x1 - centerX, payload.y1 - centerY,
       TransparentColor(), ToPremultipliedColor(payload.color), thickness, 0.0f,
       ShapeInstanceType::Line);
+}
+
+ShapeInstance MakeLineInstance(const std::uint8_t* command) {
+  const float x0 = fdv::protocol::ReadF32(command + fdv::protocol::kLineX0Offset);
+  const float y0 = fdv::protocol::ReadF32(command + fdv::protocol::kLineY0Offset);
+  const float x1 = fdv::protocol::ReadF32(command + fdv::protocol::kLineX1Offset);
+  const float y1 = fdv::protocol::ReadF32(command + fdv::protocol::kLineY1Offset);
+  const float thickness =
+      (std::max)(1.0f,
+                 fdv::protocol::ReadF32(command +
+                                        fdv::protocol::kLineThicknessOffset));
+  const float halfThickness = thickness * 0.5f;
+  const float minX = (std::min)(x0, x1) - halfThickness;
+  const float minY = (std::min)(y0, y1) - halfThickness;
+  const float maxX = (std::max)(x0, x1) + halfThickness;
+  const float maxY = (std::max)(y0, y1) + halfThickness;
+  const float centerX = (minX + maxX) * 0.5f;
+  const float centerY = (minY + maxY) * 0.5f;
+  return MakeShapeInstance(
+      minX, minY, maxX - minX, maxY - minY, x0 - centerX, y0 - centerY,
+      x1 - centerX, y1 - centerY, TransparentColor(),
+      ToPremultipliedColor(
+          fdv::protocol::ReadColorArgb8(command +
+                                        fdv::protocol::kLineColorOffset)),
+      thickness, 0.0f, ShapeInstanceType::Line);
+}
+
+fdv::protocol::DrawTextRunPayload ReadDrawTextRunPayload(
+    const std::uint8_t* command) {
+  fdv::protocol::DrawTextRunPayload payload{};
+  payload.x = fdv::protocol::ReadF32(command + fdv::protocol::kDrawTextRunXOffset);
+  payload.y = fdv::protocol::ReadF32(command + fdv::protocol::kDrawTextRunYOffset);
+  payload.fontSize =
+      fdv::protocol::ReadF32(command + fdv::protocol::kDrawTextRunFontSizeOffset);
+  payload.color =
+      fdv::protocol::ReadColorArgb8(command + fdv::protocol::kDrawTextRunColorOffset);
+  payload.textUtf8 =
+      fdv::protocol::ReadBlobRef(command + fdv::protocol::kDrawTextRunTextUtf8Offset);
+  payload.fontFamilyUtf8 = fdv::protocol::ReadBlobRef(
+      command + fdv::protocol::kDrawTextRunFontFamilyUtf8Offset);
+  return payload;
 }
 
 bool IsShapeCommand(fdv::protocol::CommandType type) {
@@ -202,6 +313,19 @@ void BatchCompiler::Reset(int width, int height, const void* commands,
   heightF_ = static_cast<float>(height);
   hasPendingCommand_ = false;
   lastBatchStats_ = {};
+  if (commandBytes > 0) {
+    const std::size_t shapeCapacityHint =
+        static_cast<std::size_t>(commandBytes / fdv::protocol::kSlotBytes);
+    if (shapeInstances_.capacity() < shapeCapacityHint) {
+      shapeInstances_.reserve(shapeCapacityHint);
+    }
+
+    const std::size_t textCapacityHint = static_cast<std::size_t>(
+        commandBytes / fdv::protocol::kDrawTextRunCommandBytes);
+    if (textItems_.capacity() < textCapacityHint) {
+      textItems_.reserve(textCapacityHint);
+    }
+  }
   shapeInstances_.clear();
   textItems_.clear();
 }
@@ -215,13 +339,13 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
   shapeInstances_.clear();
   textItems_.clear();
 
-  fdv::protocol::Command command{};
+  fdv::protocol::RawCommandView command{};
   if (hasPendingCommand_) {
     command = pendingCommand_;
     hasPendingCommand_ = false;
   } else {
     const auto readStart = std::chrono::steady_clock::now();
-    const bool hasCommand = reader_->TryReadNext(command);
+    const bool hasCommand = reader_->TryReadNextRaw(command);
     const auto readEnd = std::chrono::steady_clock::now();
     lastBatchStats_.commandReadMs += DurationMs(readStart, readEnd);
     if (!hasCommand) {
@@ -241,9 +365,8 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
   if (kind == BatchKind::Clear) {
     AccumulateCommandStats(lastBatchStats_, command.type);
 
-    const auto& payload =
-        std::get<fdv::protocol::ClearPayload>(command.payload);
-    const ColorF clearColor = ToPremultipliedColor(payload.color);
+    const auto clearColor = ToPremultipliedColor(fdv::protocol::ReadColorArgb8(
+        command.commandData + fdv::protocol::kClearColorOffset));
     out.clearColor[0] = clearColor.r;
     out.clearColor[1] = clearColor.g;
     out.clearColor[2] = clearColor.b;
@@ -251,48 +374,43 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
     return true;
   }
 
+  // Batch-level timing avoids per-command steady_clock overhead in the hot path.
+  const auto buildStart = std::chrono::steady_clock::now();
   while (true) {
-    const auto appendStart = std::chrono::steady_clock::now();
-
     switch (command.type) {
     case fdv::protocol::CommandType::FillRect:
-      shapeInstances_.push_back(MakeFillRectInstance(
-          std::get<fdv::protocol::FillRectPayload>(command.payload)));
+      shapeInstances_.push_back(MakeFillRectInstance(command.commandData));
       AccumulateCommandStats(lastBatchStats_, command.type);
       ++lastBatchStats_.shapeInstanceCount;
       break;
 
     case fdv::protocol::CommandType::StrokeRect:
-      shapeInstances_.push_back(MakeStrokeRectInstance(
-          std::get<fdv::protocol::StrokeRectPayload>(command.payload)));
+      shapeInstances_.push_back(MakeStrokeRectInstance(command.commandData));
       AccumulateCommandStats(lastBatchStats_, command.type);
       ++lastBatchStats_.shapeInstanceCount;
       break;
 
     case fdv::protocol::CommandType::FillEllipse:
-      shapeInstances_.push_back(MakeFillEllipseInstance(
-          std::get<fdv::protocol::FillEllipsePayload>(command.payload)));
+      shapeInstances_.push_back(MakeFillEllipseInstance(command.commandData));
       AccumulateCommandStats(lastBatchStats_, command.type);
       ++lastBatchStats_.shapeInstanceCount;
       break;
 
     case fdv::protocol::CommandType::StrokeEllipse:
-      shapeInstances_.push_back(MakeStrokeEllipseInstance(
-          std::get<fdv::protocol::StrokeEllipsePayload>(command.payload)));
+      shapeInstances_.push_back(
+          MakeStrokeEllipseInstance(command.commandData));
       AccumulateCommandStats(lastBatchStats_, command.type);
       ++lastBatchStats_.shapeInstanceCount;
       break;
 
     case fdv::protocol::CommandType::Line:
-      shapeInstances_.push_back(MakeLineInstance(
-          std::get<fdv::protocol::LinePayload>(command.payload)));
+      shapeInstances_.push_back(MakeLineInstance(command.commandData));
       AccumulateCommandStats(lastBatchStats_, command.type);
       ++lastBatchStats_.shapeInstanceCount;
       break;
 
     case fdv::protocol::CommandType::DrawTextRun: {
-      const auto& payload =
-          std::get<fdv::protocol::DrawTextRunPayload>(command.payload);
+      const auto payload = ReadDrawTextRunPayload(command.commandData);
       fdv::protocol::BlobSpan textUtf8{};
       fdv::protocol::BlobSpan fontFamilyUtf8{};
       reader_->TryResolveBlob(payload.textUtf8, textUtf8);
@@ -325,14 +443,8 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
       break;
     }
 
-    const auto appendEnd = std::chrono::steady_clock::now();
-    lastBatchStats_.commandBuildMs += DurationMs(appendStart, appendEnd);
-
-    fdv::protocol::Command next{};
-    const auto readStart = std::chrono::steady_clock::now();
-    const bool hasNext = reader_->TryReadNext(next);
-    const auto readEnd = std::chrono::steady_clock::now();
-    lastBatchStats_.commandReadMs += DurationMs(readStart, readEnd);
+    fdv::protocol::RawCommandView next{};
+    const bool hasNext = reader_->TryReadNextRaw(next);
     if (!hasNext) {
       break;
     }
@@ -357,6 +469,8 @@ bool BatchCompiler::TryGetNextBatch(CompiledBatchView& out,
 
     command = next;
   }
+  const auto buildEnd = std::chrono::steady_clock::now();
+  lastBatchStats_.commandBuildMs = DurationMs(buildStart, buildEnd);
 
   if (kind == BatchKind::ShapeInstances) {
     out.shapeInstances = shapeInstances_.data();
