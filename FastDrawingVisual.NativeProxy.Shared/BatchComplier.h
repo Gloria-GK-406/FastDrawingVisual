@@ -30,12 +30,6 @@ class BatchCompiler {
   const BatchCompileStats& lastBatchStats() const { return lastBatchStats_; }
 
  private:
-  bool TryReadNextCommand(fdv::protocol::Command& out, HRESULT& outErrorHr);
-  bool AppendTriangleCommand(const fdv::protocol::Command& command,
-                             HRESULT& outErrorHr);
-  bool AppendTextCommand(const fdv::protocol::Command& command,
-                         HRESULT& outErrorHr);
-
   std::optional<fdv::protocol::CommandReader> reader_;
   int width_ = 0;
   int height_ = 0;
@@ -44,7 +38,7 @@ class BatchCompiler {
   fdv::protocol::Command pendingCommand_{};
   bool hasPendingCommand_ = false;
   BatchCompileStats lastBatchStats_{};
-  std::vector<TriangleVertex> triangleVertices_;
+  std::vector<ShapeInstance> shapeInstances_;
   std::vector<TextBatchItem> textItems_;
 };
 

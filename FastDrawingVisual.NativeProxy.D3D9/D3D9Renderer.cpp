@@ -529,6 +529,20 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       break;
     }
 
+    case batch::BatchKind::ShapeInstances: {
+      draw::InstanceBatchDrawContext instanceContext{};
+      instanceContext.device = device;
+      instanceContext.vertexDeclaration = state_->vertexDeclaration;
+      instanceContext.vertexShader = state_->vertexShader;
+      instanceContext.pixelShader = state_->pixelShader;
+      instanceContext.viewportWidth = state_->width;
+      instanceContext.viewportHeight = state_->height;
+      const draw::ShapeInstanceData instanceData{batch.shapeInstances,
+                                                 batch.shapeInstanceCount};
+      submitHr = draw::DrawShapeBatch(instanceContext, instanceData);
+      break;
+    }
+
     case batch::BatchKind::Text: {
       const draw::TextBatchDrawContext textContext{};
       const draw::DrawTextData textData{batch.textItems, batch.textItemCount};

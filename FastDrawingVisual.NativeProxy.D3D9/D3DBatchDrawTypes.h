@@ -27,6 +27,30 @@ struct TriangleVertexData {
   int vertexCount = 0;
 };
 
+struct InstanceBatchDrawContext {
+  IDirect3DDevice9* device = nullptr;
+  IDirect3DVertexDeclaration9* vertexDeclaration = nullptr;
+  IDirect3DVertexShader9* vertexShader = nullptr;
+  IDirect3DPixelShader9* pixelShader = nullptr;
+  int viewportWidth = 0;
+  int viewportHeight = 0;
+};
+
+struct RectInstanceData {
+  const batch::RectInstance* instances = nullptr;
+  int instanceCount = 0;
+};
+
+struct EllipseInstanceData {
+  const batch::EllipseInstance* instances = nullptr;
+  int instanceCount = 0;
+};
+
+struct ShapeInstanceData {
+  const batch::ShapeInstance* instances = nullptr;
+  int instanceCount = 0;
+};
+
 struct TextBatchDrawContext {};
 
 struct DrawTextData {

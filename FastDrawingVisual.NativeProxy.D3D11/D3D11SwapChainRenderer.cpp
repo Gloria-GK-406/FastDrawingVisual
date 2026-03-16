@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cwchar>
 #include <d3dcompiler.h>
 #include <d2d1_1.h>
@@ -13,6 +14,7 @@
 #include <dwrite.h>
 #include <dxgi1_2.h>
 #include <memory>
+#include <vector>
 #include <wrl/client.h>
 
 #pragma comment(lib, "d3dcompiler.lib")
@@ -28,13 +30,27 @@ struct D3D11SwapChainRendererState {
   ComPtr<IDXGIFactory2> dxgiFactory = nullptr;
   ComPtr<IDXGISwapChain1> swapChain = nullptr;
   ComPtr<ID3D11RenderTargetView> rtv0 = nullptr;
-  ComPtr<ID3D11VertexShader> vertexShader = nullptr;
-  ComPtr<ID3D11PixelShader> pixelShader = nullptr;
-  ComPtr<ID3D11InputLayout> inputLayout = nullptr;
+  ComPtr<ID3D11VertexShader> triangleVertexShader = nullptr;
+  ComPtr<ID3D11PixelShader> trianglePixelShader = nullptr;
+  ComPtr<ID3D11InputLayout> triangleInputLayout = nullptr;
+  ComPtr<ID3D11VertexShader> rectVertexShader = nullptr;
+  ComPtr<ID3D11PixelShader> rectPixelShader = nullptr;
+  ComPtr<ID3D11InputLayout> rectInputLayout = nullptr;
+  ComPtr<ID3D11VertexShader> ellipseVertexShader = nullptr;
+  ComPtr<ID3D11PixelShader> ellipsePixelShader = nullptr;
+  ComPtr<ID3D11InputLayout> ellipseInputLayout = nullptr;
   ComPtr<ID3D11BlendState> blendState = nullptr;
   ComPtr<ID3D11RasterizerState> rasterizerState = nullptr;
+  ComPtr<ID3D11Buffer> unitQuadVertexBuffer = nullptr;
+  ComPtr<ID3D11Buffer> fillEllipseVertexBuffer = nullptr;
+  UINT fillEllipseVertexCount = 0;
+  ComPtr<ID3D11Buffer> strokeEllipseVertexBuffer = nullptr;
+  UINT strokeEllipseVertexCount = 0;
   ComPtr<ID3D11Buffer> dynamicVertexBuffer = nullptr;
   UINT dynamicVertexCapacityBytes = 0;
+  ComPtr<ID3D11Buffer> dynamicInstanceBuffer = nullptr;
+  UINT dynamicInstanceCapacityBytes = 0;
+  ComPtr<ID3D11Buffer> viewConstantsBuffer = nullptr;
   ComPtr<ID2D1Factory1> d2dFactory = nullptr;
   ComPtr<ID2D1Device> d2dDevice = nullptr;
   ComPtr<ID2D1DeviceContext> d2dContext = nullptr;
@@ -57,8 +73,10 @@ struct SubmitFrameDiagnostics {
   int textRunCommandCount = 0;
   int clearBatchCount = 0;
   int triangleBatchCount = 0;
+  int shapeBatchCount = 0;
   int textBatchCount = 0;
   int triangleVertexCount = 0;
+  int shapeInstanceCount = 0;
   int maxTriangleBatchVertexCount = 0;
   int textItemCount = 0;
   int maxTextBatchItemCount = 0;
@@ -94,8 +112,13 @@ constexpr const wchar_t* kFpsMetricFormat =
 constexpr UINT kBufferCount = 3;
 constexpr UINT kCreationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 constexpr DXGI_FORMAT kSwapChainFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
-constexpr const wchar_t* kTriangleVertexShaderObject = L"TriangleBatchVS.cso";
-constexpr const wchar_t* kTrianglePixelShaderObject = L"TriangleBatchPS.cso";
+constexpr const wchar_t* kTriangleVertexShaderObject = L"Shader\\TriangleBatchVS.cso";
+constexpr const wchar_t* kTrianglePixelShaderObject = L"Shader\\TriangleBatchPS.cso";
+constexpr const wchar_t* kRectVertexShaderObject = L"Shader\\RectInstanceVS.cso";
+constexpr const wchar_t* kRectPixelShaderObject = L"Shader\\RectInstancePS.cso";
+constexpr const wchar_t* kEllipseVertexShaderObject = L"Shader\\EllipseInstanceVS.cso";
+constexpr const wchar_t* kEllipsePixelShaderObject = L"Shader\\EllipseInstancePS.cso";
+constexpr int kEllipseSegmentCount = 48;
 
 std::uint64_t QueryQpcNow() {
   LARGE_INTEGER value{};
@@ -123,6 +146,139 @@ HRESULT LoadShaderBlob(const wchar_t* filePath, ComPtr<ID3DBlob>& blobOut) {
   if (FAILED(hr) || blobOut == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
+  return S_OK;
+}
+
+HRESULT EnsureDynamicBuffer(ID3D11Device* device, UINT byteWidth, UINT bindFlags,
+                            ComPtr<ID3D11Buffer>& bufferOut) {
+  if (device == nullptr || byteWidth == 0) {
+    return E_INVALIDARG;
+  }
+
+  if (bufferOut != nullptr) {
+    return S_OK;
+  }
+
+  D3D11_BUFFER_DESC bufferDesc = {};
+  bufferDesc.ByteWidth = byteWidth;
+  bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+  bufferDesc.BindFlags = bindFlags;
+  bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+  const HRESULT hr =
+      device->CreateBuffer(&bufferDesc, nullptr, bufferOut.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || bufferOut == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  return S_OK;
+}
+
+HRESULT EnsureUnitQuadVertexBuffer(ID3D11Device* device,
+                                   ComPtr<ID3D11Buffer>& bufferOut) {
+  if (device == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  if (bufferOut != nullptr) {
+    return S_OK;
+  }
+
+  constexpr float kUnitQuadVertices[8] = {
+      -1.0f, -1.0f,
+       1.0f, -1.0f,
+      -1.0f,  1.0f,
+       1.0f,  1.0f,
+  };
+
+  D3D11_BUFFER_DESC bufferDesc = {};
+  bufferDesc.ByteWidth = static_cast<UINT>(sizeof(kUnitQuadVertices));
+  bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
+  bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+  D3D11_SUBRESOURCE_DATA initialData = {};
+  initialData.pSysMem = kUnitQuadVertices;
+
+  const HRESULT hr =
+      device->CreateBuffer(&bufferDesc, &initialData,
+                           bufferOut.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || bufferOut == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  return S_OK;
+}
+
+HRESULT EnsureEllipseTemplateVertexBuffer(
+    ID3D11Device* device, bool stroke, ComPtr<ID3D11Buffer>& bufferOut,
+    UINT& vertexCountOut) {
+  if (device == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  if (bufferOut != nullptr && vertexCountOut > 0) {
+    return S_OK;
+  }
+
+  struct EllipseTemplateVertex {
+    float x;
+    float y;
+    float blend;
+  };
+
+  std::vector<EllipseTemplateVertex> vertices;
+  if (!stroke) {
+    vertices.reserve(static_cast<std::size_t>(kEllipseSegmentCount) * 3u);
+    for (int i = 0; i < kEllipseSegmentCount; ++i) {
+      const float a0 = (2.0f * 3.14159265358979323846f * static_cast<float>(i)) /
+                       static_cast<float>(kEllipseSegmentCount);
+      const float a1 =
+          (2.0f * 3.14159265358979323846f * static_cast<float>(i + 1)) /
+          static_cast<float>(kEllipseSegmentCount);
+      vertices.push_back({0.0f, 0.0f, 0.0f});
+      vertices.push_back({static_cast<float>(std::cos(a0)),
+                          static_cast<float>(std::sin(a0)), 1.0f});
+      vertices.push_back({static_cast<float>(std::cos(a1)),
+                          static_cast<float>(std::sin(a1)), 1.0f});
+    }
+  } else {
+    vertices.reserve(static_cast<std::size_t>(kEllipseSegmentCount) * 6u);
+    for (int i = 0; i < kEllipseSegmentCount; ++i) {
+      const float a0 = (2.0f * 3.14159265358979323846f * static_cast<float>(i)) /
+                       static_cast<float>(kEllipseSegmentCount);
+      const float a1 =
+          (2.0f * 3.14159265358979323846f * static_cast<float>(i + 1)) /
+          static_cast<float>(kEllipseSegmentCount);
+      const float c0 = static_cast<float>(std::cos(a0));
+      const float s0 = static_cast<float>(std::sin(a0));
+      const float c1 = static_cast<float>(std::cos(a1));
+      const float s1 = static_cast<float>(std::sin(a1));
+      vertices.push_back({c0, s0, 1.0f});
+      vertices.push_back({c1, s1, 1.0f});
+      vertices.push_back({c0, s0, 0.0f});
+      vertices.push_back({c1, s1, 1.0f});
+      vertices.push_back({c1, s1, 0.0f});
+      vertices.push_back({c0, s0, 0.0f});
+    }
+  }
+
+  D3D11_BUFFER_DESC bufferDesc = {};
+  bufferDesc.ByteWidth =
+      static_cast<UINT>(vertices.size() * sizeof(EllipseTemplateVertex));
+  bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
+  bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+  D3D11_SUBRESOURCE_DATA initialData = {};
+  initialData.pSysMem = vertices.data();
+
+  const HRESULT hr =
+      device->CreateBuffer(&bufferDesc, &initialData,
+                           bufferOut.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || bufferOut == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  vertexCountOut = static_cast<UINT>(vertices.size());
   return S_OK;
 }
 
@@ -165,6 +321,7 @@ void AccumulateCompileStats(SubmitFrameDiagnostics& diagnostics,
   diagnostics.lineCommandCount += stats.commands.lineCount;
   diagnostics.textRunCommandCount += stats.commands.drawTextRunCount;
   diagnostics.triangleVertexCount += stats.triangleVertexCount;
+  diagnostics.shapeInstanceCount += stats.shapeInstanceCount;
   diagnostics.textItemCount += stats.textItemCount;
   diagnostics.textCharCount += stats.textCharCount;
   diagnostics.commandReadMs += stats.commandReadMs;
@@ -179,7 +336,7 @@ void LogFrameBreakdown(const void* renderer, std::uint64_t frameId, int width,
       message,
       L"frame breakdown renderer=0x%p frame=%llu size=%dx%d layers=%d cmds=%d "
       L"cmds(clear=%d fillRect=%d strokeRect=%d fillEllipse=%d strokeEllipse=%d line=%d textRun=%d) "
-      L"batches(clear=%d tri=%d text=%d) triVerts=%d maxTriBatchVerts=%d textItems=%d maxTextBatchItems=%d textChars=%d "
+      L"batches(clear=%d tri=%d shape=%d text=%d) triVerts=%d shapeInstances=%d maxTriBatchVerts=%d textItems=%d maxTextBatchItems=%d textChars=%d "
       L"beginMs=%.3f compileMs=%.3f readMs=%.3f buildMs=%.3f triCpuMs=%.3f triEnsureMs=%.3f triUploadMs=%.3f triDrawMs=%.3f "
       L"textMs=%.3f textFlushMs=%.3f textRecordMs=%.3f textEndMs=%.3f presentMs=%.3f vbResizes=%d uploadedBytes=%u maxVbBytes=%u totalMs=%.3f.",
       renderer, static_cast<unsigned long long>(frameId), width, height,
@@ -189,10 +346,12 @@ void LogFrameBreakdown(const void* renderer, std::uint64_t frameId, int width,
       diagnostics.fillEllipseCommandCount,
       diagnostics.strokeEllipseCommandCount, diagnostics.lineCommandCount,
       diagnostics.textRunCommandCount, diagnostics.clearBatchCount,
-      diagnostics.triangleBatchCount, diagnostics.textBatchCount,
-      diagnostics.triangleVertexCount, diagnostics.maxTriangleBatchVertexCount,
-      diagnostics.textItemCount, diagnostics.maxTextBatchItemCount,
-      diagnostics.textCharCount, diagnostics.beginFrameMs,
+      diagnostics.triangleBatchCount, diagnostics.shapeBatchCount,
+      diagnostics.textBatchCount, diagnostics.triangleVertexCount,
+      diagnostics.shapeInstanceCount,
+      diagnostics.maxTriangleBatchVertexCount, diagnostics.textItemCount,
+      diagnostics.maxTextBatchItemCount, diagnostics.textCharCount,
+      diagnostics.beginFrameMs,
       diagnostics.compileMs, diagnostics.commandReadMs,
       diagnostics.commandBuildMs, diagnostics.triangleCpuMs,
       diagnostics.triangleEnsureVertexBufferMs,
@@ -216,10 +375,10 @@ void LogStageFailure(const void* renderer, std::uint64_t frameId,
   swprintf_s(
       message,
       L"submit failed renderer=0x%p frame=%llu stage=%ls hr=0x%08X size=%dx%d "
-      L"layers=%d cmds=%d triVerts=%d textItems=%d compileMs=%.3f triCpuMs=%.3f textMs=%.3f presentMs=%.3f.",
+      L"layers=%d cmds=%d shapeInstances=%d textItems=%d compileMs=%.3f triCpuMs=%.3f textMs=%.3f presentMs=%.3f.",
       renderer, static_cast<unsigned long long>(frameId), stage,
       static_cast<unsigned int>(hr), width, height, diagnostics.layerCount,
-      diagnostics.commandCount, diagnostics.triangleVertexCount,
+      diagnostics.commandCount, diagnostics.shapeInstanceCount,
       diagnostics.textItemCount, diagnostics.compileMs,
       diagnostics.triangleCpuMs, diagnostics.textDrawMs,
       diagnostics.presentMs);
@@ -347,9 +506,9 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
                      batch.triangleVertexCount);
       draw::TriangleBatchDrawContext triangleContext{};
       triangleContext.context = state_->context;
-      triangleContext.inputLayout = state_->inputLayout;
-      triangleContext.vertexShader = state_->vertexShader;
-      triangleContext.pixelShader = state_->pixelShader;
+      triangleContext.inputLayout = state_->triangleInputLayout;
+      triangleContext.vertexShader = state_->triangleVertexShader;
+      triangleContext.pixelShader = state_->trianglePixelShader;
       triangleContext.blendState = state_->blendState;
       triangleContext.rasterizerState = state_->rasterizerState;
       triangleContext.vertexBuffer = state_->dynamicVertexBuffer;
@@ -387,6 +546,64 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
             static_cast<unsigned int>(drawHr), batch.triangleVertexCount,
             triangleStats.uploadedBytes,
             triangleStats.vertexBufferCapacityBytes);
+        FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
+        FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
+        return drawHr;
+      }
+      break;
+    }
+
+    case batch::BatchKind::ShapeInstances: {
+      ++diagnostics.shapeBatchCount;
+      draw::InstanceBatchDrawContext instanceContext{};
+      instanceContext.context = state_->context;
+      instanceContext.inputLayout = state_->rectInputLayout;
+      instanceContext.vertexShader = state_->rectVertexShader;
+      instanceContext.pixelShader = state_->rectPixelShader;
+      instanceContext.blendState = state_->blendState;
+      instanceContext.rasterizerState = state_->rasterizerState;
+      instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer;
+      instanceContext.geometryVertexStrideBytes = sizeof(float) * 2;
+      instanceContext.geometryVertexCount = 4;
+      instanceContext.instanceBuffer = state_->dynamicInstanceBuffer;
+      instanceContext.instanceBufferCapacityBytes =
+          state_->dynamicInstanceCapacityBytes;
+      instanceContext.viewConstantsBuffer = state_->viewConstantsBuffer;
+      instanceContext.viewportWidth = static_cast<float>(width_);
+      instanceContext.viewportHeight = static_cast<float>(height_);
+
+      const draw::ShapeInstanceData instanceData{batch.shapeInstances,
+                                                 batch.shapeInstanceCount};
+      draw::InstanceBatchDrawStats instanceStats{};
+      const auto instanceStart = std::chrono::steady_clock::now();
+      const HRESULT drawHr = draw::DrawShapeInstanceBatch(instanceContext,
+                                                          instanceData,
+                                                          &instanceStats);
+      const auto instanceEnd = std::chrono::steady_clock::now();
+      diagnostics.triangleCpuMs += DurationMs(instanceStart, instanceEnd);
+      diagnostics.triangleEnsureVertexBufferMs +=
+          instanceStats.ensureInstanceBufferMs;
+      diagnostics.triangleUploadMs += instanceStats.uploadInstanceDataMs;
+      diagnostics.triangleDrawCallMs += instanceStats.issueDrawMs;
+      diagnostics.vertexBytesUploaded += instanceStats.uploadedBytes;
+      diagnostics.maxVertexBufferCapacityBytes =
+          (std::max)(diagnostics.maxVertexBufferCapacityBytes,
+                     instanceStats.instanceBufferCapacityBytes);
+      if (instanceStats.resizedInstanceBuffer) {
+        ++diagnostics.vertexBufferResizeCount;
+      }
+      state_->dynamicInstanceBuffer = instanceContext.instanceBuffer;
+      state_->dynamicInstanceCapacityBytes =
+          instanceContext.instanceBufferCapacityBytes;
+      if (FAILED(drawHr)) {
+        wchar_t message[512]{};
+        swprintf_s(
+            message,
+            L"shape instance batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X instances=%d uploadedBytes=%u vbBytes=%u.",
+            static_cast<void*>(this), layerIndex, batchIndex,
+            static_cast<unsigned int>(drawHr), batch.shapeInstanceCount,
+            instanceStats.uploadedBytes,
+            instanceStats.instanceBufferCapacityBytes);
         FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
         FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
         return drawHr;
@@ -835,48 +1052,104 @@ HRESULT D3D11SwapChainRenderer::CreateDrawPipeline() {
     return E_UNEXPECTED;
   }
 
-  if (state_->vertexShader != nullptr && state_->pixelShader != nullptr &&
-      state_->inputLayout != nullptr && state_->blendState != nullptr &&
-      state_->rasterizerState != nullptr) {
+  if (state_->triangleVertexShader != nullptr &&
+      state_->trianglePixelShader != nullptr &&
+      state_->triangleInputLayout != nullptr &&
+      state_->rectVertexShader != nullptr &&
+      state_->rectPixelShader != nullptr &&
+      state_->rectInputLayout != nullptr &&
+      state_->unitQuadVertexBuffer != nullptr &&
+      state_->viewConstantsBuffer != nullptr &&
+      state_->blendState != nullptr && state_->rasterizerState != nullptr) {
     return S_OK;
   }
 
-  ComPtr<ID3DBlob> vsBlob;
-  ComPtr<ID3DBlob> psBlob;
-  HRESULT hr = LoadShaderBlob(kTriangleVertexShaderObject, vsBlob);
+  ComPtr<ID3DBlob> triangleVsBlob;
+  ComPtr<ID3DBlob> trianglePsBlob;
+  ComPtr<ID3DBlob> rectVsBlob;
+  ComPtr<ID3DBlob> rectPsBlob;
+
+  HRESULT hr = LoadShaderBlob(kTriangleVertexShaderObject, triangleVsBlob);
   if (FAILED(hr)) {
     return hr;
   }
 
-  hr = LoadShaderBlob(kTrianglePixelShaderObject, psBlob);
+  hr = LoadShaderBlob(kTrianglePixelShaderObject, trianglePsBlob);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = LoadShaderBlob(kRectVertexShaderObject, rectVsBlob);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = LoadShaderBlob(kRectPixelShaderObject, rectPsBlob);
   if (FAILED(hr)) {
     return hr;
   }
 
   hr = state_->device->CreateVertexShader(
-      vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr,
-      state_->vertexShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->vertexShader == nullptr) {
+      triangleVsBlob->GetBufferPointer(), triangleVsBlob->GetBufferSize(),
+      nullptr, state_->triangleVertexShader.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->triangleVertexShader == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
   hr = state_->device->CreatePixelShader(
-      psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr,
-      state_->pixelShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->pixelShader == nullptr) {
+      trianglePsBlob->GetBufferPointer(), trianglePsBlob->GetBufferSize(),
+      nullptr, state_->trianglePixelShader.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->trianglePixelShader == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
-  D3D11_INPUT_ELEMENT_DESC inputLayout[] = {
+  hr = state_->device->CreateVertexShader(
+      rectVsBlob->GetBufferPointer(), rectVsBlob->GetBufferSize(), nullptr,
+      state_->rectVertexShader.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->rectVertexShader == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  hr = state_->device->CreatePixelShader(
+      rectPsBlob->GetBufferPointer(), rectPsBlob->GetBufferSize(), nullptr,
+      state_->rectPixelShader.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->rectPixelShader == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  D3D11_INPUT_ELEMENT_DESC triangleInputLayout[] = {
       {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
        D3D11_INPUT_PER_VERTEX_DATA, 0},
       {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12,
        D3D11_INPUT_PER_VERTEX_DATA, 0},
   };
   hr = state_->device->CreateInputLayout(
-      inputLayout, ARRAYSIZE(inputLayout), vsBlob->GetBufferPointer(),
-      vsBlob->GetBufferSize(), state_->inputLayout.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->inputLayout == nullptr) {
+      triangleInputLayout, ARRAYSIZE(triangleInputLayout),
+      triangleVsBlob->GetBufferPointer(), triangleVsBlob->GetBufferSize(),
+      state_->triangleInputLayout.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->triangleInputLayout == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  D3D11_INPUT_ELEMENT_DESC rectInputLayout[] = {
+      {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
+       D3D11_INPUT_PER_VERTEX_DATA, 0},
+      {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,
+       D3D11_INPUT_PER_INSTANCE_DATA, 1},
+      {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16,
+       D3D11_INPUT_PER_INSTANCE_DATA, 1},
+      {"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32,
+       D3D11_INPUT_PER_INSTANCE_DATA, 1},
+      {"TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48,
+       D3D11_INPUT_PER_INSTANCE_DATA, 1},
+      {"TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 64,
+       D3D11_INPUT_PER_INSTANCE_DATA, 1},
+  };
+  hr = state_->device->CreateInputLayout(
+      rectInputLayout, ARRAYSIZE(rectInputLayout),
+      rectVsBlob->GetBufferPointer(), rectVsBlob->GetBufferSize(),
+      state_->rectInputLayout.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->rectInputLayout == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
@@ -917,6 +1190,19 @@ HRESULT D3D11SwapChainRenderer::CreateDrawPipeline() {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
+  hr = EnsureDynamicBuffer(state_->device.Get(), 16u,
+                           D3D11_BIND_CONSTANT_BUFFER,
+                           state_->viewConstantsBuffer);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = EnsureUnitQuadVertexBuffer(state_->device.Get(),
+                                  state_->unitQuadVertexBuffer);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
   return S_OK;
 }
 
@@ -931,11 +1217,25 @@ void D3D11SwapChainRenderer::ReleaseRendererResources() {
   ReleaseRenderTargetResources();
   state_->dynamicVertexBuffer.Reset();
   state_->dynamicVertexCapacityBytes = 0;
+  state_->unitQuadVertexBuffer.Reset();
+  state_->fillEllipseVertexBuffer.Reset();
+  state_->fillEllipseVertexCount = 0;
+  state_->strokeEllipseVertexBuffer.Reset();
+  state_->strokeEllipseVertexCount = 0;
+  state_->dynamicInstanceBuffer.Reset();
+  state_->dynamicInstanceCapacityBytes = 0;
+  state_->viewConstantsBuffer.Reset();
   state_->rasterizerState.Reset();
   state_->blendState.Reset();
-  state_->inputLayout.Reset();
-  state_->pixelShader.Reset();
-  state_->vertexShader.Reset();
+  state_->ellipseInputLayout.Reset();
+  state_->ellipsePixelShader.Reset();
+  state_->ellipseVertexShader.Reset();
+  state_->rectInputLayout.Reset();
+  state_->rectPixelShader.Reset();
+  state_->rectVertexShader.Reset();
+  state_->triangleInputLayout.Reset();
+  state_->trianglePixelShader.Reset();
+  state_->triangleVertexShader.Reset();
   state_->swapChain.Reset();
   state_->dxgiFactory.Reset();
   state_->d2dContext.Reset();
@@ -965,21 +1265,31 @@ HRESULT D3D11SwapChainRenderer::CreateDeviceAndSwapChain() {
     return S_OK;
   }
 
-  HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                                 kCreationFlags, nullptr, 0, D3D11_SDK_VERSION,
-                                 state_->device.ReleaseAndGetAddressOf(), nullptr,
-                                 state_->context.ReleaseAndGetAddressOf());
+  const D3D_FEATURE_LEVEL featureLevels[] = {
+      D3D_FEATURE_LEVEL_11_0,
+      D3D_FEATURE_LEVEL_10_1,
+      D3D_FEATURE_LEVEL_10_0,
+  };
+  D3D_FEATURE_LEVEL createdFeatureLevel = D3D_FEATURE_LEVEL_10_0;
+
+  HRESULT hr = D3D11CreateDevice(
+      nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, kCreationFlags, featureLevels,
+      ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
+      state_->device.ReleaseAndGetAddressOf(), &createdFeatureLevel,
+      state_->context.ReleaseAndGetAddressOf());
   if (FAILED(hr)) {
-    hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
-                           kCreationFlags, nullptr, 0, D3D11_SDK_VERSION,
-                           state_->device.ReleaseAndGetAddressOf(), nullptr,
-                           state_->context.ReleaseAndGetAddressOf());
+    hr = D3D11CreateDevice(
+        nullptr, D3D_DRIVER_TYPE_WARP, nullptr, kCreationFlags, featureLevels,
+        ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
+        state_->device.ReleaseAndGetAddressOf(), &createdFeatureLevel,
+        state_->context.ReleaseAndGetAddressOf());
   }
 
   if (FAILED(hr) || state_->device == nullptr || state_->context == nullptr) {
     ReleaseRendererResources();
     return FAILED(hr) ? hr : E_FAIL;
   }
+  static_cast<void>(createdFeatureLevel);
 
   const HRESULT ensureFactoryHr = EnsureFactory();
   if (FAILED(ensureFactoryHr)) {

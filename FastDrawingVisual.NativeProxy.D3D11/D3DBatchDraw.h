@@ -17,6 +17,18 @@ HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
                           const TriangleVertexData& vertexData,
                           TriangleBatchDrawStats* stats = nullptr);
 
+HRESULT DrawShapeInstanceBatch(InstanceBatchDrawContext& context,
+                               const ShapeInstanceData& instanceData,
+                               InstanceBatchDrawStats* stats = nullptr);
+
+HRESULT DrawRectInstanceBatch(InstanceBatchDrawContext& context,
+                              const RectInstanceData& instanceData,
+                              InstanceBatchDrawStats* stats = nullptr);
+
+HRESULT DrawEllipseInstanceBatch(InstanceBatchDrawContext& context,
+                                 const EllipseInstanceData& instanceData,
+                                 InstanceBatchDrawStats* stats = nullptr);
+
 HRESULT DrawTextBatch(const TextBatchDrawContext& context,
                       TextFormatCacheStore& textFormatCache,
                       const DrawTextData& textData,

@@ -10,7 +10,16 @@ namespace fdv::nativeproxy::shared::batch {
 enum class BatchKind : std::uint8_t {
   Clear = 0,
   Triangles = 1,
-  Text = 2,
+  ShapeInstances = 2,
+  Text = 3,
+};
+
+enum class ShapeInstanceType : std::uint8_t {
+  FillRect = 0,
+  StrokeRect = 1,
+  FillEllipse = 2,
+  StrokeEllipse = 3,
+  Line = 4,
 };
 
 struct TriangleVertex {
@@ -21,6 +30,53 @@ struct TriangleVertex {
   float g;
   float b;
   float a;
+};
+
+struct RectInstance {
+  float x;
+  float y;
+  float width;
+  float height;
+  float thickness;
+  float r;
+  float g;
+  float b;
+  float a;
+};
+
+struct EllipseInstance {
+  float centerX;
+  float centerY;
+  float radiusX;
+  float radiusY;
+  float thickness;
+  float r;
+  float g;
+  float b;
+  float a;
+};
+
+struct ShapeInstance {
+  float x;
+  float y;
+  float width;
+  float height;
+  float data0x;
+  float data0y;
+  float data0z;
+  float data0w;
+  float fillR;
+  float fillG;
+  float fillB;
+  float fillA;
+  float strokeR;
+  float strokeG;
+  float strokeB;
+  float strokeA;
+  float strokeWidth;
+  float radius;
+  float type;
+  float flags;
 };
 
 struct TextBatchItem {
@@ -47,6 +103,7 @@ struct BatchCommandStats {
 struct BatchCompileStats {
   int32_t commandCount = 0;
   int32_t triangleVertexCount = 0;
+  int32_t shapeInstanceCount = 0;
   int32_t textItemCount = 0;
   int32_t textCharCount = 0;
   double commandReadMs = 0.0;
@@ -59,6 +116,8 @@ struct CompiledBatchView {
   float clearColor[4] = {};
   const TriangleVertex* triangleVertices = nullptr;
   int32_t triangleVertexCount = 0;
+  const ShapeInstance* shapeInstances = nullptr;
+  int32_t shapeInstanceCount = 0;
   const TextBatchItem* textItems = nullptr;
   int32_t textItemCount = 0;
 };
