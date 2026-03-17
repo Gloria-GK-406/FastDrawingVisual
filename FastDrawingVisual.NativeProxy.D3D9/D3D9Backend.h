@@ -45,7 +45,7 @@ public ref class D3D9Backend sealed : public IRenderBackend,
 
  private:
   bool CreateNativeRenderer(int width, int height);
-  void SubmitFrame(BridgeLayeredFramePacket frame);
+  void SubmitFrame(LayeredFramePacket frame);
   void DestroyRenderer();
   IntPtr GetOrCreateDeviceHwnd();
   void UpdateReadyState();

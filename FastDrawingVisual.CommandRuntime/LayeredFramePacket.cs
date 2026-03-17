@@ -3,18 +3,18 @@ using System.Runtime.InteropServices;
 namespace FastDrawingVisual.CommandRuntime
 {
     [StructLayout(LayoutKind.Sequential)]
-    public struct BridgeLayeredFramePacket
+    public struct LayeredFramePacket
     {
         public const int MaxLayerCount = 8;
 
-        public BridgeLayerPacket Layer0;
-        public BridgeLayerPacket Layer1;
-        public BridgeLayerPacket Layer2;
-        public BridgeLayerPacket Layer3;
-        public BridgeLayerPacket Layer4;
-        public BridgeLayerPacket Layer5;
-        public BridgeLayerPacket Layer6;
-        public BridgeLayerPacket Layer7;
+        public LayerPacket Layer0;
+        public LayerPacket Layer1;
+        public LayerPacket Layer2;
+        public LayerPacket Layer3;
+        public LayerPacket Layer4;
+        public LayerPacket Layer5;
+        public LayerPacket Layer6;
+        public LayerPacket Layer7;
 
         public bool HasAnyCommands =>
             Layer0.HasCommands ||
@@ -26,7 +26,7 @@ namespace FastDrawingVisual.CommandRuntime
             Layer6.HasCommands ||
             Layer7.HasCommands;
 
-        public void SetLayer(int layerIndex, BridgeLayerPacket packet)
+        public void SetLayer(int layerIndex, LayerPacket packet)
         {
             switch (layerIndex)
             {
@@ -59,7 +59,7 @@ namespace FastDrawingVisual.CommandRuntime
             }
         }
 
-        public BridgeLayerPacket GetLayer(int layerIndex)
+        public LayerPacket GetLayer(int layerIndex)
         {
             return layerIndex switch
             {

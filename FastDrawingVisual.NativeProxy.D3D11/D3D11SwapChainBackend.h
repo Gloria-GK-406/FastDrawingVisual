@@ -34,7 +34,7 @@ public:
 
 private:
   bool CreateNativeRenderer(int width, int height);
-  void SubmitFrame(BridgeLayeredFramePacket frame);
+  void SubmitFrame(LayeredFramePacket frame);
   void DestroyRenderer();
   void UpdateReadyState();
   void ThrowIfDisposed();

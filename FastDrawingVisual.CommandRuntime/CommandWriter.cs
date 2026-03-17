@@ -5,7 +5,7 @@ using System.Text;
 
 namespace FastDrawingVisual.CommandRuntime
 {
-    public sealed unsafe class BridgeCommandWriter : IDisposable
+    public sealed unsafe class CommandWriter : IDisposable
     {
         private const int DefaultCommandCapacityBytes = 256 * 1024; //256 KB for commands
         private const int DefaultBlobCapacityBytes = 64 * 1024; //64 KB for blobs (e.g. text)
@@ -16,7 +16,7 @@ namespace FastDrawingVisual.CommandRuntime
 
         public int CommandCount { get; private set; }
 
-        public BridgeCommandWriter(
+        public CommandWriter(
             int initialCommandCapacityBytes = DefaultCommandCapacityBytes,
             int initialBlobCapacityBytes = DefaultBlobCapacityBytes)
         {
@@ -32,13 +32,13 @@ namespace FastDrawingVisual.CommandRuntime
             CommandCount = 0;
         }
 
-        public BridgeLayerPacket BuildPacket()
+        public LayerPacket BuildPacket()
         {
             ThrowIfDisposed();
             if (_commandBuffer.Pointer == IntPtr.Zero || _commandBuffer.Length <= 0 || CommandCount <= 0)
                 return default;
 
-            return new BridgeLayerPacket
+            return new LayerPacket
             {
                 CommandPointer = _commandBuffer.Pointer,
                 CommandBytes = _commandBuffer.Length,
@@ -48,13 +48,13 @@ namespace FastDrawingVisual.CommandRuntime
             };
         }
 
-        public void WriteClear(BridgeCommandColorArgb8 color)
+        public void WriteClear(CommandColorArgb8 color)
         {
             var span = BeginCommand((ushort)BridgeCommandType.Clear, BridgeCommandLayout.ClearSlotCount, 0);
             WriteColor(span.Slice(BridgeCommandLayout.ClearColorOffset), color);
         }
 
-        public void WriteFillRect(float x, float y, float width, float height, BridgeCommandColorArgb8 color)
+        public void WriteFillRect(float x, float y, float width, float height, CommandColorArgb8 color)
         {
             var span = BeginCommand((ushort)BridgeCommandType.FillRect, BridgeCommandLayout.FillRectSlotCount, 0);
             WriteSingle(span.Slice(BridgeCommandLayout.FillRectXOffset), x);
@@ -64,7 +64,7 @@ namespace FastDrawingVisual.CommandRuntime
             WriteColor(span.Slice(BridgeCommandLayout.FillRectColorOffset), color);
         }
 
-        public void WriteStrokeRect(float x, float y, float width, float height, float thickness, BridgeCommandColorArgb8 color)
+        public void WriteStrokeRect(float x, float y, float width, float height, float thickness, CommandColorArgb8 color)
         {
             var span = BeginCommand((ushort)BridgeCommandType.StrokeRect, BridgeCommandLayout.StrokeRectSlotCount, 0);
             WriteSingle(span.Slice(BridgeCommandLayout.StrokeRectXOffset), x);
@@ -75,7 +75,7 @@ namespace FastDrawingVisual.CommandRuntime
             WriteColor(span.Slice(BridgeCommandLayout.StrokeRectColorOffset), color);
         }
 
-        public void WriteFillEllipse(float centerX, float centerY, float radiusX, float radiusY, BridgeCommandColorArgb8 color)
+        public void WriteFillEllipse(float centerX, float centerY, float radiusX, float radiusY, CommandColorArgb8 color)
         {
             var span = BeginCommand((ushort)BridgeCommandType.FillEllipse, BridgeCommandLayout.FillEllipseSlotCount, 0);
             WriteSingle(span.Slice(BridgeCommandLayout.FillEllipseCenterXOffset), centerX);
@@ -85,7 +85,7 @@ namespace FastDrawingVisual.CommandRuntime
             WriteColor(span.Slice(BridgeCommandLayout.FillEllipseColorOffset), color);
         }
 
-        public void WriteStrokeEllipse(float centerX, float centerY, float radiusX, float radiusY, float thickness, BridgeCommandColorArgb8 color)
+        public void WriteStrokeEllipse(float centerX, float centerY, float radiusX, float radiusY, float thickness, CommandColorArgb8 color)
         {
             var span = BeginCommand((ushort)BridgeCommandType.StrokeEllipse, BridgeCommandLayout.StrokeEllipseSlotCount, 0);
             WriteSingle(span.Slice(BridgeCommandLayout.StrokeEllipseCenterXOffset), centerX);
@@ -96,7 +96,7 @@ namespace FastDrawingVisual.CommandRuntime
             WriteColor(span.Slice(BridgeCommandLayout.StrokeEllipseColorOffset), color);
         }
 
-        public void WriteLine(float x0, float y0, float x1, float y1, float thickness, BridgeCommandColorArgb8 color)
+        public void WriteLine(float x0, float y0, float x1, float y1, float thickness, CommandColorArgb8 color)
         {
             var span = BeginCommand((ushort)BridgeCommandType.Line, BridgeCommandLayout.LineSlotCount, 0);
             WriteSingle(span.Slice(BridgeCommandLayout.LineX0Offset), x0);
@@ -107,7 +107,7 @@ namespace FastDrawingVisual.CommandRuntime
             WriteColor(span.Slice(BridgeCommandLayout.LineColorOffset), color);
         }
 
-        public void WriteDrawTextRun(float x, float y, float fontSize, BridgeCommandColorArgb8 color, string textUtf8, string fontFamilyUtf8)
+        public void WriteDrawTextRun(float x, float y, float fontSize, CommandColorArgb8 color, string textUtf8, string fontFamilyUtf8)
         {
             var textUtf8Ref = AppendUtf8(textUtf8);
             var fontFamilyUtf8Ref = AppendUtf8(fontFamilyUtf8);
@@ -171,7 +171,7 @@ namespace FastDrawingVisual.CommandRuntime
             return remainder == 0 ? 0 : alignment - remainder;
         }
 
-        private static void WriteColor(Span<byte> target, BridgeCommandColorArgb8 color)
+        private static void WriteColor(Span<byte> target, CommandColorArgb8 color)
         {
             target[0] = color.A;
             target[1] = color.R;
@@ -193,7 +193,7 @@ namespace FastDrawingVisual.CommandRuntime
         private void ThrowIfDisposed()
         {
             if (_isDisposed)
-                throw new ObjectDisposedException(nameof(BridgeCommandWriter));
+                throw new ObjectDisposedException(nameof(CommandWriter));
         }
 
         private readonly struct BridgeCommandBlobRef

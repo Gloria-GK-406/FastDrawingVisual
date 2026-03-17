@@ -74,7 +74,7 @@ IDrawingContext ^D3D11SwapChainBackend::CreateDrawingContext(int width,
 
   return gcnew LayeredCommandRecordingContext(
       width, height,
-      gcnew Action<BridgeLayeredFramePacket>(
+      gcnew Action<LayeredFramePacket>(
           this, &D3D11SwapChainBackend::SubmitFrame));
 }
 
@@ -112,18 +112,18 @@ bool D3D11SwapChainBackend::CreateNativeRenderer(int width, int height) {
   return true;
 }
 
-void D3D11SwapChainBackend::SubmitFrame(BridgeLayeredFramePacket frame) {
+void D3D11SwapChainBackend::SubmitFrame(LayeredFramePacket frame) {
   ThrowIfDisposed();
   if (!IsReadyForRendering || !frame.HasAnyCommands) {
     return;
   }
 
-  BridgeLayeredFramePacket frameCopy = frame;
-  pin_ptr<BridgeLayeredFramePacket> framePacket = &frameCopy;
+  LayeredFramePacket frameCopy = frame;
+  pin_ptr<LayeredFramePacket> framePacket = &frameCopy;
 
   if (renderer_ == nullptr ||
       FAILED(renderer_->SubmitLayeredCommands(framePacket,
-                                              sizeof(BridgeLayeredFramePacket)))) {
+                                              sizeof(LayeredFramePacket)))) {
     isFaulted_ = true;
   }
 

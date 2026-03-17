@@ -8,12 +8,12 @@ namespace FastDrawingVisual.Rendering
 {
     public sealed class LayeredCommandRecordingContext : IDrawingContext, ILayeredDrawingContextContainer
     {
-        private readonly Action<BridgeLayeredFramePacket> _onClose;
-        private readonly LayerCommandWriter?[] _layers = new LayerCommandWriter[BridgeLayeredFramePacket.MaxLayerCount];
+        private readonly Action<LayeredFramePacket> _onClose;
+        private readonly LayerCommandWriter?[] _layers = new LayerCommandWriter[LayeredFramePacket.MaxLayerCount];
         private readonly object _sync = new();
         private bool _isDisposed;
 
-        public LayeredCommandRecordingContext(int width, int height, Action<BridgeLayeredFramePacket> onClose)
+        public LayeredCommandRecordingContext(int width, int height, Action<LayeredFramePacket> onClose)
         {
             Width = width;
             Height = height;
@@ -25,7 +25,7 @@ namespace FastDrawingVisual.Rendering
 
         public int Height { get; }
 
-        public int LayerCount => BridgeLayeredFramePacket.MaxLayerCount;
+        public int LayerCount => LayeredFramePacket.MaxLayerCount;
 
         public IDrawingContext GetLayer(int layerIndex)
         {
@@ -86,7 +86,7 @@ namespace FastDrawingVisual.Rendering
             if (_isDisposed)
                 return;
 
-            var packet = new BridgeLayeredFramePacket();
+            var packet = new LayeredFramePacket();
 
             try
             {
@@ -137,7 +137,7 @@ namespace FastDrawingVisual.Rendering
 
         private static void ValidateLayerIndex(int layerIndex)
         {
-            if ((uint)layerIndex >= BridgeLayeredFramePacket.MaxLayerCount)
+            if ((uint)layerIndex >= LayeredFramePacket.MaxLayerCount)
                 throw new ArgumentOutOfRangeException(nameof(layerIndex));
         }
 
@@ -150,7 +150,7 @@ namespace FastDrawingVisual.Rendering
             }
 
             private readonly LayeredCommandRecordingContext _root;
-            private readonly BridgeCommandWriter _commands = new();
+            private readonly CommandWriter _commands = new();
             private readonly Stack<PushStateKind> _pushStates = new();
             private readonly Stack<Matrix> _transformStack = new();
             private Matrix _currentTransform = Matrix.Identity;
@@ -344,7 +344,7 @@ namespace FastDrawingVisual.Rendering
             {
             }
 
-            internal BridgeLayerPacket BuildPacket()
+            internal LayerPacket BuildPacket()
             {
                 return _commands.BuildPacket();
             }
@@ -474,9 +474,9 @@ namespace FastDrawingVisual.Rendering
             return false;
         }
 
-        private static BridgeCommandColorArgb8 ToProtocolColor(Color color)
+        private static CommandColorArgb8 ToProtocolColor(Color color)
         {
-            return new BridgeCommandColorArgb8(color.A, color.R, color.G, color.B);
+            return new CommandColorArgb8(color.A, color.R, color.G, color.B);
         }
     }
 }

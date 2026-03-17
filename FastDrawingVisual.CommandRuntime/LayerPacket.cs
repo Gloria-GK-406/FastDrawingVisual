@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace FastDrawingVisual.CommandRuntime
 {
     [StructLayout(LayoutKind.Sequential)]
-    public struct BridgeLayerPacket
+    public struct LayerPacket
     {
         public IntPtr CommandPointer;
         public int CommandBytes;

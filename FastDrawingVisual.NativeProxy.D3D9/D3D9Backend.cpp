@@ -82,7 +82,7 @@ IDrawingContext ^D3D9Backend::CreateDrawingContext(int width, int height) {
 
   return gcnew LayeredCommandRecordingContext(
       width, height,
-      gcnew Action<BridgeLayeredFramePacket>(this, &D3D9Backend::SubmitFrame));
+      gcnew Action<LayeredFramePacket>(this, &D3D9Backend::SubmitFrame));
 }
 
 IntPtr D3D9Backend::GetSurface9() {
@@ -180,18 +180,18 @@ bool D3D9Backend::CreateNativeRenderer(int width, int height) {
   return true;
 }
 
-void D3D9Backend::SubmitFrame(BridgeLayeredFramePacket frame) {
+void D3D9Backend::SubmitFrame(LayeredFramePacket frame) {
   ThrowIfDisposed();
   if (!IsReadyForRendering || !frame.HasAnyCommands) {
     return;
   }
 
-  BridgeLayeredFramePacket frameCopy = frame;
-  pin_ptr<BridgeLayeredFramePacket> framePacket = &frameCopy;
+  LayeredFramePacket frameCopy = frame;
+  pin_ptr<LayeredFramePacket> framePacket = &frameCopy;
 
   if (renderer_ == nullptr ||
       FAILED(renderer_->SubmitLayeredCommands(framePacket,
-                                              sizeof(BridgeLayeredFramePacket)))) {
+                                              sizeof(LayeredFramePacket)))) {
     isFaulted_ = true;
   }
 
