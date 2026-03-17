@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-#include "BridgeCommandProtocol.g.h"
+#include "CommandProtocol.g.h"
 
 namespace fdv::nativeproxy::shared::batch {
 

@@ -8,8 +8,8 @@ Single-source command protocol generator for native command stream.
 
 ## Outputs
 
-- `BridgeCommandProtocol.g.cs`
-- `BridgeCommandProtocol.g.h`
+- `CommandProtocol.g.cs`
+- `CommandProtocol.g.h`
 
 Generated outputs include:
 - fixed-slot command layout constants

@@ -5,12 +5,12 @@ internal static class SlotProtocolGenerator
 {
     public static string GenerateCSharp(ProtocolSchema schema)
     {
-        return RenderTemplate("BridgeCommandProtocol.g.cs.scriban", ProtocolTemplateModel.FromSchema(schema));
+        return RenderTemplate("CommandProtocol.g.cs.scriban", ProtocolTemplateModel.FromSchema(schema));
     }
 
     public static string GenerateCppHeader(ProtocolSchema schema)
     {
-        return RenderTemplate("BridgeCommandProtocol.g.h.scriban", ProtocolTemplateModel.FromSchema(schema));
+        return RenderTemplate("CommandProtocol.g.h.scriban", ProtocolTemplateModel.FromSchema(schema));
     }
 
     private static string RenderTemplate(string templateFileName, ProtocolTemplateModel model)

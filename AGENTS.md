@@ -69,8 +69,8 @@ Evidence:
 ## Command Protocol Rules
 - `FastDrawingVisual.CommandProtocol/command_protocol.schema.json` is the source of truth for shared command IDs/layout.
 - Any shared command protocol change must be updated together across:
-  - `FastDrawingVisual.CommandProtocol` generator outputs (`BridgeCommandProtocol.g.cs/.g.h`)
-  - managed writers (`BridgeCommandBufferWriter`, related drawing contexts)
+- `FastDrawingVisual.CommandProtocol` generator outputs (`CommandProtocol.g.cs/.g.h`)
+- managed writers (`CommandBufferWriter`, related drawing contexts)
   - native parsers (`FastDrawingVisual.NativeProxy.D3D9/BridgeDrawing.cpp`, and D3D11 paths consuming `fdv::protocol` constants)
 - Shared protocol is v2 fixed-slot plus external blob buffer; native exports consume command buffer and blob buffer together.
 - Keep `FastDrawingVisual/Document/NativeD3D9Bridge-MVP.md` in sync when NativeD3D9 protocol semantics change.

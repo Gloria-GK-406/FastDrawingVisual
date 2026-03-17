@@ -69,9 +69,9 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
-    <BridgeProtocolProjectDir>$(MSBuildProjectDirectory)\..\FastDrawingVisual.CommandProtocol</BridgeProtocolProjectDir>
-    <BridgeProtocolSchema>$(BridgeProtocolProjectDir)\command_protocol.schema.json</BridgeProtocolSchema>
-    <BridgeProtocolOutDir>$(MSBuildProjectDirectory)\..\artifacts\generated\protocol</BridgeProtocolOutDir>
+    <CommandProtocolProjectDir>$(MSBuildProjectDirectory)\..\FastDrawingVisual.CommandProtocol</CommandProtocolProjectDir>
+    <CommandProtocolSchema>$(CommandProtocolProjectDir)\command_protocol.schema.json</CommandProtocolSchema>
+    <CommandProtocolOutDir>$(MSBuildProjectDirectory)\..\artifacts\generated\protocol</CommandProtocolOutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)artifacts\$(MSBuildProjectName)\$(Configuration)\$(Platform)\</OutDir>
@@ -100,7 +100,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PreprocessorDefinitions>WIN32;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(BridgeProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(CommandProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -112,7 +112,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PreprocessorDefinitions>WIN32;_WINDOWS;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(BridgeProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(CommandProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -122,7 +122,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(BridgeProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(CommandProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -134,7 +134,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PreprocessorDefinitions>_WINDOWS;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(BridgeProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(CommandProtocolOutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -147,10 +147,10 @@
     <ClInclude Include="RendererLockGuard.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <Target Name="FDV_GenerateBridgeProtocol"
+  <Target Name="FDV_GenerateCommandProtocol"
           BeforeTargets="ClCompile"
-          Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban"
-          Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
-    <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
+          Inputs="$(CommandProtocolSchema);$(CommandProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(CommandProtocolProjectDir)\Program.cs;$(CommandProtocolProjectDir)\ProtocolModel.cs;$(CommandProtocolProjectDir)\ProtocolTemplateModel.cs;$(CommandProtocolProjectDir)\SlotProtocolGenerator.cs;$(CommandProtocolProjectDir)\Templates\CommandProtocol.g.cs.scriban;$(CommandProtocolProjectDir)\Templates\CommandProtocol.g.h.scriban"
+          Outputs="$(CommandProtocolOutDir)\CommandProtocol.g.cs;$(CommandProtocolOutDir)\CommandProtocol.g.h">
+    <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(CommandProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
   </Target>
 </Project>

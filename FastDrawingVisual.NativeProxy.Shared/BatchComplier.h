@@ -15,7 +15,7 @@
 
 #include <windows.h>
 
-#include "BridgeCommandProtocol.g.h"
+#include "CommandProtocol.g.h"
 #include "BatchTypes.h"
 
 namespace fdv::nativeproxy::shared::batch {

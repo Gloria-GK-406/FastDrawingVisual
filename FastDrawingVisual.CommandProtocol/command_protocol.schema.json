@@ -1,5 +1,5 @@
 {
-  "name": "BridgeCommandProtocol",
+  "name": "CommandProtocol",
   "version": 2,
   "endianness": "little",
   "colorLayout": "A,R,G,B",
