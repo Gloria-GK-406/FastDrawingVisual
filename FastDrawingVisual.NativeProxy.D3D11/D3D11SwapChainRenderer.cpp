@@ -30,15 +30,9 @@ struct D3D11SwapChainRendererState {
   ComPtr<IDXGIFactory2> dxgiFactory = nullptr;
   ComPtr<IDXGISwapChain1> swapChain = nullptr;
   ComPtr<ID3D11RenderTargetView> rtv0 = nullptr;
-  ComPtr<ID3D11VertexShader> triangleVertexShader = nullptr;
-  ComPtr<ID3D11PixelShader> trianglePixelShader = nullptr;
-  ComPtr<ID3D11InputLayout> triangleInputLayout = nullptr;
-  ComPtr<ID3D11VertexShader> rectVertexShader = nullptr;
-  ComPtr<ID3D11PixelShader> rectPixelShader = nullptr;
-  ComPtr<ID3D11InputLayout> rectInputLayout = nullptr;
-  ComPtr<ID3D11VertexShader> ellipseVertexShader = nullptr;
-  ComPtr<ID3D11PixelShader> ellipsePixelShader = nullptr;
-  ComPtr<ID3D11InputLayout> ellipseInputLayout = nullptr;
+  ComPtr<ID3D11VertexShader> instanceVertexShader = nullptr;
+  ComPtr<ID3D11PixelShader> instancePixelShader = nullptr;
+  ComPtr<ID3D11InputLayout> instanceInputLayout = nullptr;
   ComPtr<ID3D11BlendState> blendState = nullptr;
   ComPtr<ID3D11RasterizerState> rasterizerState = nullptr;
   ComPtr<ID3D11Buffer> unitQuadVertexBuffer = nullptr;
@@ -112,12 +106,8 @@ constexpr const wchar_t* kFpsMetricFormat =
 constexpr UINT kBufferCount = 3;
 constexpr UINT kCreationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 constexpr DXGI_FORMAT kSwapChainFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
-constexpr const wchar_t* kTriangleVertexShaderObject = L"Shader\\TriangleBatchVS.cso";
-constexpr const wchar_t* kTrianglePixelShaderObject = L"Shader\\TriangleBatchPS.cso";
-constexpr const wchar_t* kRectVertexShaderObject = L"Shader\\RectInstanceVS.cso";
-constexpr const wchar_t* kRectPixelShaderObject = L"Shader\\RectInstancePS.cso";
-constexpr const wchar_t* kEllipseVertexShaderObject = L"Shader\\EllipseInstanceVS.cso";
-constexpr const wchar_t* kEllipsePixelShaderObject = L"Shader\\EllipseInstancePS.cso";
+constexpr const wchar_t* kInstanceVertexShaderObject = L"Shader\\InstanceVS_Model4.cso";
+constexpr const wchar_t* kInstancePixelShaderObject = L"Shader\\InstancePS_Model4.cso";
 constexpr int kEllipseSegmentCount = 48;
 
 std::uint64_t QueryQpcNow() {
@@ -509,9 +499,9 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
       const int shapeInstanceCount = static_cast<int>(shapeInstances.size());
       draw::InstanceBatchDrawContext instanceContext{};
       instanceContext.context = state_->context;
-      instanceContext.inputLayout = state_->rectInputLayout;
-      instanceContext.vertexShader = state_->rectVertexShader;
-      instanceContext.pixelShader = state_->rectPixelShader;
+      instanceContext.inputLayout = state_->instanceInputLayout;
+      instanceContext.vertexShader = state_->instanceVertexShader;
+      instanceContext.pixelShader = state_->instancePixelShader;
       instanceContext.blendState = state_->blendState;
       instanceContext.rasterizerState = state_->rasterizerState;
       instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer;
@@ -1006,86 +996,43 @@ HRESULT D3D11SwapChainRenderer::CreateDrawPipeline() {
     return E_UNEXPECTED;
   }
 
-  if (state_->triangleVertexShader != nullptr &&
-      state_->trianglePixelShader != nullptr &&
-      state_->triangleInputLayout != nullptr &&
-      state_->rectVertexShader != nullptr &&
-      state_->rectPixelShader != nullptr &&
-      state_->rectInputLayout != nullptr &&
+  if (state_->instanceVertexShader != nullptr &&
+      state_->instancePixelShader != nullptr &&
+      state_->instanceInputLayout != nullptr &&
       state_->unitQuadVertexBuffer != nullptr &&
       state_->viewConstantsBuffer != nullptr &&
       state_->blendState != nullptr && state_->rasterizerState != nullptr) {
     return S_OK;
   }
 
-  ComPtr<ID3DBlob> triangleVsBlob;
-  ComPtr<ID3DBlob> trianglePsBlob;
-  ComPtr<ID3DBlob> rectVsBlob;
-  ComPtr<ID3DBlob> rectPsBlob;
+  ComPtr<ID3DBlob> instanceVsBlob;
+  ComPtr<ID3DBlob> instancePsBlob;
 
-  HRESULT hr = LoadShaderBlob(kTriangleVertexShaderObject, triangleVsBlob);
+  HRESULT hr = LoadShaderBlob(kInstanceVertexShaderObject, instanceVsBlob);
   if (FAILED(hr)) {
     return hr;
   }
 
-  hr = LoadShaderBlob(kTrianglePixelShaderObject, trianglePsBlob);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = LoadShaderBlob(kRectVertexShaderObject, rectVsBlob);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = LoadShaderBlob(kRectPixelShaderObject, rectPsBlob);
+  hr = LoadShaderBlob(kInstancePixelShaderObject, instancePsBlob);
   if (FAILED(hr)) {
     return hr;
   }
 
   hr = state_->device->CreateVertexShader(
-      triangleVsBlob->GetBufferPointer(), triangleVsBlob->GetBufferSize(),
-      nullptr, state_->triangleVertexShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->triangleVertexShader == nullptr) {
+      instanceVsBlob->GetBufferPointer(), instanceVsBlob->GetBufferSize(),
+      nullptr, state_->instanceVertexShader.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->instanceVertexShader == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
   hr = state_->device->CreatePixelShader(
-      trianglePsBlob->GetBufferPointer(), trianglePsBlob->GetBufferSize(),
-      nullptr, state_->trianglePixelShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->trianglePixelShader == nullptr) {
+      instancePsBlob->GetBufferPointer(), instancePsBlob->GetBufferSize(),
+      nullptr, state_->instancePixelShader.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->instancePixelShader == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
-  hr = state_->device->CreateVertexShader(
-      rectVsBlob->GetBufferPointer(), rectVsBlob->GetBufferSize(), nullptr,
-      state_->rectVertexShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->rectVertexShader == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  hr = state_->device->CreatePixelShader(
-      rectPsBlob->GetBufferPointer(), rectPsBlob->GetBufferSize(), nullptr,
-      state_->rectPixelShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->rectPixelShader == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_INPUT_ELEMENT_DESC triangleInputLayout[] = {
-      {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
-       D3D11_INPUT_PER_VERTEX_DATA, 0},
-      {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12,
-       D3D11_INPUT_PER_VERTEX_DATA, 0},
-  };
-  hr = state_->device->CreateInputLayout(
-      triangleInputLayout, ARRAYSIZE(triangleInputLayout),
-      triangleVsBlob->GetBufferPointer(), triangleVsBlob->GetBufferSize(),
-      state_->triangleInputLayout.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->triangleInputLayout == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_INPUT_ELEMENT_DESC rectInputLayout[] = {
+  D3D11_INPUT_ELEMENT_DESC instanceInputLayout[] = {
       {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
        D3D11_INPUT_PER_VERTEX_DATA, 0},
       {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,
@@ -1100,10 +1047,10 @@ HRESULT D3D11SwapChainRenderer::CreateDrawPipeline() {
        D3D11_INPUT_PER_INSTANCE_DATA, 1},
   };
   hr = state_->device->CreateInputLayout(
-      rectInputLayout, ARRAYSIZE(rectInputLayout),
-      rectVsBlob->GetBufferPointer(), rectVsBlob->GetBufferSize(),
-      state_->rectInputLayout.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->rectInputLayout == nullptr) {
+      instanceInputLayout, ARRAYSIZE(instanceInputLayout),
+      instanceVsBlob->GetBufferPointer(), instanceVsBlob->GetBufferSize(),
+      state_->instanceInputLayout.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state_->instanceInputLayout == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
@@ -1181,15 +1128,9 @@ void D3D11SwapChainRenderer::ReleaseRendererResources() {
   state_->viewConstantsBuffer.Reset();
   state_->rasterizerState.Reset();
   state_->blendState.Reset();
-  state_->ellipseInputLayout.Reset();
-  state_->ellipsePixelShader.Reset();
-  state_->ellipseVertexShader.Reset();
-  state_->rectInputLayout.Reset();
-  state_->rectPixelShader.Reset();
-  state_->rectVertexShader.Reset();
-  state_->triangleInputLayout.Reset();
-  state_->trianglePixelShader.Reset();
-  state_->triangleVertexShader.Reset();
+  state_->instanceInputLayout.Reset();
+  state_->instancePixelShader.Reset();
+  state_->instanceVertexShader.Reset();
   state_->swapChain.Reset();
   state_->dxgiFactory.Reset();
   state_->d2dContext.Reset();

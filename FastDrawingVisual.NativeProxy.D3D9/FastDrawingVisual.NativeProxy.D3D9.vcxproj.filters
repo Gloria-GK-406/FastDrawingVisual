@@ -49,16 +49,10 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="ShapeInstanceVS.hlsl">
+    <FxCompile Include="InstanceVS_Model3.hlsl">
       <Filter>Shader Files</Filter>
     </FxCompile>
-    <FxCompile Include="ShapeInstancePS.hlsl">
-      <Filter>Shader Files</Filter>
-    </FxCompile>
-    <FxCompile Include="TriangleBatchPS.hlsl">
-      <Filter>Shader Files</Filter>
-    </FxCompile>
-    <FxCompile Include="TriangleBatchVS.hlsl">
+    <FxCompile Include="InstancePS_Model3.hlsl">
       <Filter>Shader Files</Filter>
     </FxCompile>
   </ItemGroup>

@@ -17,10 +17,8 @@ namespace fdv::d3d9 {
 namespace {
 
 constexpr uint32_t kMetricWindowSec = 1;
-constexpr const wchar_t* kTriangleVertexShaderPath = L"Shader\\D3D9TriangleBatchVS.cso";
-constexpr const wchar_t* kTrianglePixelShaderPath = L"Shader\\D3D9TriangleBatchPS.cso";
-constexpr const wchar_t* kShapeVertexShaderPath = L"Shader\\D3D9ShapeInstanceVS.cso";
-constexpr const wchar_t* kShapePixelShaderPath = L"Shader\\D3D9ShapeInstancePS.cso";
+constexpr const wchar_t* kInstanceVertexShaderPath = L"Shader\\InstanceVS_Model3.cso";
+constexpr const wchar_t* kInstancePixelShaderPath = L"Shader\\InstancePS_Model3.cso";
 
 int FindSlotByState(const D3D9RendererState* state, SurfaceState slotState) {
   if (state == nullptr) {
@@ -108,16 +106,11 @@ void ReleaseDrawPipeline(D3D9RendererState* state) {
 
   ReleaseVertexBuffer(state->dynamicInstanceVertexBuffer);
   state->dynamicInstanceVertexCapacityBytes = 0;
-  ReleaseVertexBuffer(state->dynamicTriangleVertexBuffer);
-  state->dynamicTriangleVertexCapacityBytes = 0;
   ReleaseVertexBuffer(state->unitQuadVertexBuffer);
   ReleaseIndexBuffer(state->unitQuadIndexBuffer);
-  ReleasePixelShader(state->shapePixelShader);
-  ReleaseVertexShader(state->shapeVertexShader);
-  ReleaseVertexDeclaration(state->shapeVertexDeclaration);
-  ReleasePixelShader(state->trianglePixelShader);
-  ReleaseVertexShader(state->triangleVertexShader);
-  ReleaseVertexDeclaration(state->triangleVertexDeclaration);
+  ReleasePixelShader(state->instancePixelShader);
+  ReleaseVertexShader(state->instanceVertexShader);
+  ReleaseVertexDeclaration(state->instanceVertexDeclaration);
 }
 
 bool LoadShaderBytecode(const wchar_t* sourcePath,
@@ -237,26 +230,15 @@ bool CreateDrawPipeline(D3D9RendererState* state) {
     return false;
   }
 
-  std::vector<std::uint8_t> triangleVertexBytecode;
-  std::vector<std::uint8_t> trianglePixelBytecode;
-  std::vector<std::uint8_t> shapeVertexBytecode;
-  std::vector<std::uint8_t> shapePixelBytecode;
-  if (!LoadShaderBytecode(kTriangleVertexShaderPath, triangleVertexBytecode) ||
-      !LoadShaderBytecode(kTrianglePixelShaderPath, trianglePixelBytecode) ||
-      !LoadShaderBytecode(kShapeVertexShaderPath, shapeVertexBytecode) ||
-      !LoadShaderBytecode(kShapePixelShaderPath, shapePixelBytecode)) {
+  std::vector<std::uint8_t> instanceVertexBytecode;
+  std::vector<std::uint8_t> instancePixelBytecode;
+  if (!LoadShaderBytecode(kInstanceVertexShaderPath, instanceVertexBytecode) ||
+      !LoadShaderBytecode(kInstancePixelShaderPath, instancePixelBytecode)) {
     ReleaseDrawPipeline(state);
     return false;
   }
 
-  static const D3DVERTEXELEMENT9 kTriangleElements[] = {
-      {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT,
-       D3DDECLUSAGE_POSITION, 0},
-      {0, 12, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR,
-       0},
-      D3DDECL_END()};
-
-  static const D3DVERTEXELEMENT9 kShapeElements[] = {
+  static const D3DVERTEXELEMENT9 kInstanceElements[] = {
       {0, 0, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION,
        0},
       {1, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD,
@@ -272,47 +254,24 @@ bool CreateDrawPipeline(D3D9RendererState* state) {
       D3DDECL_END()};
 
   HRESULT hr = state->device->CreateVertexDeclaration(
-      kTriangleElements, &state->triangleVertexDeclaration);
-  if (FAILED(hr) || state->triangleVertexDeclaration == nullptr) {
+      kInstanceElements, &state->instanceVertexDeclaration);
+  if (FAILED(hr) || state->instanceVertexDeclaration == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
   }
 
   hr = state->device->CreateVertexShader(
-      reinterpret_cast<const DWORD*>(triangleVertexBytecode.data()),
-      &state->triangleVertexShader);
-  if (FAILED(hr) || state->triangleVertexShader == nullptr) {
+      reinterpret_cast<const DWORD*>(instanceVertexBytecode.data()),
+      &state->instanceVertexShader);
+  if (FAILED(hr) || state->instanceVertexShader == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
   }
 
   hr = state->device->CreatePixelShader(
-      reinterpret_cast<const DWORD*>(trianglePixelBytecode.data()),
-      &state->trianglePixelShader);
-  if (FAILED(hr) || state->trianglePixelShader == nullptr) {
-    ReleaseDrawPipeline(state);
-    return false;
-  }
-
-  hr = state->device->CreateVertexDeclaration(kShapeElements,
-                                              &state->shapeVertexDeclaration);
-  if (FAILED(hr) || state->shapeVertexDeclaration == nullptr) {
-    ReleaseDrawPipeline(state);
-    return false;
-  }
-
-  hr = state->device->CreateVertexShader(
-      reinterpret_cast<const DWORD*>(shapeVertexBytecode.data()),
-      &state->shapeVertexShader);
-  if (FAILED(hr) || state->shapeVertexShader == nullptr) {
-    ReleaseDrawPipeline(state);
-    return false;
-  }
-
-  hr = state->device->CreatePixelShader(
-      reinterpret_cast<const DWORD*>(shapePixelBytecode.data()),
-      &state->shapePixelShader);
-  if (FAILED(hr) || state->shapePixelShader == nullptr) {
+      reinterpret_cast<const DWORD*>(instancePixelBytecode.data()),
+      &state->instancePixelShader);
+  if (FAILED(hr) || state->instancePixelShader == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
   }
@@ -678,9 +637,9 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
       draw::InstanceBatchDrawContext instanceContext{};
       instanceContext.device = device;
-      instanceContext.vertexDeclaration = state_->shapeVertexDeclaration;
-      instanceContext.vertexShader = state_->shapeVertexShader;
-      instanceContext.pixelShader = state_->shapePixelShader;
+      instanceContext.vertexDeclaration = state_->instanceVertexDeclaration;
+      instanceContext.vertexShader = state_->instanceVertexShader;
+      instanceContext.pixelShader = state_->instancePixelShader;
       instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer;
       instanceContext.geometryIndexBuffer = state_->unitQuadIndexBuffer;
       instanceContext.geometryVertexStrideBytes = sizeof(float) * 2;

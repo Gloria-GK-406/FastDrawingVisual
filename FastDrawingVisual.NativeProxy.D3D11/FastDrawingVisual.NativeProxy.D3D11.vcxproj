@@ -184,25 +184,7 @@
     <ClCompile Include="D3D11SwapChainBackend.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="TriangleBatchPS.hlsl">
-      <ShaderType>Pixel</ShaderType>
-      <EntryPointName>main</EntryPointName>
-      <ShaderModel>4_0_level_9_1</ShaderModel>
-      <ObjectFileOutput>$(OutDir)%(Filename).cso</ObjectFileOutput>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0_level_9_1</ShaderModel>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </FxCompile>
-    <FxCompile Include="TriangleBatchVS.hlsl">
-      <ShaderType>Vertex</ShaderType>
-      <EntryPointName>main</EntryPointName>
-      <ShaderModel>4_0_level_9_1</ShaderModel>
-      <ObjectFileOutput>$(OutDir)%(Filename).cso</ObjectFileOutput>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0_level_9_1</ShaderModel>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </FxCompile>
-    <FxCompile Include="RectInstanceVS.hlsl">
+    <FxCompile Include="InstanceVS_Model4.hlsl">
       <ShaderType>Vertex</ShaderType>
       <EntryPointName>main</EntryPointName>
       <ShaderModel>4_0</ShaderModel>
@@ -211,30 +193,12 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
     </FxCompile>
-    <FxCompile Include="RectInstancePS.hlsl">
+    <FxCompile Include="InstancePS_Model4.hlsl">
       <ShaderType>Pixel</ShaderType>
       <EntryPointName>main</EntryPointName>
       <ShaderModel>4_0</ShaderModel>
       <ObjectFileOutput>$(OutDir)%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </FxCompile>
-    <FxCompile Include="EllipseInstanceVS.hlsl">
-      <ShaderType>Vertex</ShaderType>
-      <EntryPointName>main</EntryPointName>
-      <ShaderModel>4_0_level_9_1</ShaderModel>
-      <ObjectFileOutput>$(OutDir)%(Filename).cso</ObjectFileOutput>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0_level_9_1</ShaderModel>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </FxCompile>
-    <FxCompile Include="EllipseInstancePS.hlsl">
-      <ShaderType>Pixel</ShaderType>
-      <EntryPointName>main</EntryPointName>
-      <ShaderModel>4_0_level_9_1</ShaderModel>
-      <ObjectFileOutput>$(OutDir)%(Filename).cso</ObjectFileOutput>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0_level_9_1</ShaderModel>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
     </FxCompile>

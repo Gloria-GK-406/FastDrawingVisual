@@ -181,32 +181,18 @@
     <ClCompile Include="D3D9Backend.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="TriangleBatchVS.hlsl">
+    <FxCompile Include="InstanceVS_Model3.hlsl">
       <ShaderType>Vertex</ShaderType>
       <EntryPointName>main</EntryPointName>
       <ShaderModel>3_0</ShaderModel>
-      <ObjectFileOutput>$(OutDir)D3D9TriangleBatchVS.cso</ObjectFileOutput>
+      <ObjectFileOutput>$(OutDir)InstanceVS_Model3.cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
     </FxCompile>
-    <FxCompile Include="TriangleBatchPS.hlsl">
+    <FxCompile Include="InstancePS_Model3.hlsl">
       <ShaderType>Pixel</ShaderType>
       <EntryPointName>main</EntryPointName>
       <ShaderModel>3_0</ShaderModel>
-      <ObjectFileOutput>$(OutDir)D3D9TriangleBatchPS.cso</ObjectFileOutput>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
-    </FxCompile>
-    <FxCompile Include="ShapeInstanceVS.hlsl">
-      <ShaderType>Vertex</ShaderType>
-      <EntryPointName>main</EntryPointName>
-      <ShaderModel>3_0</ShaderModel>
-      <ObjectFileOutput>$(OutDir)D3D9ShapeInstanceVS.cso</ObjectFileOutput>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
-    </FxCompile>
-    <FxCompile Include="ShapeInstancePS.hlsl">
-      <ShaderType>Pixel</ShaderType>
-      <EntryPointName>main</EntryPointName>
-      <ShaderModel>3_0</ShaderModel>
-      <ObjectFileOutput>$(OutDir)D3D9ShapeInstancePS.cso</ObjectFileOutput>
+      <ObjectFileOutput>$(OutDir)InstancePS_Model3.cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
     </FxCompile>
   </ItemGroup>
@@ -250,7 +236,7 @@
   </Target>
   <Target Name="FDV_CopyCompiledShaders" AfterTargets="Build">
     <ItemGroup>
-      <ShaderObjects Include="$(OutDir)D3D9TriangleBatchVS.cso;$(OutDir)D3D9TriangleBatchPS.cso;$(OutDir)D3D9ShapeInstanceVS.cso;$(OutDir)D3D9ShapeInstancePS.cso" />
+      <ShaderObjects Include="$(OutDir)InstanceVS_Model3.cso;$(OutDir)InstancePS_Model3.cso" />
     </ItemGroup>
     <MakeDir Directories="$(OutDir)Shader" />
     <Copy SourceFiles="@(ShaderObjects)" DestinationFolder="$(OutDir)Shader" SkipUnchangedFiles="true" />

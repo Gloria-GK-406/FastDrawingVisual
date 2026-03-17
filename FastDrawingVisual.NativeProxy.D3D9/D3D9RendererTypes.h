@@ -29,16 +29,11 @@ struct SurfaceSlot {
 struct D3D9RendererState {
   IDirect3D9Ex* d3d9 = nullptr;
   IDirect3DDevice9Ex* device = nullptr;
-  IDirect3DVertexDeclaration9* triangleVertexDeclaration = nullptr;
-  IDirect3DVertexShader9* triangleVertexShader = nullptr;
-  IDirect3DPixelShader9* trianglePixelShader = nullptr;
-  IDirect3DVertexDeclaration9* shapeVertexDeclaration = nullptr;
-  IDirect3DVertexShader9* shapeVertexShader = nullptr;
-  IDirect3DPixelShader9* shapePixelShader = nullptr;
+  IDirect3DVertexDeclaration9* instanceVertexDeclaration = nullptr;
+  IDirect3DVertexShader9* instanceVertexShader = nullptr;
+  IDirect3DPixelShader9* instancePixelShader = nullptr;
   IDirect3DVertexBuffer9* unitQuadVertexBuffer = nullptr;
   IDirect3DIndexBuffer9* unitQuadIndexBuffer = nullptr;
-  IDirect3DVertexBuffer9* dynamicTriangleVertexBuffer = nullptr;
-  UINT dynamicTriangleVertexCapacityBytes = 0;
   IDirect3DVertexBuffer9* dynamicInstanceVertexBuffer = nullptr;
   UINT dynamicInstanceVertexCapacityBytes = 0;
   batch::BatchCompiler batchCompiler{};

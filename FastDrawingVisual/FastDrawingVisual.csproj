@@ -31,44 +31,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9TriangleBatchVS.cso">
-      <Link>Shader\D3D9TriangleBatchVS.cso</Link>
+    <Content Include="$(NativeD3D9ArtifactsDir)\InstanceVS_Model3.cso">
+      <Link>Shader\InstanceVS_Model3.cso</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9TriangleBatchPS.cso">
-      <Link>Shader\D3D9TriangleBatchPS.cso</Link>
+    <Content Include="$(NativeD3D9ArtifactsDir)\InstancePS_Model3.cso">
+      <Link>Shader\InstancePS_Model3.cso</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9ShapeInstanceVS.cso">
-      <Link>Shader\D3D9ShapeInstanceVS.cso</Link>
+    <Content Include="$(NativeD3D11ArtifactsDir)\InstanceVS_Model4.cso">
+      <Link>Shader\InstanceVS_Model4.cso</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9ShapeInstancePS.cso">
-      <Link>Shader\D3D9ShapeInstancePS.cso</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="$(NativeD3D11ArtifactsDir)\TriangleBatchVS.cso">
-      <Link>Shader\TriangleBatchVS.cso</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="$(NativeD3D11ArtifactsDir)\TriangleBatchPS.cso">
-      <Link>Shader\TriangleBatchPS.cso</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="$(NativeD3D11ArtifactsDir)\RectInstanceVS.cso">
-      <Link>Shader\RectInstanceVS.cso</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="$(NativeD3D11ArtifactsDir)\RectInstancePS.cso">
-      <Link>Shader\RectInstancePS.cso</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="$(NativeD3D11ArtifactsDir)\EllipseInstanceVS.cso">
-      <Link>Shader\EllipseInstanceVS.cso</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="$(NativeD3D11ArtifactsDir)\EllipseInstancePS.cso">
-      <Link>Shader\EllipseInstancePS.cso</Link>
+    <Content Include="$(NativeD3D11ArtifactsDir)\InstancePS_Model4.cso">
+      <Link>Shader\InstancePS_Model4.cso</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

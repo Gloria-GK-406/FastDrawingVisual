@@ -15,22 +15,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="TriangleBatchPS.hlsl">
+    <FxCompile Include="InstanceVS_Model4.hlsl">
       <Filter>Shader Files</Filter>
     </FxCompile>
-    <FxCompile Include="TriangleBatchVS.hlsl">
-      <Filter>Shader Files</Filter>
-    </FxCompile>
-    <FxCompile Include="RectInstanceVS.hlsl">
-      <Filter>Shader Files</Filter>
-    </FxCompile>
-    <FxCompile Include="RectInstancePS.hlsl">
-      <Filter>Shader Files</Filter>
-    </FxCompile>
-    <FxCompile Include="EllipseInstanceVS.hlsl">
-      <Filter>Shader Files</Filter>
-    </FxCompile>
-    <FxCompile Include="EllipseInstancePS.hlsl">
+    <FxCompile Include="InstancePS_Model4.hlsl">
       <Filter>Shader Files</Filter>
     </FxCompile>
   </ItemGroup>
