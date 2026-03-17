@@ -12,17 +12,21 @@
 
 namespace fdv::d3d9::draw {
 
-HRESULT DrawTriangleBatch(const TriangleBatchDrawContext& context,
-                          const TriangleVertexData& vertexData);
+HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
+                          const TriangleVertexData& vertexData,
+                          TriangleBatchDrawStats* stats = nullptr);
 
-HRESULT DrawShapeBatch(const InstanceBatchDrawContext& context,
-                       const ShapeInstanceData& instanceData);
+HRESULT DrawShapeInstanceBatch(InstanceBatchDrawContext& context,
+                               const ShapeInstanceData& instanceData,
+                               InstanceBatchDrawStats* stats = nullptr);
 
-HRESULT DrawRectBatch(const InstanceBatchDrawContext& context,
-                      const RectInstanceData& instanceData);
+HRESULT DrawRectInstanceBatch(InstanceBatchDrawContext& context,
+                              const RectInstanceData& instanceData,
+                              InstanceBatchDrawStats* stats = nullptr);
 
-HRESULT DrawEllipseBatch(const InstanceBatchDrawContext& context,
-                         const EllipseInstanceData& instanceData);
+HRESULT DrawEllipseInstanceBatch(InstanceBatchDrawContext& context,
+                                 const EllipseInstanceData& instanceData,
+                                 InstanceBatchDrawStats* stats = nullptr);
 
 HRESULT DrawTextBatch(const TextBatchDrawContext& context,
                       const DrawTextData& textData);

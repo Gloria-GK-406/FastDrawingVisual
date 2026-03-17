@@ -1,322 +1,301 @@
 #include "D3DBatchDraw.h"
 
 #include <algorithm>
-#include <cmath>
+#include <chrono>
+#include <cstring>
 #include <vector>
 
 namespace fdv::d3d9::draw {
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-constexpr int kEllipseSegmentCount = 48;
-
-struct ColorF {
-  float r;
-  float g;
-  float b;
-  float a;
+struct ViewConstants {
+  float viewportWidth = 0.0f;
+  float viewportHeight = 0.0f;
+  float padding0 = 0.0f;
+  float padding1 = 0.0f;
 };
 
-float ToNdcX(float width, float x) {
-  return (x / width) * 2.0f - 1.0f;
+double DurationMs(const std::chrono::steady_clock::time_point& start,
+                  const std::chrono::steady_clock::time_point& end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
-float ToNdcY(float height, float y) {
-  return 1.0f - (y / height) * 2.0f;
-}
-
-batch::TriangleVertex MakeVertex(float width, float height, float x, float y,
-                                 float r, float g, float b, float a) {
-  return {ToNdcX(width, x), ToNdcY(height, y), 0.0f, r, g, b, a};
-}
-
-ColorF ShapeFillColor(const batch::ShapeInstance& instance) {
-  return {instance.fillR, instance.fillG, instance.fillB, instance.fillA};
-}
-
-ColorF ShapeStrokeColor(const batch::ShapeInstance& instance) {
-  return {instance.strokeR, instance.strokeG, instance.strokeB,
-          instance.strokeA};
-}
-
-batch::ShapeInstanceType GetShapeType(const batch::ShapeInstance& instance) {
-  const auto rawType =
-      static_cast<std::uint32_t>(instance.type < 0.0f ? 0.0f
-                                                       : instance.type + 0.5f);
-  return static_cast<batch::ShapeInstanceType>(rawType);
-}
-
-void AppendFilledRect(float width, float height,
-                      std::vector<batch::TriangleVertex>& out,
-                      const batch::RectInstance& instance) {
-  if (instance.width <= 0.0f || instance.height <= 0.0f) {
-    return;
-  }
-
-  const float x0 = instance.x;
-  const float y0 = instance.y;
-  const float x1 = instance.x + instance.width;
-  const float y1 = instance.y + instance.height;
-
-  out.push_back(MakeVertex(width, height, x0, y0, instance.r, instance.g,
-                           instance.b, instance.a));
-  out.push_back(MakeVertex(width, height, x1, y0, instance.r, instance.g,
-                           instance.b, instance.a));
-  out.push_back(MakeVertex(width, height, x0, y1, instance.r, instance.g,
-                           instance.b, instance.a));
-  out.push_back(MakeVertex(width, height, x1, y0, instance.r, instance.g,
-                           instance.b, instance.a));
-  out.push_back(MakeVertex(width, height, x1, y1, instance.r, instance.g,
-                           instance.b, instance.a));
-  out.push_back(MakeVertex(width, height, x0, y1, instance.r, instance.g,
-                           instance.b, instance.a));
-}
-
-void AppendStrokeRect(float width, float height,
-                      std::vector<batch::TriangleVertex>& out,
-                      const batch::RectInstance& instance) {
-  const float t = (std::max)(1.0f, instance.thickness);
-  if (t * 2.0f >= instance.width || t * 2.0f >= instance.height) {
-    AppendFilledRect(width, height, out, instance);
-    return;
-  }
-
-  batch::RectInstance edge = instance;
-  edge.height = t;
-  AppendFilledRect(width, height, out, edge);
-
-  edge.y = instance.y + instance.height - t;
-  AppendFilledRect(width, height, out, edge);
-
-  edge = instance;
-  edge.width = t;
-  edge.y = instance.y + t;
-  edge.height = instance.height - 2.0f * t;
-  AppendFilledRect(width, height, out, edge);
-
-  edge.x = instance.x + instance.width - t;
-  AppendFilledRect(width, height, out, edge);
-}
-
-void AppendFilledEllipse(float width, float height,
-                         std::vector<batch::TriangleVertex>& out,
-                         const batch::EllipseInstance& instance) {
-  if (instance.radiusX <= 0.0f || instance.radiusY <= 0.0f) {
-    return;
-  }
-
-  const auto center = MakeVertex(width, height, instance.centerX,
-                                 instance.centerY, instance.r, instance.g,
-                                 instance.b, instance.a);
-  for (int i = 0; i < kEllipseSegmentCount; ++i) {
-    const float a0 = (2.0f * kPi * static_cast<float>(i)) /
-                     static_cast<float>(kEllipseSegmentCount);
-    const float a1 = (2.0f * kPi * static_cast<float>(i + 1)) /
-                     static_cast<float>(kEllipseSegmentCount);
-    const float x0 = instance.centerX + std::cos(a0) * instance.radiusX;
-    const float y0 = instance.centerY + std::sin(a0) * instance.radiusY;
-    const float x1 = instance.centerX + std::cos(a1) * instance.radiusX;
-    const float y1 = instance.centerY + std::sin(a1) * instance.radiusY;
-
-    out.push_back(center);
-    out.push_back(MakeVertex(width, height, x0, y0, instance.r, instance.g,
-                             instance.b, instance.a));
-    out.push_back(MakeVertex(width, height, x1, y1, instance.r, instance.g,
-                             instance.b, instance.a));
+void ReleaseVertexBuffer(IDirect3DVertexBuffer9*& buffer) {
+  if (buffer != nullptr) {
+    buffer->Release();
+    buffer = nullptr;
   }
 }
 
-void AppendStrokeEllipse(float width, float height,
-                         std::vector<batch::TriangleVertex>& out,
-                         const batch::EllipseInstance& instance) {
-  const float t = (std::max)(1.0f, instance.thickness);
-  const float outerRx = instance.radiusX + t * 0.5f;
-  const float outerRy = instance.radiusY + t * 0.5f;
-  const float innerRx = instance.radiusX - t * 0.5f;
-  const float innerRy = instance.radiusY - t * 0.5f;
-
-  batch::EllipseInstance outer = instance;
-  outer.radiusX = outerRx;
-  outer.radiusY = outerRy;
-  if (innerRx <= 0.0f || innerRy <= 0.0f) {
-    AppendFilledEllipse(width, height, out, outer);
-    return;
+HRESULT EnsureDynamicVertexBuffer(TriangleBatchDrawContext& context,
+                                  UINT requiredBytes,
+                                  TriangleBatchDrawStats* stats) {
+  if (context.device == nullptr) {
+    return E_POINTER;
   }
 
-  for (int i = 0; i < kEllipseSegmentCount; ++i) {
-    const float a0 = (2.0f * kPi * static_cast<float>(i)) /
-                     static_cast<float>(kEllipseSegmentCount);
-    const float a1 = (2.0f * kPi * static_cast<float>(i + 1)) /
-                     static_cast<float>(kEllipseSegmentCount);
-    const float ox0 = instance.centerX + std::cos(a0) * outerRx;
-    const float oy0 = instance.centerY + std::sin(a0) * outerRy;
-    const float ox1 = instance.centerX + std::cos(a1) * outerRx;
-    const float oy1 = instance.centerY + std::sin(a1) * outerRy;
-    const float ix0 = instance.centerX + std::cos(a0) * innerRx;
-    const float iy0 = instance.centerY + std::sin(a0) * innerRy;
-    const float ix1 = instance.centerX + std::cos(a1) * innerRx;
-    const float iy1 = instance.centerY + std::sin(a1) * innerRy;
-
-    out.push_back(MakeVertex(width, height, ox0, oy0, instance.r, instance.g,
-                             instance.b, instance.a));
-    out.push_back(MakeVertex(width, height, ox1, oy1, instance.r, instance.g,
-                             instance.b, instance.a));
-    out.push_back(MakeVertex(width, height, ix0, iy0, instance.r, instance.g,
-                             instance.b, instance.a));
-    out.push_back(MakeVertex(width, height, ox1, oy1, instance.r, instance.g,
-                             instance.b, instance.a));
-    out.push_back(MakeVertex(width, height, ix1, iy1, instance.r, instance.g,
-                             instance.b, instance.a));
-    out.push_back(MakeVertex(width, height, ix0, iy0, instance.r, instance.g,
-                             instance.b, instance.a));
+  const UINT minBytes = (std::max)(requiredBytes, 1024u);
+  if (context.vertexBuffer != nullptr &&
+      context.vertexBufferCapacityBytes >= minBytes) {
+    if (stats != nullptr) {
+      stats->vertexBufferCapacityBytes = context.vertexBufferCapacityBytes;
+    }
+    return S_OK;
   }
+
+  ReleaseVertexBuffer(context.vertexBuffer);
+  const HRESULT hr = context.device->CreateVertexBuffer(
+      minBytes, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
+      &context.vertexBuffer, nullptr);
+  if (FAILED(hr) || context.vertexBuffer == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  context.vertexBufferCapacityBytes = minBytes;
+  if (stats != nullptr) {
+    stats->resizedVertexBuffer = true;
+    stats->vertexBufferCapacityBytes = minBytes;
+  }
+  return S_OK;
 }
 
-void AppendStrokeEllipseFromOuterBounds(float width, float height,
-                                        std::vector<batch::TriangleVertex>& out,
-                                        float centerX, float centerY,
-                                        float outerRadiusX,
-                                        float outerRadiusY, float thickness,
-                                        const ColorF& color) {
-  if (outerRadiusX <= 0.0f || outerRadiusY <= 0.0f) {
-    return;
+HRESULT EnsureDynamicInstanceBuffer(InstanceBatchDrawContext& context,
+                                    UINT requiredBytes,
+                                    InstanceBatchDrawStats* stats) {
+  if (context.device == nullptr) {
+    return E_POINTER;
   }
 
-  const float t = (std::max)(1.0f, thickness);
-  const float innerRadiusX = outerRadiusX - t;
-  const float innerRadiusY = outerRadiusY - t;
-
-  batch::EllipseInstance outer{centerX, centerY, outerRadiusX, outerRadiusY,
-                               0.0f,    color.r, color.g,       color.b,
-                               color.a};
-  if (innerRadiusX <= 0.0f || innerRadiusY <= 0.0f) {
-    AppendFilledEllipse(width, height, out, outer);
-    return;
+  const UINT minBytes = (std::max)(requiredBytes, 1024u);
+  if (context.instanceBuffer != nullptr &&
+      context.instanceBufferCapacityBytes >= minBytes) {
+    if (stats != nullptr) {
+      stats->instanceBufferCapacityBytes = context.instanceBufferCapacityBytes;
+    }
+    return S_OK;
   }
 
-  for (int i = 0; i < kEllipseSegmentCount; ++i) {
-    const float a0 = (2.0f * kPi * static_cast<float>(i)) /
-                     static_cast<float>(kEllipseSegmentCount);
-    const float a1 = (2.0f * kPi * static_cast<float>(i + 1)) /
-                     static_cast<float>(kEllipseSegmentCount);
-    const float ox0 = centerX + std::cos(a0) * outerRadiusX;
-    const float oy0 = centerY + std::sin(a0) * outerRadiusY;
-    const float ox1 = centerX + std::cos(a1) * outerRadiusX;
-    const float oy1 = centerY + std::sin(a1) * outerRadiusY;
-    const float ix0 = centerX + std::cos(a0) * innerRadiusX;
-    const float iy0 = centerY + std::sin(a0) * innerRadiusY;
-    const float ix1 = centerX + std::cos(a1) * innerRadiusX;
-    const float iy1 = centerY + std::sin(a1) * innerRadiusY;
-
-    out.push_back(MakeVertex(width, height, ox0, oy0, color.r, color.g,
-                             color.b, color.a));
-    out.push_back(MakeVertex(width, height, ox1, oy1, color.r, color.g,
-                             color.b, color.a));
-    out.push_back(MakeVertex(width, height, ix0, iy0, color.r, color.g,
-                             color.b, color.a));
-    out.push_back(MakeVertex(width, height, ox1, oy1, color.r, color.g,
-                             color.b, color.a));
-    out.push_back(MakeVertex(width, height, ix1, iy1, color.r, color.g,
-                             color.b, color.a));
-    out.push_back(MakeVertex(width, height, ix0, iy0, color.r, color.g,
-                             color.b, color.a));
+  ReleaseVertexBuffer(context.instanceBuffer);
+  const HRESULT hr = context.device->CreateVertexBuffer(
+      minBytes, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
+      &context.instanceBuffer, nullptr);
+  if (FAILED(hr) || context.instanceBuffer == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
   }
+
+  context.instanceBufferCapacityBytes = minBytes;
+  if (stats != nullptr) {
+    stats->resizedInstanceBuffer = true;
+    stats->instanceBufferCapacityBytes = minBytes;
+  }
+  return S_OK;
 }
 
-void AppendLine(float width, float height,
-                std::vector<batch::TriangleVertex>& out, float x0, float y0,
-                float x1, float y1, float thickness, const ColorF& color) {
-  const float t = (std::max)(1.0f, thickness);
-  const float dx = x1 - x0;
-  const float dy = y1 - y0;
-  const float len = std::sqrt(dx * dx + dy * dy);
-
-  if (len < 0.0001f) {
-    const batch::RectInstance point{x0 - t * 0.5f, y0 - t * 0.5f, t, t, 0.0f,
-                                    color.r,       color.g,       color.b,
-                                    color.a};
-    AppendFilledRect(width, height, out, point);
-    return;
+HRESULT UpdateViewConstants(InstanceBatchDrawContext& context) {
+  if (context.device == nullptr || context.viewportWidth <= 0.0f ||
+      context.viewportHeight <= 0.0f) {
+    return E_POINTER;
   }
 
-  const float half = t * 0.5f;
-  const float nx = -dy / len * half;
-  const float ny = dx / len * half;
-
-  const auto v0 = MakeVertex(width, height, x0 + nx, y0 + ny, color.r, color.g,
-                             color.b, color.a);
-  const auto v1 = MakeVertex(width, height, x1 + nx, y1 + ny, color.r, color.g,
-                             color.b, color.a);
-  const auto v2 = MakeVertex(width, height, x1 - nx, y1 - ny, color.r, color.g,
-                             color.b, color.a);
-  const auto v3 = MakeVertex(width, height, x0 - nx, y0 - ny, color.r, color.g,
-                             color.b, color.a);
-
-  out.push_back(v0);
-  out.push_back(v1);
-  out.push_back(v2);
-  out.push_back(v0);
-  out.push_back(v2);
-  out.push_back(v3);
+  const ViewConstants constants{context.viewportWidth, context.viewportHeight,
+                                0.0f, 0.0f};
+  const HRESULT hr =
+      context.device->SetVertexShaderConstantF(0, &constants.viewportWidth, 1);
+  return FAILED(hr) ? hr : S_OK;
 }
 
-void AppendShape(float width, float height,
-                 std::vector<batch::TriangleVertex>& out,
-                 const batch::ShapeInstance& instance) {
-  const auto type = GetShapeType(instance);
-  switch (type) {
-  case batch::ShapeInstanceType::FillRect: {
-    const auto color = ShapeFillColor(instance);
-    const batch::RectInstance rect{instance.x, instance.y, instance.width,
-                                   instance.height, 0.0f, color.r, color.g,
-                                   color.b,         color.a};
-    AppendFilledRect(width, height, out, rect);
-    break;
+template <typename TInstance>
+HRESULT DrawInstanceBatch(InstanceBatchDrawContext& context,
+                          const TInstance* instances, int instanceCount,
+                          InstanceBatchDrawStats* stats) {
+  if (instances == nullptr || instanceCount <= 0) {
+    return S_OK;
   }
-  case batch::ShapeInstanceType::StrokeRect: {
-    const auto color = ShapeStrokeColor(instance);
-    const batch::RectInstance rect{
-        instance.x, instance.y, instance.width,  instance.height,
-        instance.strokeWidth, color.r, color.g, color.b, color.a};
-    AppendStrokeRect(width, height, out, rect);
-    break;
+
+  if (context.device == nullptr || context.vertexDeclaration == nullptr ||
+      context.vertexShader == nullptr || context.pixelShader == nullptr ||
+      context.geometryVertexBuffer == nullptr ||
+      context.geometryIndexBuffer == nullptr ||
+      context.geometryVertexStrideBytes == 0 ||
+      context.geometryVertexCount < 4 || context.geometryPrimitiveCount == 0) {
+    return E_POINTER;
   }
-  case batch::ShapeInstanceType::FillEllipse: {
-    const auto color = ShapeFillColor(instance);
-    const batch::EllipseInstance ellipse{
-        instance.x + instance.width * 0.5f, instance.y + instance.height * 0.5f,
-        instance.width * 0.5f,              instance.height * 0.5f,
-        0.0f,                               color.r,
-        color.g,                            color.b,
-        color.a};
-    AppendFilledEllipse(width, height, out, ellipse);
-    break;
+
+  const UINT byteSize = static_cast<UINT>(instanceCount * sizeof(TInstance));
+  const auto ensureStart = std::chrono::steady_clock::now();
+  const HRESULT ensureHr =
+      EnsureDynamicInstanceBuffer(context, byteSize, stats);
+  const auto ensureEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->ensureInstanceBufferMs += DurationMs(ensureStart, ensureEnd);
+    stats->instanceBufferCapacityBytes = context.instanceBufferCapacityBytes;
   }
-  case batch::ShapeInstanceType::StrokeEllipse: {
-    AppendStrokeEllipseFromOuterBounds(
-        width, height, out, instance.x + instance.width * 0.5f,
-        instance.y + instance.height * 0.5f, instance.width * 0.5f,
-        instance.height * 0.5f, instance.strokeWidth,
-        ShapeStrokeColor(instance));
-    break;
+  if (FAILED(ensureHr)) {
+    return ensureHr;
   }
-  case batch::ShapeInstanceType::Line: {
-    const float centerX = instance.x + instance.width * 0.5f;
-    const float centerY = instance.y + instance.height * 0.5f;
-    AppendLine(width, height, out, centerX + instance.data0x,
-               centerY + instance.data0y, centerX + instance.data0z,
-               centerY + instance.data0w, instance.strokeWidth,
-               ShapeStrokeColor(instance));
-    break;
+
+  const HRESULT constantsHr = UpdateViewConstants(context);
+  if (FAILED(constantsHr)) {
+    return constantsHr;
   }
+
+  void* mapped = nullptr;
+  const auto uploadStart = std::chrono::steady_clock::now();
+  const HRESULT lockHr =
+      context.instanceBuffer->Lock(0, byteSize, &mapped, D3DLOCK_DISCARD);
+  if (FAILED(lockHr) || mapped == nullptr) {
+    return FAILED(lockHr) ? lockHr : E_FAIL;
   }
+
+  std::memcpy(mapped, instances, byteSize);
+  context.instanceBuffer->Unlock();
+  const auto uploadEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->uploadInstanceDataMs += DurationMs(uploadStart, uploadEnd);
+    stats->uploadedBytes += byteSize;
+  }
+
+  const HRESULT declHr =
+      context.device->SetVertexDeclaration(context.vertexDeclaration);
+  if (FAILED(declHr)) {
+    return declHr;
+  }
+
+  const HRESULT vsHr = context.device->SetVertexShader(context.vertexShader);
+  if (FAILED(vsHr)) {
+    return vsHr;
+  }
+
+  const HRESULT psHr = context.device->SetPixelShader(context.pixelShader);
+  if (FAILED(psHr)) {
+    return psHr;
+  }
+
+  HRESULT hr = context.device->SetStreamSource(0, context.geometryVertexBuffer,
+                                               0,
+                                               context.geometryVertexStrideBytes);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = context.device->SetStreamSource(1, context.instanceBuffer, 0,
+                                       static_cast<UINT>(sizeof(TInstance)));
+  if (FAILED(hr)) {
+    context.device->SetStreamSource(0, nullptr, 0, 0);
+    return hr;
+  }
+
+  hr = context.device->SetIndices(context.geometryIndexBuffer);
+  if (FAILED(hr)) {
+    context.device->SetStreamSource(1, nullptr, 0, 0);
+    context.device->SetStreamSource(0, nullptr, 0, 0);
+    return hr;
+  }
+
+  hr = context.device->SetStreamSourceFreq(
+      0, D3DSTREAMSOURCE_INDEXEDDATA | static_cast<UINT>(instanceCount));
+  if (FAILED(hr)) {
+    context.device->SetIndices(nullptr);
+    context.device->SetStreamSource(1, nullptr, 0, 0);
+    context.device->SetStreamSource(0, nullptr, 0, 0);
+    return hr;
+  }
+
+  hr = context.device->SetStreamSourceFreq(1, D3DSTREAMSOURCE_INSTANCEDATA | 1u);
+  if (FAILED(hr)) {
+    context.device->SetStreamSourceFreq(0, 1u);
+    context.device->SetIndices(nullptr);
+    context.device->SetStreamSource(1, nullptr, 0, 0);
+    context.device->SetStreamSource(0, nullptr, 0, 0);
+    return hr;
+  }
+
+  const auto drawStart = std::chrono::steady_clock::now();
+  hr = context.device->DrawIndexedPrimitive(
+      D3DPT_TRIANGLELIST, 0, 0, context.geometryVertexCount, 0,
+      context.geometryPrimitiveCount);
+  const auto drawEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr && SUCCEEDED(hr)) {
+    stats->issueDrawMs += DurationMs(drawStart, drawEnd);
+  }
+
+  context.device->SetIndices(nullptr);
+  context.device->SetStreamSourceFreq(1, 1u);
+  context.device->SetStreamSourceFreq(0, 1u);
+  context.device->SetStreamSource(1, nullptr, 0, 0);
+  context.device->SetStreamSource(0, nullptr, 0, 0);
+  return FAILED(hr) ? hr : S_OK;
 }
 
-HRESULT DrawTriangleVector(const TriangleBatchDrawContext& context,
-                           const std::vector<batch::TriangleVertex>& vertices) {
-  const TriangleVertexData vertexData{vertices.data(),
-                                      static_cast<int>(vertices.size())};
-  return DrawTriangleBatch(context, vertexData);
+batch::ShapeInstance MakeShapeRectInstance(const batch::RectInstance& instance) {
+  const bool stroke = instance.thickness > 0.0f;
+  const float type = stroke
+                         ? static_cast<float>(batch::ShapeInstanceType::StrokeRect)
+                         : static_cast<float>(batch::ShapeInstanceType::FillRect);
+  return {
+      instance.x,
+      instance.y,
+      instance.width,
+      instance.height,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f,
+      stroke ? 0.0f : instance.r,
+      stroke ? 0.0f : instance.g,
+      stroke ? 0.0f : instance.b,
+      stroke ? 0.0f : instance.a,
+      stroke ? instance.r : 0.0f,
+      stroke ? instance.g : 0.0f,
+      stroke ? instance.b : 0.0f,
+      stroke ? instance.a : 0.0f,
+      stroke ? (std::max)(1.0f, instance.thickness) : 0.0f,
+      0.0f,
+      type,
+      0.0f,
+  };
+}
+
+batch::ShapeInstance MakeShapeEllipseInstance(
+    const batch::EllipseInstance& instance) {
+  const bool stroke = instance.thickness > 0.0f;
+  const float strokeWidth = stroke ? (std::max)(1.0f, instance.thickness) : 0.0f;
+  float x = instance.centerX - instance.radiusX;
+  float y = instance.centerY - instance.radiusY;
+  float width = instance.radiusX * 2.0f;
+  float height = instance.radiusY * 2.0f;
+  if (stroke) {
+    x -= strokeWidth * 0.5f;
+    y -= strokeWidth * 0.5f;
+    width += strokeWidth;
+    height += strokeWidth;
+  }
+
+  const float type =
+      stroke ? static_cast<float>(batch::ShapeInstanceType::StrokeEllipse)
+             : static_cast<float>(batch::ShapeInstanceType::FillEllipse);
+  return {
+      x,
+      y,
+      width,
+      height,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f,
+      stroke ? 0.0f : instance.r,
+      stroke ? 0.0f : instance.g,
+      stroke ? 0.0f : instance.b,
+      stroke ? 0.0f : instance.a,
+      stroke ? instance.r : 0.0f,
+      stroke ? instance.g : 0.0f,
+      stroke ? instance.b : 0.0f,
+      stroke ? instance.a : 0.0f,
+      strokeWidth,
+      0.0f,
+      type,
+      0.0f,
+  };
 }
 
 } // namespace
@@ -332,6 +311,11 @@ void SetupRenderState(IDirect3DDevice9* device) {
   device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
   device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
   device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+  device->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+  device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);
+  device->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE);
+  device->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA);
+  device->SetRenderState(D3DRS_BLENDOPALPHA, D3DBLENDOP_ADD);
   device->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, FALSE);
   device->SetRenderState(D3DRS_ANTIALIASEDLINEENABLE, FALSE);
   device->SetTexture(0, nullptr);
@@ -339,10 +323,15 @@ void SetupRenderState(IDirect3DDevice9* device) {
   device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
 }
 
-HRESULT DrawTriangleBatch(const TriangleBatchDrawContext& context,
-                          const TriangleVertexData& vertexData) {
+HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
+                          const TriangleVertexData& vertexData,
+                          TriangleBatchDrawStats* stats) {
   if (vertexData.vertices == nullptr || vertexData.vertexCount <= 0) {
     return S_OK;
+  }
+
+  if ((vertexData.vertexCount % 3) != 0) {
+    return E_INVALIDARG;
   }
 
   if (context.device == nullptr || context.vertexDeclaration == nullptr ||
@@ -350,90 +339,109 @@ HRESULT DrawTriangleBatch(const TriangleBatchDrawContext& context,
     return E_POINTER;
   }
 
-  if ((vertexData.vertexCount % 3) != 0) {
-    return E_INVALIDARG;
+  const UINT byteSize = static_cast<UINT>(vertexData.vertexCount *
+                                          sizeof(batch::TriangleVertex));
+  const auto ensureStart = std::chrono::steady_clock::now();
+  const HRESULT ensureHr = EnsureDynamicVertexBuffer(context, byteSize, stats);
+  const auto ensureEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->ensureVertexBufferMs += DurationMs(ensureStart, ensureEnd);
+    stats->vertexBufferCapacityBytes = context.vertexBufferCapacityBytes;
+  }
+  if (FAILED(ensureHr)) {
+    return ensureHr;
   }
 
-  context.device->SetVertexDeclaration(context.vertexDeclaration);
-  context.device->SetVertexShader(context.vertexShader);
-  context.device->SetPixelShader(context.pixelShader);
+  void* mapped = nullptr;
+  const auto uploadStart = std::chrono::steady_clock::now();
+  const HRESULT lockHr =
+      context.vertexBuffer->Lock(0, byteSize, &mapped, D3DLOCK_DISCARD);
+  if (FAILED(lockHr) || mapped == nullptr) {
+    return FAILED(lockHr) ? lockHr : E_FAIL;
+  }
 
-  const UINT primitiveCount = static_cast<UINT>(vertexData.vertexCount / 3);
-  const HRESULT hr = context.device->DrawPrimitiveUP(
-      D3DPT_TRIANGLELIST, primitiveCount, vertexData.vertices,
-      sizeof(batch::TriangleVertex));
+  std::memcpy(mapped, vertexData.vertices, byteSize);
+  context.vertexBuffer->Unlock();
+  const auto uploadEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->uploadVertexDataMs += DurationMs(uploadStart, uploadEnd);
+    stats->uploadedBytes += byteSize;
+  }
+
+  HRESULT hr = context.device->SetVertexDeclaration(context.vertexDeclaration);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = context.device->SetVertexShader(context.vertexShader);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = context.device->SetPixelShader(context.pixelShader);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = context.device->SetStreamSource(0, context.vertexBuffer, 0,
+                                       sizeof(batch::TriangleVertex));
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  const auto drawStart = std::chrono::steady_clock::now();
+  hr = context.device->DrawPrimitive(
+      D3DPT_TRIANGLELIST, 0, static_cast<UINT>(vertexData.vertexCount / 3));
+  const auto drawEnd = std::chrono::steady_clock::now();
+  context.device->SetStreamSource(0, nullptr, 0, 0);
+
+  if (stats != nullptr && SUCCEEDED(hr)) {
+    stats->issueDrawMs += DurationMs(drawStart, drawEnd);
+  }
   return FAILED(hr) ? hr : S_OK;
 }
 
-HRESULT DrawShapeBatch(const InstanceBatchDrawContext& context,
-                       const ShapeInstanceData& instanceData) {
-  TriangleBatchDrawContext triangleContext{};
-  triangleContext.device = context.device;
-  triangleContext.vertexDeclaration = context.vertexDeclaration;
-  triangleContext.vertexShader = context.vertexShader;
-  triangleContext.pixelShader = context.pixelShader;
-
-  std::vector<batch::TriangleVertex> vertices;
-  vertices.reserve(static_cast<std::size_t>(instanceData.instanceCount) * 144u);
-  for (int i = 0; i < instanceData.instanceCount; ++i) {
-    AppendShape(static_cast<float>(context.viewportWidth),
-                static_cast<float>(context.viewportHeight), vertices,
-                instanceData.instances[i]);
-  }
-
-  return DrawTriangleVector(triangleContext, vertices);
+HRESULT DrawShapeInstanceBatch(InstanceBatchDrawContext& context,
+                               const ShapeInstanceData& instanceData,
+                               InstanceBatchDrawStats* stats) {
+  return DrawInstanceBatch(context, instanceData.instances,
+                           instanceData.instanceCount, stats);
 }
 
-HRESULT DrawRectBatch(const InstanceBatchDrawContext& context,
-                      const RectInstanceData& instanceData) {
-  TriangleBatchDrawContext triangleContext{};
-  triangleContext.device = context.device;
-  triangleContext.vertexDeclaration = context.vertexDeclaration;
-  triangleContext.vertexShader = context.vertexShader;
-  triangleContext.pixelShader = context.pixelShader;
-
-  std::vector<batch::TriangleVertex> vertices;
-  vertices.reserve(static_cast<std::size_t>(instanceData.instanceCount) * 24u);
-  for (int i = 0; i < instanceData.instanceCount; ++i) {
-    const auto& instance = instanceData.instances[i];
-    if (instance.thickness > 0.0f) {
-      AppendStrokeRect(static_cast<float>(context.viewportWidth),
-                       static_cast<float>(context.viewportHeight), vertices,
-                       instance);
-    } else {
-      AppendFilledRect(static_cast<float>(context.viewportWidth),
-                       static_cast<float>(context.viewportHeight), vertices,
-                       instance);
-    }
+HRESULT DrawRectInstanceBatch(InstanceBatchDrawContext& context,
+                              const RectInstanceData& instanceData,
+                              InstanceBatchDrawStats* stats) {
+  if (instanceData.instances == nullptr || instanceData.instanceCount <= 0) {
+    return S_OK;
   }
 
-  return DrawTriangleVector(triangleContext, vertices);
+  std::vector<batch::ShapeInstance> shapeInstances;
+  shapeInstances.reserve(static_cast<std::size_t>(instanceData.instanceCount));
+  for (int i = 0; i < instanceData.instanceCount; ++i) {
+    shapeInstances.push_back(MakeShapeRectInstance(instanceData.instances[i]));
+  }
+
+  const ShapeInstanceData shapeData{shapeInstances.data(),
+                                    static_cast<int>(shapeInstances.size())};
+  return DrawShapeInstanceBatch(context, shapeData, stats);
 }
 
-HRESULT DrawEllipseBatch(const InstanceBatchDrawContext& context,
-                         const EllipseInstanceData& instanceData) {
-  TriangleBatchDrawContext triangleContext{};
-  triangleContext.device = context.device;
-  triangleContext.vertexDeclaration = context.vertexDeclaration;
-  triangleContext.vertexShader = context.vertexShader;
-  triangleContext.pixelShader = context.pixelShader;
-
-  std::vector<batch::TriangleVertex> vertices;
-  vertices.reserve(static_cast<std::size_t>(instanceData.instanceCount) * 144u);
-  for (int i = 0; i < instanceData.instanceCount; ++i) {
-    const auto& instance = instanceData.instances[i];
-    if (instance.thickness > 0.0f) {
-      AppendStrokeEllipse(static_cast<float>(context.viewportWidth),
-                          static_cast<float>(context.viewportHeight), vertices,
-                          instance);
-    } else {
-      AppendFilledEllipse(static_cast<float>(context.viewportWidth),
-                          static_cast<float>(context.viewportHeight), vertices,
-                          instance);
-    }
+HRESULT DrawEllipseInstanceBatch(InstanceBatchDrawContext& context,
+                                 const EllipseInstanceData& instanceData,
+                                 InstanceBatchDrawStats* stats) {
+  if (instanceData.instances == nullptr || instanceData.instanceCount <= 0) {
+    return S_OK;
   }
 
-  return DrawTriangleVector(triangleContext, vertices);
+  std::vector<batch::ShapeInstance> shapeInstances;
+  shapeInstances.reserve(static_cast<std::size_t>(instanceData.instanceCount));
+  for (int i = 0; i < instanceData.instanceCount; ++i) {
+    shapeInstances.push_back(MakeShapeEllipseInstance(instanceData.instances[i]));
+  }
+
+  const ShapeInstanceData shapeData{shapeInstances.data(),
+                                    static_cast<int>(shapeInstances.size())};
+  return DrawShapeInstanceBatch(context, shapeData, stats);
 }
 
 HRESULT DrawTextBatch(const TextBatchDrawContext& context,

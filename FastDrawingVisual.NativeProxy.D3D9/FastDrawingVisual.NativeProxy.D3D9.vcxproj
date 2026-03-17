@@ -181,6 +181,36 @@
     <ClCompile Include="D3D9Backend.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <FxCompile Include="TriangleBatchVS.hlsl">
+      <ShaderType>Vertex</ShaderType>
+      <EntryPointName>main</EntryPointName>
+      <ShaderModel>3_0</ShaderModel>
+      <ObjectFileOutput>$(OutDir)D3D9TriangleBatchVS.cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="TriangleBatchPS.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <EntryPointName>main</EntryPointName>
+      <ShaderModel>3_0</ShaderModel>
+      <ObjectFileOutput>$(OutDir)D3D9TriangleBatchPS.cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="ShapeInstanceVS.hlsl">
+      <ShaderType>Vertex</ShaderType>
+      <EntryPointName>main</EntryPointName>
+      <ShaderModel>3_0</ShaderModel>
+      <ObjectFileOutput>$(OutDir)D3D9ShapeInstanceVS.cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="ShapeInstancePS.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <EntryPointName>main</EntryPointName>
+      <ShaderModel>3_0</ShaderModel>
+      <ObjectFileOutput>$(OutDir)D3D9ShapeInstancePS.cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">3.0</ShaderModel>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
     <ClInclude Include="BatchComplier.h" />
     <ClInclude Include="D3DBatchDraw.h" />
     <ClInclude Include="D3DBatchDrawTypes.h" />
@@ -217,6 +247,13 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="FDV_GenerateBridgeProtocol" BeforeTargets="ClCompile" Inputs="$(BridgeProtocolSchema);$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj;$(BridgeProtocolProjectDir)\Program.cs;$(BridgeProtocolProjectDir)\ProtocolModel.cs;$(BridgeProtocolProjectDir)\ProtocolTemplateModel.cs;$(BridgeProtocolProjectDir)\SlotProtocolGenerator.cs;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.cs.scriban;$(BridgeProtocolProjectDir)\Templates\BridgeCommandProtocol.g.h.scriban" Outputs="$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.cs;$(BridgeProtocolOutDir)\BridgeCommandProtocol.g.h">
     <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(BridgeProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
+  </Target>
+  <Target Name="FDV_CopyCompiledShaders" AfterTargets="Build">
+    <ItemGroup>
+      <ShaderObjects Include="$(OutDir)D3D9TriangleBatchVS.cso;$(OutDir)D3D9TriangleBatchPS.cso;$(OutDir)D3D9ShapeInstanceVS.cso;$(OutDir)D3D9ShapeInstancePS.cso" />
+    </ItemGroup>
+    <MakeDir Directories="$(OutDir)Shader" />
+    <Copy SourceFiles="@(ShaderObjects)" DestinationFolder="$(OutDir)Shader" SkipUnchangedFiles="true" />
   </Target>
   <ImportGroup Label="ExtensionTargets">
     <Import Project="..\packages\Microsoft.DXSDK.D3DX.9.29.952.8\build\native\Microsoft.DXSDK.D3DX.targets" Condition="Exists('..\packages\Microsoft.DXSDK.D3DX.9.29.952.8\build\native\Microsoft.DXSDK.D3DX.targets')" />

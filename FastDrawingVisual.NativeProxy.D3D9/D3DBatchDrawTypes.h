@@ -20,6 +20,8 @@ struct TriangleBatchDrawContext {
   IDirect3DVertexDeclaration9* vertexDeclaration = nullptr;
   IDirect3DVertexShader9* vertexShader = nullptr;
   IDirect3DPixelShader9* pixelShader = nullptr;
+  IDirect3DVertexBuffer9* vertexBuffer = nullptr;
+  UINT vertexBufferCapacityBytes = 0;
 };
 
 struct TriangleVertexData {
@@ -27,13 +29,29 @@ struct TriangleVertexData {
   int vertexCount = 0;
 };
 
+struct TriangleBatchDrawStats {
+  double ensureVertexBufferMs = 0.0;
+  double uploadVertexDataMs = 0.0;
+  double issueDrawMs = 0.0;
+  UINT uploadedBytes = 0;
+  UINT vertexBufferCapacityBytes = 0;
+  bool resizedVertexBuffer = false;
+};
+
 struct InstanceBatchDrawContext {
   IDirect3DDevice9* device = nullptr;
   IDirect3DVertexDeclaration9* vertexDeclaration = nullptr;
   IDirect3DVertexShader9* vertexShader = nullptr;
   IDirect3DPixelShader9* pixelShader = nullptr;
-  int viewportWidth = 0;
-  int viewportHeight = 0;
+  IDirect3DVertexBuffer9* geometryVertexBuffer = nullptr;
+  IDirect3DIndexBuffer9* geometryIndexBuffer = nullptr;
+  UINT geometryVertexStrideBytes = 0;
+  UINT geometryVertexCount = 0;
+  UINT geometryPrimitiveCount = 0;
+  IDirect3DVertexBuffer9* instanceBuffer = nullptr;
+  UINT instanceBufferCapacityBytes = 0;
+  float viewportWidth = 0.0f;
+  float viewportHeight = 0.0f;
 };
 
 struct RectInstanceData {
@@ -49,6 +67,15 @@ struct EllipseInstanceData {
 struct ShapeInstanceData {
   const batch::ShapeInstance* instances = nullptr;
   int instanceCount = 0;
+};
+
+struct InstanceBatchDrawStats {
+  double ensureInstanceBufferMs = 0.0;
+  double uploadInstanceDataMs = 0.0;
+  double issueDrawMs = 0.0;
+  UINT uploadedBytes = 0;
+  UINT instanceBufferCapacityBytes = 0;
+  bool resizedInstanceBuffer = false;
 };
 
 struct TextBatchDrawContext {};

@@ -5,48 +5,22 @@
 #include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
 
 #include <chrono>
+#include <cstdint>
 #include <cwchar>
 #include <new>
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 namespace fdv::d3d9 {
 
 namespace {
 
 constexpr uint32_t kMetricWindowSec = 1;
-constexpr const char* kVertexShaderSrc = R"(
-struct VSInput
-{
-    float3 pos : POSITION0;
-    float4 color : COLOR0;
-};
-
-struct PSInput
-{
-    float4 pos : POSITION0;
-    float4 color : COLOR0;
-};
-
-PSInput main(VSInput input)
-{
-    PSInput output;
-    output.pos = float4(input.pos, 1.0f);
-    output.color = input.color;
-    return output;
-}
-)";
-constexpr const char* kPixelShaderSrc = R"(
-struct PSInput
-{
-    float4 color : COLOR0;
-};
-
-float4 main(PSInput input) : COLOR0
-{
-    return input.color;
-}
-)";
+constexpr const wchar_t* kTriangleVertexShaderPath = L"Shader\\D3D9TriangleBatchVS.cso";
+constexpr const wchar_t* kTrianglePixelShaderPath = L"Shader\\D3D9TriangleBatchPS.cso";
+constexpr const wchar_t* kShapeVertexShaderPath = L"Shader\\D3D9ShapeInstanceVS.cso";
+constexpr const wchar_t* kShapePixelShaderPath = L"Shader\\D3D9ShapeInstancePS.cso";
 
 int FindSlotByState(const D3D9RendererState* state, SurfaceState slotState) {
   if (state == nullptr) {
@@ -82,7 +56,35 @@ D3DCOLOR ToD3DClearColor(const float color[4]) {
   return D3DCOLOR_COLORVALUE(color[0], color[1], color[2], color[3]);
 }
 
-void ReleaseShaderBuffer(ID3DXBuffer*& buffer) {
+void ReleaseVertexDeclaration(IDirect3DVertexDeclaration9*& declaration) {
+  if (declaration != nullptr) {
+    declaration->Release();
+    declaration = nullptr;
+  }
+}
+
+void ReleaseVertexShader(IDirect3DVertexShader9*& shader) {
+  if (shader != nullptr) {
+    shader->Release();
+    shader = nullptr;
+  }
+}
+
+void ReleasePixelShader(IDirect3DPixelShader9*& shader) {
+  if (shader != nullptr) {
+    shader->Release();
+    shader = nullptr;
+  }
+}
+
+void ReleaseVertexBuffer(IDirect3DVertexBuffer9*& buffer) {
+  if (buffer != nullptr) {
+    buffer->Release();
+    buffer = nullptr;
+  }
+}
+
+void ReleaseIndexBuffer(IDirect3DIndexBuffer9*& buffer) {
   if (buffer != nullptr) {
     buffer->Release();
     buffer = nullptr;
@@ -104,46 +106,119 @@ void ReleaseDrawPipeline(D3D9RendererState* state) {
     return;
   }
 
-  if (state->pixelShader != nullptr) {
-    state->pixelShader->Release();
-    state->pixelShader = nullptr;
-  }
-
-  if (state->vertexShader != nullptr) {
-    state->vertexShader->Release();
-    state->vertexShader = nullptr;
-  }
-
-  if (state->vertexDeclaration != nullptr) {
-    state->vertexDeclaration->Release();
-    state->vertexDeclaration = nullptr;
-  }
+  ReleaseVertexBuffer(state->dynamicInstanceVertexBuffer);
+  state->dynamicInstanceVertexCapacityBytes = 0;
+  ReleaseVertexBuffer(state->dynamicTriangleVertexBuffer);
+  state->dynamicTriangleVertexCapacityBytes = 0;
+  ReleaseVertexBuffer(state->unitQuadVertexBuffer);
+  ReleaseIndexBuffer(state->unitQuadIndexBuffer);
+  ReleasePixelShader(state->shapePixelShader);
+  ReleaseVertexShader(state->shapeVertexShader);
+  ReleaseVertexDeclaration(state->shapeVertexDeclaration);
+  ReleasePixelShader(state->trianglePixelShader);
+  ReleaseVertexShader(state->triangleVertexShader);
+  ReleaseVertexDeclaration(state->triangleVertexDeclaration);
 }
 
-bool CompileShaderSource(const char* source, const char* profile,
-                         ID3DXBuffer** outBytecode) {
-  if (source == nullptr || profile == nullptr || outBytecode == nullptr) {
+bool LoadShaderBytecode(const wchar_t* sourcePath,
+                        std::vector<std::uint8_t>& bytecodeOut) {
+  if (sourcePath == nullptr || *sourcePath == L'\0') {
     return false;
   }
 
-  *outBytecode = nullptr;
-
-  ID3DXBuffer* errors = nullptr;
-  ID3DXConstantTable* constants = nullptr;
-  const HRESULT hr = D3DXCompileShader(
-      source, static_cast<UINT>(strlen(source)), nullptr, nullptr, "main",
-      profile, 0, outBytecode, &errors, &constants);
-  LogShaderCompileError(errors);
-  if (constants != nullptr) {
-    constants->Release();
-  }
-  ReleaseShaderBuffer(errors);
-
-  if (FAILED(hr) || *outBytecode == nullptr) {
-    ReleaseShaderBuffer(*outBytecode);
+  bytecodeOut.clear();
+  HANDLE file = CreateFileW(sourcePath, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
     return false;
   }
 
+  LARGE_INTEGER size{};
+  if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 ||
+      size.QuadPart > static_cast<LONGLONG>(UINT32_MAX)) {
+    CloseHandle(file);
+    return false;
+  }
+
+  bytecodeOut.resize(static_cast<std::size_t>(size.QuadPart));
+  DWORD bytesRead = 0;
+  const BOOL readOk = ReadFile(file, bytecodeOut.data(),
+                               static_cast<DWORD>(bytecodeOut.size()),
+                               &bytesRead, nullptr);
+  CloseHandle(file);
+  if (!readOk || bytesRead != bytecodeOut.size()) {
+    bytecodeOut.clear();
+    return false;
+  }
+
+  return true;
+}
+
+bool CreateUnitQuadVertexBuffer(D3D9RendererState* state) {
+  if (state == nullptr || state->device == nullptr) {
+    return false;
+  }
+
+  ReleaseVertexBuffer(state->unitQuadVertexBuffer);
+
+  constexpr float kUnitQuadVertices[8] = {
+      -1.0f, -1.0f,
+       1.0f, -1.0f,
+      -1.0f,  1.0f,
+       1.0f,  1.0f,
+  };
+
+  HRESULT hr = state->device->CreateVertexBuffer(
+      static_cast<UINT>(sizeof(kUnitQuadVertices)),
+      D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
+      &state->unitQuadVertexBuffer, nullptr);
+  if (FAILED(hr) || state->unitQuadVertexBuffer == nullptr) {
+    ReleaseVertexBuffer(state->unitQuadVertexBuffer);
+    return false;
+  }
+
+  void* vertices = nullptr;
+  hr = state->unitQuadVertexBuffer->Lock(
+      0, sizeof(kUnitQuadVertices), &vertices, D3DLOCK_DISCARD);
+  if (FAILED(hr) || vertices == nullptr) {
+    ReleaseVertexBuffer(state->unitQuadVertexBuffer);
+    return false;
+  }
+
+  memcpy(vertices, kUnitQuadVertices, sizeof(kUnitQuadVertices));
+  state->unitQuadVertexBuffer->Unlock();
+  return true;
+}
+
+bool CreateUnitQuadIndexBuffer(D3D9RendererState* state) {
+  if (state == nullptr || state->device == nullptr) {
+    return false;
+  }
+
+  ReleaseIndexBuffer(state->unitQuadIndexBuffer);
+
+  constexpr std::uint16_t kUnitQuadIndices[6] = {
+      0, 1, 2,
+      2, 1, 3,
+  };
+
+  HRESULT hr = state->device->CreateIndexBuffer(
+      static_cast<UINT>(sizeof(kUnitQuadIndices)), D3DUSAGE_WRITEONLY,
+      D3DFMT_INDEX16, D3DPOOL_DEFAULT, &state->unitQuadIndexBuffer, nullptr);
+  if (FAILED(hr) || state->unitQuadIndexBuffer == nullptr) {
+    ReleaseIndexBuffer(state->unitQuadIndexBuffer);
+    return false;
+  }
+
+  void* indices = nullptr;
+  hr = state->unitQuadIndexBuffer->Lock(0, sizeof(kUnitQuadIndices), &indices, 0);
+  if (FAILED(hr) || indices == nullptr) {
+    ReleaseIndexBuffer(state->unitQuadIndexBuffer);
+    return false;
+  }
+
+  memcpy(indices, kUnitQuadIndices, sizeof(kUnitQuadIndices));
+  state->unitQuadIndexBuffer->Unlock();
   return true;
 }
 
@@ -154,54 +229,99 @@ bool CreateDrawPipeline(D3D9RendererState* state) {
 
   ReleaseDrawPipeline(state);
 
-  ID3DXBuffer* vertexBytecode = nullptr;
-  ID3DXBuffer* pixelBytecode = nullptr;
-  if (!CompileShaderSource(kVertexShaderSrc, "vs_2_0", &vertexBytecode) ||
-      !CompileShaderSource(kPixelShaderSrc, "ps_2_0", &pixelBytecode)) {
-    ReleaseShaderBuffer(vertexBytecode);
-    ReleaseShaderBuffer(pixelBytecode);
+  D3DCAPS9 caps{};
+  if (FAILED(state->device->GetDeviceCaps(&caps)) ||
+      caps.VertexShaderVersion < D3DVS_VERSION(3, 0) ||
+      caps.PixelShaderVersion < D3DPS_VERSION(3, 0)) {
     ReleaseDrawPipeline(state);
     return false;
   }
 
-  static const D3DVERTEXELEMENT9 kElements[] = {
+  std::vector<std::uint8_t> triangleVertexBytecode;
+  std::vector<std::uint8_t> trianglePixelBytecode;
+  std::vector<std::uint8_t> shapeVertexBytecode;
+  std::vector<std::uint8_t> shapePixelBytecode;
+  if (!LoadShaderBytecode(kTriangleVertexShaderPath, triangleVertexBytecode) ||
+      !LoadShaderBytecode(kTrianglePixelShaderPath, trianglePixelBytecode) ||
+      !LoadShaderBytecode(kShapeVertexShaderPath, shapeVertexBytecode) ||
+      !LoadShaderBytecode(kShapePixelShaderPath, shapePixelBytecode)) {
+    ReleaseDrawPipeline(state);
+    return false;
+  }
+
+  static const D3DVERTEXELEMENT9 kTriangleElements[] = {
       {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT,
        D3DDECLUSAGE_POSITION, 0},
       {0, 12, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR,
        0},
       D3DDECL_END()};
 
+  static const D3DVERTEXELEMENT9 kShapeElements[] = {
+      {0, 0, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION,
+       0},
+      {1, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD,
+       0},
+      {1, 16, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT,
+       D3DDECLUSAGE_TEXCOORD, 1},
+      {1, 32, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT,
+       D3DDECLUSAGE_TEXCOORD, 2},
+      {1, 48, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT,
+       D3DDECLUSAGE_TEXCOORD, 3},
+      {1, 64, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT,
+       D3DDECLUSAGE_TEXCOORD, 4},
+      D3DDECL_END()};
+
   HRESULT hr = state->device->CreateVertexDeclaration(
-      kElements, &state->vertexDeclaration);
-  if (FAILED(hr) || state->vertexDeclaration == nullptr) {
-    ReleaseShaderBuffer(vertexBytecode);
-    ReleaseShaderBuffer(pixelBytecode);
+      kTriangleElements, &state->triangleVertexDeclaration);
+  if (FAILED(hr) || state->triangleVertexDeclaration == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
   }
 
   hr = state->device->CreateVertexShader(
-      static_cast<const DWORD*>(vertexBytecode->GetBufferPointer()),
-      &state->vertexShader);
-  if (FAILED(hr) || state->vertexShader == nullptr) {
-    ReleaseShaderBuffer(vertexBytecode);
-    ReleaseShaderBuffer(pixelBytecode);
+      reinterpret_cast<const DWORD*>(triangleVertexBytecode.data()),
+      &state->triangleVertexShader);
+  if (FAILED(hr) || state->triangleVertexShader == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
   }
 
   hr = state->device->CreatePixelShader(
-      static_cast<const DWORD*>(pixelBytecode->GetBufferPointer()),
-      &state->pixelShader);
-  ReleaseShaderBuffer(vertexBytecode);
-  ReleaseShaderBuffer(pixelBytecode);
-
-  if (FAILED(hr) || state->pixelShader == nullptr) {
+      reinterpret_cast<const DWORD*>(trianglePixelBytecode.data()),
+      &state->trianglePixelShader);
+  if (FAILED(hr) || state->trianglePixelShader == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
   }
 
-  return true;
+  hr = state->device->CreateVertexDeclaration(kShapeElements,
+                                              &state->shapeVertexDeclaration);
+  if (FAILED(hr) || state->shapeVertexDeclaration == nullptr) {
+    ReleaseDrawPipeline(state);
+    return false;
+  }
+
+  hr = state->device->CreateVertexShader(
+      reinterpret_cast<const DWORD*>(shapeVertexBytecode.data()),
+      &state->shapeVertexShader);
+  if (FAILED(hr) || state->shapeVertexShader == nullptr) {
+    ReleaseDrawPipeline(state);
+    return false;
+  }
+
+  hr = state->device->CreatePixelShader(
+      reinterpret_cast<const DWORD*>(shapePixelBytecode.data()),
+      &state->shapePixelShader);
+  if (FAILED(hr) || state->shapePixelShader == nullptr) {
+    ReleaseDrawPipeline(state);
+    return false;
+  }
+
+  if (!CreateUnitQuadVertexBuffer(state)) {
+    return false;
+  }
+
+  return CreateUnitQuadIndexBuffer(state);
 }
 
 void ReleaseFrameResources(D3D9RendererState* state) {
@@ -264,6 +384,24 @@ bool CreateFrameResources(D3D9RendererState* state) {
   return true;
 }
 
+HRESULT CheckDeviceReady(D3D9RendererState* state) {
+  if (state == nullptr || state->device == nullptr) {
+    return E_UNEXPECTED;
+  }
+
+  const HRESULT hr = state->device->CheckDeviceState(state->hwnd);
+  if (hr == S_PRESENT_OCCLUDED || hr == S_PRESENT_MODE_CHANGED || hr == S_OK) {
+    return S_OK;
+  }
+
+  if (hr == D3DERR_DEVICELOST || hr == D3DERR_DEVICENOTRESET ||
+      hr == D3DERR_DEVICEHUNG || hr == D3DERR_DEVICEREMOVED) {
+    return hr;
+  }
+
+  return hr;
+}
+
 bool CreateDeviceAndSurface(D3D9RendererState* state) {
   if (state == nullptr || state->hwnd == nullptr || state->width <= 0 ||
       state->height <= 0) {
@@ -271,10 +409,11 @@ bool CreateDeviceAndSurface(D3D9RendererState* state) {
   }
 
   if (state->d3d9 == nullptr) {
-    state->d3d9 = Direct3DCreate9(D3D_SDK_VERSION);
-    if (state->d3d9 == nullptr) {
+    IDirect3D9Ex* d3d9 = nullptr;
+    if (FAILED(Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9)) || d3d9 == nullptr) {
       return false;
     }
+    state->d3d9 = d3d9;
   }
 
   D3DPRESENT_PARAMETERS parameters = {};
@@ -288,17 +427,17 @@ bool CreateDeviceAndSurface(D3D9RendererState* state) {
   parameters.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
   parameters.EnableAutoDepthStencil = FALSE;
 
-  HRESULT hr = state->d3d9->CreateDevice(
+  HRESULT hr = state->d3d9->CreateDeviceEx(
       D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, state->hwnd,
       D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
           D3DCREATE_FPU_PRESERVE,
-      &parameters, &state->device);
+      &parameters, nullptr, &state->device);
   if (FAILED(hr)) {
-    hr = state->d3d9->CreateDevice(
+    hr = state->d3d9->CreateDeviceEx(
         D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, state->hwnd,
         D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
             D3DCREATE_FPU_PRESERVE,
-        &parameters, &state->device);
+        &parameters, nullptr, &state->device);
   }
 
   if (FAILED(hr) || state->device == nullptr) {
@@ -354,7 +493,7 @@ bool ResetDeviceAndSurface(D3D9RendererState* state) {
   parameters.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
   parameters.EnableAutoDepthStencil = FALSE;
 
-  const HRESULT hr = state->device->Reset(&parameters);
+  const HRESULT hr = state->device->ResetEx(&parameters, nullptr);
   if (FAILED(hr)) {
     return false;
   }
@@ -459,8 +598,9 @@ HRESULT D3D9Renderer::BeginSubmitFrame(SurfaceSlot*& drawSlot,
     return E_UNEXPECTED;
   }
 
-  HRESULT hr = state_->device->TestCooperativeLevel();
-  if (hr == D3DERR_DEVICENOTRESET) {
+  HRESULT hr = CheckDeviceReady(state_);
+  if (hr == D3DERR_DEVICELOST || hr == D3DERR_DEVICENOTRESET ||
+      hr == D3DERR_DEVICEHUNG || hr == D3DERR_DEVICEREMOVED) {
     if (!ResetDeviceAndSurface(state_)) {
       return E_FAIL;
     }
@@ -497,6 +637,18 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
     return hr;
   }
 
+  D3DVIEWPORT9 viewport{};
+  viewport.X = 0;
+  viewport.Y = 0;
+  viewport.Width = static_cast<DWORD>(state_->width);
+  viewport.Height = static_cast<DWORD>(state_->height);
+  viewport.MinZ = 0.0f;
+  viewport.MaxZ = 1.0f;
+  hr = device->SetViewport(&viewport);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
   hr = device->BeginScene();
   if (FAILED(hr)) {
     return hr;
@@ -526,14 +678,25 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
       draw::InstanceBatchDrawContext instanceContext{};
       instanceContext.device = device;
-      instanceContext.vertexDeclaration = state_->vertexDeclaration;
-      instanceContext.vertexShader = state_->vertexShader;
-      instanceContext.pixelShader = state_->pixelShader;
-      instanceContext.viewportWidth = state_->width;
-      instanceContext.viewportHeight = state_->height;
+      instanceContext.vertexDeclaration = state_->shapeVertexDeclaration;
+      instanceContext.vertexShader = state_->shapeVertexShader;
+      instanceContext.pixelShader = state_->shapePixelShader;
+      instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer;
+      instanceContext.geometryIndexBuffer = state_->unitQuadIndexBuffer;
+      instanceContext.geometryVertexStrideBytes = sizeof(float) * 2;
+      instanceContext.geometryVertexCount = 4;
+      instanceContext.geometryPrimitiveCount = 2;
+      instanceContext.instanceBuffer = state_->dynamicInstanceVertexBuffer;
+      instanceContext.instanceBufferCapacityBytes =
+          state_->dynamicInstanceVertexCapacityBytes;
+      instanceContext.viewportWidth = static_cast<float>(state_->width);
+      instanceContext.viewportHeight = static_cast<float>(state_->height);
       const draw::ShapeInstanceData instanceData{
           shapeInstances.data(), static_cast<int>(shapeInstances.size())};
-      submitHr = draw::DrawShapeBatch(instanceContext, instanceData);
+      submitHr = draw::DrawShapeInstanceBatch(instanceContext, instanceData);
+      state_->dynamicInstanceVertexBuffer = instanceContext.instanceBuffer;
+      state_->dynamicInstanceVertexCapacityBytes =
+          instanceContext.instanceBufferCapacityBytes;
       break;
     }
 
@@ -709,8 +872,9 @@ void D3D9Renderer::OnFrontBufferAvailable(bool available) {
   }
 
   if (state_->device != nullptr) {
-    const HRESULT hr = state_->device->TestCooperativeLevel();
-    if (hr == D3DERR_DEVICENOTRESET) {
+    const HRESULT hr = CheckDeviceReady(state_);
+    if (hr == D3DERR_DEVICELOST || hr == D3DERR_DEVICENOTRESET ||
+        hr == D3DERR_DEVICEHUNG || hr == D3DERR_DEVICEREMOVED) {
       ResetDeviceAndSurface(state_);
     }
   }

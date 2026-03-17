@@ -11,6 +11,7 @@
     <NativePlatform Condition="'$(Platform)' == 'AnyCPU'">x64</NativePlatform>
     <NativePlatform Condition="'$(NativePlatform)' == ''">$(Platform)</NativePlatform>
     <NativeArtifactsRoot>$(MSBuildProjectDirectory)\..\artifacts</NativeArtifactsRoot>
+    <NativeD3D9ArtifactsDir>$(NativeArtifactsRoot)\FastDrawingVisual.NativeProxy.D3D9\$(Configuration)\$(NativePlatform)</NativeD3D9ArtifactsDir>
     <NativeD3D11ArtifactsDir>$(NativeArtifactsRoot)\FastDrawingVisual.NativeProxy.D3D11\$(Configuration)\$(NativePlatform)</NativeD3D11ArtifactsDir>
   </PropertyGroup>
   <ItemGroup>
@@ -30,6 +31,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9TriangleBatchVS.cso">
+      <Link>Shader\D3D9TriangleBatchVS.cso</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9TriangleBatchPS.cso">
+      <Link>Shader\D3D9TriangleBatchPS.cso</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9ShapeInstanceVS.cso">
+      <Link>Shader\D3D9ShapeInstanceVS.cso</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(NativeD3D9ArtifactsDir)\D3D9ShapeInstancePS.cso">
+      <Link>Shader\D3D9ShapeInstancePS.cso</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="$(NativeD3D11ArtifactsDir)\TriangleBatchVS.cso">
       <Link>Shader\TriangleBatchVS.cso</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
