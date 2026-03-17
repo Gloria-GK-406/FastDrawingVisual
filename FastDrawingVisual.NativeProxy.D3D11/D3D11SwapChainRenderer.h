@@ -59,7 +59,7 @@ class D3D11SwapChainRenderer final {
   HRESULT ResizeSwapChain(int width, int height);
   HRESULT EnsureFactory();
   HRESULT CreateSwapChain();
-  HRESULT EnsureD2DAndDWrite();
+  HRESULT EnsureTextRenderer();
   HRESULT CreateRenderTarget();
   HRESULT CreateDrawPipeline();
 

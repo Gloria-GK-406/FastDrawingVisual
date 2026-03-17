@@ -9,7 +9,6 @@
 #endif
 
 #include "D3DBatchDrawTypes.h"
-#include "TextFormatCacheStore.h"
 
 namespace fdv::d3d11::draw {
 
@@ -28,10 +27,5 @@ HRESULT DrawRectInstanceBatch(InstanceBatchDrawContext& context,
 HRESULT DrawEllipseInstanceBatch(InstanceBatchDrawContext& context,
                                  const EllipseInstanceData& instanceData,
                                  InstanceBatchDrawStats* stats = nullptr);
-
-HRESULT DrawTextBatch(const TextBatchDrawContext& context,
-                      TextFormatCacheStore& textFormatCache,
-                      const DrawTextData& textData,
-                      TextBatchDrawStats* stats = nullptr);
 
 } // namespace fdv::d3d11::draw

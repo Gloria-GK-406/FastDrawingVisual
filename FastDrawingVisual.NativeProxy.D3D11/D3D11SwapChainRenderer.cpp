@@ -1,25 +1,21 @@
 #include "D3D11SwapChainRenderer.h"
 #include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
+#include "../FastDrawingVisual.NativeProxy.TextD2D/D2DTextRenderer.h"
 #include "BatchComplier.h"
 #include "D3DBatchDraw.h"
-#include "TextFormatCacheStore.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cwchar>
 #include <d3dcompiler.h>
-#include <d2d1_1.h>
 #include <d3d11.h>
-#include <dwrite.h>
 #include <dxgi1_2.h>
 #include <memory>
 #include <vector>
 #include <wrl/client.h>
 
 #pragma comment(lib, "d3dcompiler.lib")
-#pragma comment(lib, "d2d1.lib")
-#pragma comment(lib, "dwrite.lib")
 
 namespace fdv::d3d11 {
 using Microsoft::WRL::ComPtr;
@@ -45,13 +41,7 @@ struct D3D11SwapChainRendererState {
   ComPtr<ID3D11Buffer> dynamicInstanceBuffer = nullptr;
   UINT dynamicInstanceCapacityBytes = 0;
   ComPtr<ID3D11Buffer> viewConstantsBuffer = nullptr;
-  ComPtr<ID2D1Factory1> d2dFactory = nullptr;
-  ComPtr<ID2D1Device> d2dDevice = nullptr;
-  ComPtr<ID2D1DeviceContext> d2dContext = nullptr;
-  ComPtr<ID2D1Bitmap1> d2dTargetBitmap = nullptr;
-  ComPtr<ID2D1SolidColorBrush> d2dSolidBrush = nullptr;
-  ComPtr<IDWriteFactory> dwriteFactory = nullptr;
-  std::unique_ptr<TextFormatCacheStore> textFormatCacheStore;
+  std::unique_ptr<fdv::textd2d::D2DTextRenderer> textRenderer;
   batch::BatchCompiler batchCompiler;
 };
 
@@ -559,21 +549,14 @@ HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
       const int textItemCount = static_cast<int>(textItems.size());
       diagnostics.maxTextBatchItemCount =
           (std::max)(diagnostics.maxTextBatchItemCount, textItemCount);
-      if (state_->textFormatCacheStore == nullptr || state_->d2dContext == nullptr ||
-          state_->d2dSolidBrush == nullptr) {
+      if (state_->textRenderer == nullptr) {
         return E_UNEXPECTED;
       }
 
-      draw::TextBatchDrawContext textContext{};
-      textContext.d3dContext = state_->context;
-      textContext.d2dContext = state_->d2dContext;
-      textContext.solidBrush = state_->d2dSolidBrush;
-
-      const draw::DrawTextData textData{textItems.data(), textItemCount};
-      draw::TextBatchDrawStats textStats{};
+      fdv::textd2d::TextBatchDrawStats textStats{};
       const auto textStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = draw::DrawTextBatch(
-          textContext, *state_->textFormatCacheStore, textData, &textStats);
+      const HRESULT drawHr = state_->textRenderer->DrawTextBatch(
+          state_->context.Get(), textItems.data(), textItemCount, &textStats);
       const auto textEnd = std::chrono::steady_clock::now();
       diagnostics.textDrawMs += DurationMs(textStart, textEnd);
       diagnostics.textFlushMs += textStats.flushMs;
@@ -791,77 +774,25 @@ void D3D11SwapChainRenderer::ReleaseRenderTargetResources() {
     return;
   }
 
-  if (state_->d2dContext != nullptr) {
-    state_->d2dContext->SetTarget(nullptr);
+  if (state_->textRenderer != nullptr) {
+    state_->textRenderer->ReleaseRenderTargetResources();
   }
-
-  state_->d2dSolidBrush.Reset();
-  state_->d2dTargetBitmap.Reset();
   state_->rtv0.Reset();
 }
 
-HRESULT D3D11SwapChainRenderer::EnsureD2DAndDWrite() {
+HRESULT D3D11SwapChainRenderer::EnsureTextRenderer() {
   if (state_ == nullptr || state_->device == nullptr) {
     return E_UNEXPECTED;
   }
 
-  if (state_->d2dFactory != nullptr && state_->d2dDevice != nullptr &&
-      state_->d2dContext != nullptr && state_->dwriteFactory != nullptr) {
-    return S_OK;
-  }
-
-  if (state_->d2dFactory == nullptr) {
-    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
-                                   __uuidof(ID2D1Factory1), nullptr,
-                                   reinterpret_cast<void**>(
-                                       state_->d2dFactory.ReleaseAndGetAddressOf()));
-    if (FAILED(hr) || state_->d2dFactory == nullptr) {
-      return FAILED(hr) ? hr : E_FAIL;
+  if (state_->textRenderer == nullptr) {
+    state_->textRenderer = std::make_unique<fdv::textd2d::D2DTextRenderer>();
+    if (state_->textRenderer == nullptr) {
+      return E_OUTOFMEMORY;
     }
   }
 
-  if (state_->dwriteFactory == nullptr) {
-    HRESULT hr = DWriteCreateFactory(
-        DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
-        reinterpret_cast<IUnknown**>(state_->dwriteFactory.ReleaseAndGetAddressOf()));
-    if (FAILED(hr) || state_->dwriteFactory == nullptr) {
-      return FAILED(hr) ? hr : E_FAIL;
-    }
-  }
-
-  if (state_->d2dDevice == nullptr || state_->d2dContext == nullptr) {
-    ComPtr<IDXGIDevice> dxgiDevice;
-    HRESULT hr = state_->device->QueryInterface(__uuidof(IDXGIDevice),
-                                         reinterpret_cast<void**>(
-                                             dxgiDevice.GetAddressOf()));
-    if (FAILED(hr) || dxgiDevice == nullptr) {
-      return FAILED(hr) ? hr : E_FAIL;
-    }
-
-    if (state_->d2dDevice == nullptr) {
-      hr = state_->d2dFactory->CreateDevice(
-          dxgiDevice.Get(), state_->d2dDevice.ReleaseAndGetAddressOf());
-      if (FAILED(hr) || state_->d2dDevice == nullptr) {
-        return FAILED(hr) ? hr : E_FAIL;
-      }
-    }
-
-    if (state_->d2dContext == nullptr) {
-      hr = state_->d2dDevice->CreateDeviceContext(
-          D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-          state_->d2dContext.ReleaseAndGetAddressOf());
-      if (FAILED(hr) || state_->d2dContext == nullptr) {
-        return FAILED(hr) ? hr : E_FAIL;
-      }
-    }
-  }
-
-  if (state_->textFormatCacheStore == nullptr) {
-    state_->textFormatCacheStore =
-        std::make_unique<TextFormatCacheStore>(state_->dwriteFactory.Get());
-  }
-
-  return S_OK;
+  return state_->textRenderer->EnsureDeviceResources(state_->device.Get());
 }
 
 HRESULT D3D11SwapChainRenderer::CreateRenderTarget() {
@@ -870,7 +801,7 @@ HRESULT D3D11SwapChainRenderer::CreateRenderTarget() {
     return E_UNEXPECTED;
   }
 
-  const HRESULT ensureHr = EnsureD2DAndDWrite();
+  const HRESULT ensureHr = EnsureTextRenderer();
   if (FAILED(ensureHr)) {
     return ensureHr;
   }
@@ -891,40 +822,8 @@ HRESULT D3D11SwapChainRenderer::CreateRenderTarget() {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
-  ComPtr<IDXGISurface> dxgiSurface;
-  hr = backBuffer->QueryInterface(__uuidof(IDXGISurface),
-                                  reinterpret_cast<void**>(
-                                      dxgiSurface.GetAddressOf()));
-  if (FAILED(hr) || dxgiSurface == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D2D1_BITMAP_PROPERTIES1 bitmapProps = {};
-  bitmapProps.pixelFormat.format = kSwapChainFormat;
-  bitmapProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
-  bitmapProps.dpiX = 96.0f;
-  bitmapProps.dpiY = 96.0f;
-  bitmapProps.bitmapOptions =
-      D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
-
-  hr = state_->d2dContext->CreateBitmapFromDxgiSurface(
-      dxgiSurface.Get(), &bitmapProps,
-      state_->d2dTargetBitmap.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->d2dTargetBitmap == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  state_->d2dContext->SetTarget(state_->d2dTargetBitmap.Get());
-  state_->d2dContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-
-  D2D1_COLOR_F white = {1.0f, 1.0f, 1.0f, 1.0f};
-  hr = state_->d2dContext->CreateSolidColorBrush(
-      white, state_->d2dSolidBrush.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->d2dSolidBrush == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  return S_OK;
+  return state_->textRenderer->CreateTargetFromTexture(backBuffer.Get(),
+                                                       kSwapChainFormat);
 }
 
 HRESULT D3D11SwapChainRenderer::EnsureFactory() {
@@ -1112,10 +1011,10 @@ void D3D11SwapChainRenderer::ReleaseRendererResources() {
     return;
   }
 
-  state_->textFormatCacheStore.reset();
   state_->batchCompiler = batch::BatchCompiler();
 
   ReleaseRenderTargetResources();
+  state_->textRenderer.reset();
   state_->dynamicVertexBuffer.Reset();
   state_->dynamicVertexCapacityBytes = 0;
   state_->unitQuadVertexBuffer.Reset();
@@ -1133,10 +1032,6 @@ void D3D11SwapChainRenderer::ReleaseRendererResources() {
   state_->instanceVertexShader.Reset();
   state_->swapChain.Reset();
   state_->dxgiFactory.Reset();
-  state_->d2dContext.Reset();
-  state_->d2dDevice.Reset();
-  state_->d2dFactory.Reset();
-  state_->dwriteFactory.Reset();
   state_->context.Reset();
   state_->device.Reset();
 }

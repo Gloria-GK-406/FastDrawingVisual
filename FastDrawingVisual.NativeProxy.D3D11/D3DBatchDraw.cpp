@@ -210,15 +210,6 @@ HRESULT DrawInstanceBatch(InstanceBatchDrawContext& context,
   return S_OK;
 }
 
-D2D1_COLOR_F ToD2DColor(const fdv::protocol::ColorArgb8& color) {
-  return {
-      static_cast<float>(color.r) / 255.0f,
-      static_cast<float>(color.g) / 255.0f,
-      static_cast<float>(color.b) / 255.0f,
-      static_cast<float>(color.a) / 255.0f,
-  };
-}
-
 } // namespace
 
 HRESULT DrawTriangleBatch(TriangleBatchDrawContext& context,
@@ -306,74 +297,6 @@ HRESULT DrawEllipseInstanceBatch(InstanceBatchDrawContext& context,
                                  InstanceBatchDrawStats* stats) {
   return DrawInstanceBatch(context, instanceData.instances,
                            instanceData.instanceCount, stats);
-}
-
-HRESULT DrawTextBatch(const TextBatchDrawContext& context,
-                      TextFormatCacheStore& textFormatCache,
-                      const DrawTextData& textData,
-                      TextBatchDrawStats* stats) {
-  if (textData.items == nullptr || textData.count <= 0) {
-    return S_OK;
-  }
-
-  if (context.d3dContext == nullptr || context.d2dContext == nullptr ||
-      context.solidBrush == nullptr) {
-    return E_POINTER;
-  }
-
-  const auto flushStart = std::chrono::steady_clock::now();
-  context.d3dContext->Flush();
-  const auto flushEnd = std::chrono::steady_clock::now();
-  if (stats != nullptr) {
-    stats->flushMs += DurationMs(flushStart, flushEnd);
-  }
-
-  context.d2dContext->BeginDraw();
-
-  HRESULT result = S_OK;
-  const auto recordStart = std::chrono::steady_clock::now();
-  for (int i = 0; i < textData.count; ++i) {
-    const auto& item = textData.items[i];
-    if (item.text.empty()) {
-      continue;
-    }
-
-    IDWriteTextFormat* textFormat =
-        textFormatCache.Acquire(item.fontFamily, item.fontSize);
-    if (textFormat == nullptr) {
-      result = E_FAIL;
-      break;
-    }
-
-    const D2D1_RECT_F layoutRect = {
-        item.layoutLeft,
-        item.layoutTop,
-        item.layoutRight,
-        item.layoutBottom,
-    };
-
-    context.solidBrush->SetColor(ToD2DColor(item.color));
-    context.d2dContext->DrawTextW(
-        item.text.c_str(), static_cast<UINT32>(item.text.size()), textFormat,
-        &layoutRect, context.solidBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP,
-        DWRITE_MEASURING_MODE_NATURAL);
-  }
-  const auto recordEnd = std::chrono::steady_clock::now();
-  if (stats != nullptr) {
-    stats->recordTextMs += DurationMs(recordStart, recordEnd);
-  }
-
-  const auto endDrawStart = std::chrono::steady_clock::now();
-  const HRESULT endDrawHr = context.d2dContext->EndDraw();
-  const auto endDrawEnd = std::chrono::steady_clock::now();
-  if (stats != nullptr) {
-    stats->endDrawMs += DurationMs(endDrawStart, endDrawEnd);
-  }
-  if (FAILED(endDrawHr)) {
-    return endDrawHr;
-  }
-
-  return result;
 }
 
 } // namespace fdv::d3d11::draw

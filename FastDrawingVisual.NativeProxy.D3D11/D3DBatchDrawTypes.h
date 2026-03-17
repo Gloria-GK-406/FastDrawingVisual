@@ -9,9 +9,7 @@
 #endif
 
 #include <windows.h>
-#include <d2d1_1.h>
 #include <d3d11.h>
-#include <dwrite.h>
 #include <wrl/client.h>
 
 #include "D3DBatchTypes.h"
@@ -84,23 +82,6 @@ struct InstanceBatchDrawStats {
   UINT uploadedBytes = 0;
   UINT instanceBufferCapacityBytes = 0;
   bool resizedInstanceBuffer = false;
-};
-
-struct TextBatchDrawContext {
-  ComPtr<ID3D11DeviceContext> d3dContext = nullptr;
-  ComPtr<ID2D1DeviceContext> d2dContext = nullptr;
-  ComPtr<ID2D1SolidColorBrush> solidBrush = nullptr;
-};
-
-struct DrawTextData {
-  const batch::TextBatchItem* items = nullptr;
-  int count = 0;
-};
-
-struct TextBatchDrawStats {
-  double flushMs = 0.0;
-  double recordTextMs = 0.0;
-  double endDrawMs = 0.0;
 };
 
 } // namespace fdv::d3d11::draw

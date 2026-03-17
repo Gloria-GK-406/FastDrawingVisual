@@ -11,6 +11,7 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
                 new KLineStressScenario(),
                 new KLineEncodeOnlyScenario(),
                 new KLineLiveAppendScenario(),
+                new DrawingContextCoverageScenario(),
             };
     }
 }
