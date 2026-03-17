@@ -1,8 +1,12 @@
 #include "D3D9Renderer.h"
 
-#include "D3D9RendererTypes.h"
+#include "BatchComplier.h"
 #include "D3DBatchDraw.h"
 #include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
+
+#include <d3d9.h>
+#include <d3dx9.h>
+#include <wrl/client.h>
 
 #include <chrono>
 #include <cstdint>
@@ -13,6 +17,43 @@
 #include <vector>
 
 namespace fdv::d3d9 {
+
+using Microsoft::WRL::ComPtr;
+constexpr int kFrameCount = 2;
+
+enum class SurfaceState : uint8_t {
+  Ready = 0,
+  Drawing = 1,
+  ReadyForPresent = 2,
+};
+
+struct SurfaceSlot {
+  ComPtr<IDirect3DSurface9> renderTarget = nullptr;
+  ComPtr<IDirect3DQuery9> renderDoneQuery = nullptr;
+  SurfaceState state = SurfaceState::Ready;
+};
+
+struct D3D9RendererState {
+  ComPtr<IDirect3D9Ex> d3d9 = nullptr;
+  ComPtr<IDirect3DDevice9Ex> device = nullptr;
+  ComPtr<IDirect3DVertexDeclaration9> instanceVertexDeclaration = nullptr;
+  ComPtr<IDirect3DVertexShader9> instanceVertexShader = nullptr;
+  ComPtr<IDirect3DPixelShader9> instancePixelShader = nullptr;
+  ComPtr<IDirect3DVertexBuffer9> unitQuadVertexBuffer = nullptr;
+  ComPtr<IDirect3DIndexBuffer9> unitQuadIndexBuffer = nullptr;
+  ComPtr<IDirect3DVertexBuffer9> dynamicInstanceVertexBuffer = nullptr;
+  UINT dynamicInstanceVertexCapacityBytes = 0;
+  batch::BatchCompiler batchCompiler{};
+  SurfaceSlot slots[kFrameCount];
+  ComPtr<IDirect3DSurface9> presentingSurface = nullptr;
+
+  HWND hwnd = nullptr;
+  int width = 0;
+  int height = 0;
+  bool frontBufferAvailable = true;
+  bool csInitialized = false;
+  CRITICAL_SECTION cs{};
+};
 
 namespace {
 
@@ -54,39 +95,24 @@ D3DCOLOR ToD3DClearColor(const float color[4]) {
   return D3DCOLOR_COLORVALUE(color[0], color[1], color[2], color[3]);
 }
 
-void ReleaseVertexDeclaration(IDirect3DVertexDeclaration9*& declaration) {
-  if (declaration != nullptr) {
-    declaration->Release();
-    declaration = nullptr;
-  }
+void ReleaseVertexDeclaration(ComPtr<IDirect3DVertexDeclaration9>& declaration) {
+  declaration.Reset();
 }
 
-void ReleaseVertexShader(IDirect3DVertexShader9*& shader) {
-  if (shader != nullptr) {
-    shader->Release();
-    shader = nullptr;
-  }
+void ReleaseVertexShader(ComPtr<IDirect3DVertexShader9>& shader) {
+  shader.Reset();
 }
 
-void ReleasePixelShader(IDirect3DPixelShader9*& shader) {
-  if (shader != nullptr) {
-    shader->Release();
-    shader = nullptr;
-  }
+void ReleasePixelShader(ComPtr<IDirect3DPixelShader9>& shader) {
+  shader.Reset();
 }
 
-void ReleaseVertexBuffer(IDirect3DVertexBuffer9*& buffer) {
-  if (buffer != nullptr) {
-    buffer->Release();
-    buffer = nullptr;
-  }
+void ReleaseVertexBuffer(ComPtr<IDirect3DVertexBuffer9>& buffer) {
+  buffer.Reset();
 }
 
-void ReleaseIndexBuffer(IDirect3DIndexBuffer9*& buffer) {
-  if (buffer != nullptr) {
-    buffer->Release();
-    buffer = nullptr;
-  }
+void ReleaseIndexBuffer(ComPtr<IDirect3DIndexBuffer9>& buffer) {
+  buffer.Reset();
 }
 
 void LogShaderCompileError(ID3DXBuffer* errorBuffer) {
@@ -164,7 +190,7 @@ bool CreateUnitQuadVertexBuffer(D3D9RendererState* state) {
   HRESULT hr = state->device->CreateVertexBuffer(
       static_cast<UINT>(sizeof(kUnitQuadVertices)),
       D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
-      &state->unitQuadVertexBuffer, nullptr);
+      state->unitQuadVertexBuffer.ReleaseAndGetAddressOf(), nullptr);
   if (FAILED(hr) || state->unitQuadVertexBuffer == nullptr) {
     ReleaseVertexBuffer(state->unitQuadVertexBuffer);
     return false;
@@ -197,7 +223,8 @@ bool CreateUnitQuadIndexBuffer(D3D9RendererState* state) {
 
   HRESULT hr = state->device->CreateIndexBuffer(
       static_cast<UINT>(sizeof(kUnitQuadIndices)), D3DUSAGE_WRITEONLY,
-      D3DFMT_INDEX16, D3DPOOL_DEFAULT, &state->unitQuadIndexBuffer, nullptr);
+      D3DFMT_INDEX16, D3DPOOL_DEFAULT,
+      state->unitQuadIndexBuffer.ReleaseAndGetAddressOf(), nullptr);
   if (FAILED(hr) || state->unitQuadIndexBuffer == nullptr) {
     ReleaseIndexBuffer(state->unitQuadIndexBuffer);
     return false;
@@ -254,7 +281,7 @@ bool CreateDrawPipeline(D3D9RendererState* state) {
       D3DDECL_END()};
 
   HRESULT hr = state->device->CreateVertexDeclaration(
-      kInstanceElements, &state->instanceVertexDeclaration);
+      kInstanceElements, state->instanceVertexDeclaration.ReleaseAndGetAddressOf());
   if (FAILED(hr) || state->instanceVertexDeclaration == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
@@ -262,7 +289,7 @@ bool CreateDrawPipeline(D3D9RendererState* state) {
 
   hr = state->device->CreateVertexShader(
       reinterpret_cast<const DWORD*>(instanceVertexBytecode.data()),
-      &state->instanceVertexShader);
+      state->instanceVertexShader.ReleaseAndGetAddressOf());
   if (FAILED(hr) || state->instanceVertexShader == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
@@ -270,7 +297,7 @@ bool CreateDrawPipeline(D3D9RendererState* state) {
 
   hr = state->device->CreatePixelShader(
       reinterpret_cast<const DWORD*>(instancePixelBytecode.data()),
-      &state->instancePixelShader);
+      state->instancePixelShader.ReleaseAndGetAddressOf());
   if (FAILED(hr) || state->instancePixelShader == nullptr) {
     ReleaseDrawPipeline(state);
     return false;
@@ -288,22 +315,11 @@ void ReleaseFrameResources(D3D9RendererState* state) {
     return;
   }
 
-  if (state->presentingSurface != nullptr) {
-    state->presentingSurface->Release();
-    state->presentingSurface = nullptr;
-  }
+  state->presentingSurface.Reset();
 
   for (int i = 0; i < kFrameCount; ++i) {
-    if (state->slots[i].renderDoneQuery != nullptr) {
-      state->slots[i].renderDoneQuery->Release();
-      state->slots[i].renderDoneQuery = nullptr;
-    }
-
-    if (state->slots[i].renderTarget != nullptr) {
-      state->slots[i].renderTarget->Release();
-      state->slots[i].renderTarget = nullptr;
-    }
-
+    state->slots[i].renderDoneQuery.Reset();
+    state->slots[i].renderTarget.Reset();
     state->slots[i].state = SurfaceState::Ready;
   }
 }
@@ -320,21 +336,21 @@ bool CreateFrameResources(D3D9RendererState* state) {
     HRESULT hr = state->device->CreateRenderTarget(
         static_cast<UINT>(state->width), static_cast<UINT>(state->height),
         D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE,
-        &state->slots[i].renderTarget, nullptr);
+        state->slots[i].renderTarget.ReleaseAndGetAddressOf(), nullptr);
     if (FAILED(hr)) {
       ReleaseFrameResources(state);
       return false;
     }
 
     state->device->CreateQuery(D3DQUERYTYPE_EVENT,
-                               &state->slots[i].renderDoneQuery);
+                               state->slots[i].renderDoneQuery.ReleaseAndGetAddressOf());
     state->slots[i].state = SurfaceState::Ready;
   }
 
   HRESULT hr = state->device->CreateRenderTarget(
       static_cast<UINT>(state->width), static_cast<UINT>(state->height),
       D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE,
-      &state->presentingSurface, nullptr);
+      state->presentingSurface.ReleaseAndGetAddressOf(), nullptr);
   if (FAILED(hr)) {
     ReleaseFrameResources(state);
     return false;
@@ -368,8 +384,9 @@ bool CreateDeviceAndSurface(D3D9RendererState* state) {
   }
 
   if (state->d3d9 == nullptr) {
-    IDirect3D9Ex* d3d9 = nullptr;
-    if (FAILED(Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9)) || d3d9 == nullptr) {
+    ComPtr<IDirect3D9Ex> d3d9;
+    if (FAILED(Direct3DCreate9Ex(D3D_SDK_VERSION, d3d9.GetAddressOf())) ||
+        d3d9 == nullptr) {
       return false;
     }
     state->d3d9 = d3d9;
@@ -390,13 +407,13 @@ bool CreateDeviceAndSurface(D3D9RendererState* state) {
       D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, state->hwnd,
       D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
           D3DCREATE_FPU_PRESERVE,
-      &parameters, nullptr, &state->device);
+      &parameters, nullptr, state->device.ReleaseAndGetAddressOf());
   if (FAILED(hr)) {
     hr = state->d3d9->CreateDeviceEx(
         D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, state->hwnd,
         D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
             D3DCREATE_FPU_PRESERVE,
-        &parameters, nullptr, &state->device);
+        &parameters, nullptr, state->device.ReleaseAndGetAddressOf());
   }
 
   if (FAILED(hr) || state->device == nullptr) {
@@ -404,15 +421,13 @@ bool CreateDeviceAndSurface(D3D9RendererState* state) {
   }
 
   if (!CreateDrawPipeline(state)) {
-    state->device->Release();
-    state->device = nullptr;
+    state->device.Reset();
     return false;
   }
 
   if (!CreateFrameResources(state)) {
     ReleaseDrawPipeline(state);
-    state->device->Release();
-    state->device = nullptr;
+    state->device.Reset();
     return false;
   }
 
@@ -426,11 +441,7 @@ void ReleaseDeviceResources(D3D9RendererState* state) {
 
   ReleaseFrameResources(state);
   ReleaseDrawPipeline(state);
-
-  if (state->device != nullptr) {
-    state->device->Release();
-    state->device = nullptr;
-  }
+  state->device.Reset();
 }
 
 bool ResetDeviceAndSurface(D3D9RendererState* state) {
@@ -487,10 +498,7 @@ D3D9Renderer::~D3D9Renderer() {
   }
 
   ReleaseDeviceResources(state_);
-  if (state_->d3d9 != nullptr) {
-    state_->d3d9->Release();
-    state_->d3d9 = nullptr;
-  }
+  state_->d3d9.Reset();
 
   if (state_->csInitialized) {
     DeleteCriticalSection(&state_->cs);
@@ -590,8 +598,8 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
     return S_OK;
   }
 
-  IDirect3DDevice9* device = state_->device;
-  HRESULT hr = device->SetRenderTarget(0, drawSlot->renderTarget);
+  IDirect3DDevice9* device = state_->device.Get();
+  HRESULT hr = device->SetRenderTarget(0, drawSlot->renderTarget.Get());
   if (FAILED(hr)) {
     return hr;
   }
@@ -637,15 +645,15 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
       draw::InstanceBatchDrawContext instanceContext{};
       instanceContext.device = device;
-      instanceContext.vertexDeclaration = state_->instanceVertexDeclaration;
-      instanceContext.vertexShader = state_->instanceVertexShader;
-      instanceContext.pixelShader = state_->instancePixelShader;
-      instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer;
-      instanceContext.geometryIndexBuffer = state_->unitQuadIndexBuffer;
+      instanceContext.vertexDeclaration = state_->instanceVertexDeclaration.Get();
+      instanceContext.vertexShader = state_->instanceVertexShader.Get();
+      instanceContext.pixelShader = state_->instancePixelShader.Get();
+      instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer.Get();
+      instanceContext.geometryIndexBuffer = state_->unitQuadIndexBuffer.Get();
       instanceContext.geometryVertexStrideBytes = sizeof(float) * 2;
       instanceContext.geometryVertexCount = 4;
       instanceContext.geometryPrimitiveCount = 2;
-      instanceContext.instanceBuffer = state_->dynamicInstanceVertexBuffer;
+      instanceContext.instanceBuffer = state_->dynamicInstanceVertexBuffer.Detach();
       instanceContext.instanceBufferCapacityBytes =
           state_->dynamicInstanceVertexCapacityBytes;
       instanceContext.viewportWidth = static_cast<float>(state_->width);
@@ -653,7 +661,7 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       const draw::ShapeInstanceData instanceData{
           shapeInstances.data(), static_cast<int>(shapeInstances.size())};
       submitHr = draw::DrawShapeInstanceBatch(instanceContext, instanceData);
-      state_->dynamicInstanceVertexBuffer = instanceContext.instanceBuffer;
+      state_->dynamicInstanceVertexBuffer.Attach(instanceContext.instanceBuffer);
       state_->dynamicInstanceVertexCapacityBytes =
           instanceContext.instanceBufferCapacityBytes;
       break;
@@ -784,7 +792,7 @@ HRESULT D3D9Renderer::TryAcquirePresentSurface(void** outSurface9) {
     return S_FALSE;
   }
 
-  *outSurface9 = state_->presentingSurface;
+  *outSurface9 = state_->presentingSurface.Get();
   return S_OK;
 }
 
@@ -805,8 +813,8 @@ HRESULT D3D9Renderer::CopyReadyToPresentSurface() {
   }
 
   const HRESULT hr = state_->device->StretchRect(
-      state_->slots[readySlotIndex].renderTarget, nullptr,
-      state_->presentingSurface, nullptr, D3DTEXF_NONE);
+      state_->slots[readySlotIndex].renderTarget.Get(), nullptr,
+      state_->presentingSurface.Get(), nullptr, D3DTEXF_NONE);
   if (FAILED(hr)) {
     return hr;
   }

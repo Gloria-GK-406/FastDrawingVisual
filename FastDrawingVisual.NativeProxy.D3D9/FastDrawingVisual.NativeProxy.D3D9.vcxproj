@@ -201,7 +201,6 @@
     <ClInclude Include="D3DBatchDraw.h" />
     <ClInclude Include="D3DBatchDrawTypes.h" />
     <ClInclude Include="D3DBatchTypes.h" />
-    <ClInclude Include="D3D9RendererTypes.h" />
     <ClInclude Include="D3D9Renderer.h" />
     <ClInclude Include="D3D9Backend.h" />
   </ItemGroup>
