@@ -3,7 +3,9 @@ static const float kTypeStrokeRect = 1.0f;
 static const float kTypeFillEllipse = 2.0f;
 static const float kTypeStrokeEllipse = 3.0f;
 static const float kTypeLine = 4.0f;
-static const float kAntiAliasWidth = 1.0f;
+static const float kAntiAliasScale = 0.75f;
+static const float kMinAntiAliasWidth = 0.35f;
+static const float kMaxAntiAliasWidth = 1.25f;
 
 struct PSInput
 {
@@ -16,9 +18,23 @@ struct PSInput
     float4 misc : TEXCOORD5;
 };
 
+float AntiAliasWidth(float signedDistance)
+{
+    float width = (abs(ddx(signedDistance)) + abs(ddy(signedDistance))) * kAntiAliasScale;
+    return clamp(width, kMinAntiAliasWidth, kMaxAntiAliasWidth);
+}
+
 float CoverageFromSignedDistance(float signedDistance)
 {
-    return saturate(1.0f - smoothstep(-kAntiAliasWidth, kAntiAliasWidth, signedDistance));
+    float aa = AntiAliasWidth(signedDistance);
+    return saturate(0.5f - (signedDistance / aa));
+}
+
+float StrokeCoverageFromSignedDistance(float signedDistance, float strokeWidth)
+{
+    float halfStrokeWidth = strokeWidth * 0.5f;
+    float bandDistance = abs(signedDistance + halfStrokeWidth) - halfStrokeWidth;
+    return CoverageFromSignedDistance(bandDistance);
 }
 
 float SdRoundedBox(float2 p, float2 halfSize, float radius)
@@ -36,37 +52,37 @@ float FillCoverageFromRoundedBox(float2 p, float2 halfSize, float radius)
 
 float StrokeCoverageFromRoundedBox(float2 p, float2 halfSize, float strokeWidth, float radius)
 {
-    float outerCoverage = FillCoverageFromRoundedBox(p, halfSize, radius);
-    float2 innerHalf = max(halfSize - strokeWidth, 0.0f);
-    if (innerHalf.x <= 0.0f || innerHalf.y <= 0.0f)
+    if (strokeWidth <= 0.0f)
     {
-        return outerCoverage;
+        return 0.0f;
     }
 
-    float innerRadius = max(radius - strokeWidth, 0.0f);
-    float innerCoverage = FillCoverageFromRoundedBox(p, innerHalf, innerRadius);
-    return saturate(outerCoverage - innerCoverage);
+    return StrokeCoverageFromSignedDistance(SdRoundedBox(p, halfSize, radius), strokeWidth);
+}
+
+float SdEllipse(float2 p, float2 radius)
+{
+    float2 safeRadius = max(radius, 0.0001f);
+    float2 q = p / safeRadius;
+    float metric = length(q);
+    float2 gradient = q / safeRadius;
+    float gradientLength = max(length(gradient), 0.0001f);
+    return (metric - 1.0f) / gradientLength;
 }
 
 float FillCoverageFromEllipse(float2 p, float2 radius)
 {
-    float2 safeRadius = max(radius, 0.0001f);
-    float metric = length(p / safeRadius);
-    float aa = kAntiAliasWidth / max(min(safeRadius.x, safeRadius.y), 1.0f);
-    return saturate(1.0f - smoothstep(1.0f - aa, 1.0f + aa, metric));
+    return CoverageFromSignedDistance(SdEllipse(p, radius));
 }
 
 float StrokeCoverageFromEllipse(float2 p, float2 outerRadius, float strokeWidth)
 {
-    float outerCoverage = FillCoverageFromEllipse(p, outerRadius);
-    float2 innerRadius = outerRadius - strokeWidth;
-    if (innerRadius.x <= 0.0f || innerRadius.y <= 0.0f)
+    if (strokeWidth <= 0.0f)
     {
-        return outerCoverage;
+        return 0.0f;
     }
 
-    float innerCoverage = FillCoverageFromEllipse(p, innerRadius);
-    return saturate(outerCoverage - innerCoverage);
+    return StrokeCoverageFromSignedDistance(SdEllipse(p, outerRadius), strokeWidth);
 }
 
 float SdLineSegment(float2 p, float2 a, float2 b)

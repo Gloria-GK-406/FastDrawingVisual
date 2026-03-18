@@ -54,6 +54,7 @@ namespace fdv::nativeproxy::shared::batch {
 		ColorF TransparentColor() { return { 0.0f, 0.0f, 0.0f, 0.0f }; }
 
 		constexpr float kEllipseEdgePadding = 1.0f;
+		constexpr float kLineEdgePadding = 1.0f;
 
 		float ToShapeTypeValue(ShapeInstanceType type) {
 			return static_cast<float>(static_cast<std::uint32_t>(type));
@@ -132,6 +133,70 @@ namespace fdv::nativeproxy::shared::batch {
 				(std::max)(1.0f, fdv::protocol::ReadF32(
 					command + fdv::protocol::kStrokeRectThicknessOffset)),
 				0.0f, ShapeInstanceType::StrokeRect);
+		}
+
+		float NormalizeRoundedRectRadius(float radiusX, float radiusY) {
+			return (std::max)(0.0f, (std::min)(radiusX, radiusY));
+		}
+
+		ShapeInstance MakeFillRoundedRectInstance(
+			const fdv::protocol::FillRoundedRectPayload& payload) {
+			const float radius =
+				NormalizeRoundedRectRadius(payload.radiusX, payload.radiusY);
+			return MakeShapeInstance(payload.x, payload.y, payload.width, payload.height,
+				payload.radiusX, payload.radiusY, 0.0f, 0.0f,
+				ToPremultipliedColor(payload.color),
+				TransparentColor(), 0.0f, radius,
+				ShapeInstanceType::FillRect);
+		}
+
+		ShapeInstance MakeFillRoundedRectInstance(const std::uint8_t* command) {
+			const float radiusX =
+				fdv::protocol::ReadF32(command + fdv::protocol::kFillRoundedRectRadiusXOffset);
+			const float radiusY =
+				fdv::protocol::ReadF32(command + fdv::protocol::kFillRoundedRectRadiusYOffset);
+			return MakeShapeInstance(
+				fdv::protocol::ReadF32(command + fdv::protocol::kFillRoundedRectXOffset),
+				fdv::protocol::ReadF32(command + fdv::protocol::kFillRoundedRectYOffset),
+				fdv::protocol::ReadF32(command + fdv::protocol::kFillRoundedRectWidthOffset),
+				fdv::protocol::ReadF32(command + fdv::protocol::kFillRoundedRectHeightOffset),
+				radiusX, radiusY, 0.0f, 0.0f,
+				ToPremultipliedColor(
+					fdv::protocol::ReadColorArgb8(command +
+						fdv::protocol::kFillRoundedRectColorOffset)),
+				TransparentColor(), 0.0f, NormalizeRoundedRectRadius(radiusX, radiusY),
+				ShapeInstanceType::FillRect);
+		}
+
+		ShapeInstance MakeStrokeRoundedRectInstance(
+			const fdv::protocol::StrokeRoundedRectPayload& payload) {
+			const float radius =
+				NormalizeRoundedRectRadius(payload.radiusX, payload.radiusY);
+			return MakeShapeInstance(payload.x, payload.y, payload.width, payload.height,
+				payload.radiusX, payload.radiusY, 0.0f, 0.0f, TransparentColor(),
+				ToPremultipliedColor(payload.color),
+				(std::max)(1.0f, payload.thickness), radius,
+				ShapeInstanceType::StrokeRect);
+		}
+
+		ShapeInstance MakeStrokeRoundedRectInstance(const std::uint8_t* command) {
+			const float radiusX = fdv::protocol::ReadF32(
+				command + fdv::protocol::kStrokeRoundedRectRadiusXOffset);
+			const float radiusY = fdv::protocol::ReadF32(
+				command + fdv::protocol::kStrokeRoundedRectRadiusYOffset);
+			return MakeShapeInstance(
+				fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRoundedRectXOffset),
+				fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRoundedRectYOffset),
+				fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRoundedRectWidthOffset),
+				fdv::protocol::ReadF32(command + fdv::protocol::kStrokeRoundedRectHeightOffset),
+				radiusX, radiusY, 0.0f, 0.0f, TransparentColor(),
+				ToPremultipliedColor(
+					fdv::protocol::ReadColorArgb8(command +
+						fdv::protocol::kStrokeRoundedRectColorOffset)),
+				(std::max)(1.0f, fdv::protocol::ReadF32(
+					command + fdv::protocol::kStrokeRoundedRectThicknessOffset)),
+				NormalizeRoundedRectRadius(radiusX, radiusY),
+				ShapeInstanceType::StrokeRect);
 		}
 
 		ShapeInstance MakeFillEllipseInstance(
@@ -213,10 +278,14 @@ namespace fdv::nativeproxy::shared::batch {
 		ShapeInstance MakeLineInstance(const fdv::protocol::LinePayload& payload) {
 			const float thickness = (std::max)(1.0f, payload.thickness);
 			const float halfThickness = thickness * 0.5f;
-			const float minX = (std::min)(payload.x0, payload.x1) - halfThickness;
-			const float minY = (std::min)(payload.y0, payload.y1) - halfThickness;
-			const float maxX = (std::max)(payload.x0, payload.x1) + halfThickness;
-			const float maxY = (std::max)(payload.y0, payload.y1) + halfThickness;
+			const float minX =
+				(std::min)(payload.x0, payload.x1) - halfThickness - kLineEdgePadding;
+			const float minY =
+				(std::min)(payload.y0, payload.y1) - halfThickness - kLineEdgePadding;
+			const float maxX =
+				(std::max)(payload.x0, payload.x1) + halfThickness + kLineEdgePadding;
+			const float maxY =
+				(std::max)(payload.y0, payload.y1) + halfThickness + kLineEdgePadding;
 			const float centerX = (minX + maxX) * 0.5f;
 			const float centerY = (minY + maxY) * 0.5f;
 			return MakeShapeInstance(
@@ -235,10 +304,14 @@ namespace fdv::nativeproxy::shared::batch {
 				(std::max)(1.0f, fdv::protocol::ReadF32(command +
 					fdv::protocol::kLineThicknessOffset));
 			const float halfThickness = thickness * 0.5f;
-			const float minX = (std::min)(x0, x1) - halfThickness;
-			const float minY = (std::min)(y0, y1) - halfThickness;
-			const float maxX = (std::max)(x0, x1) + halfThickness;
-			const float maxY = (std::max)(y0, y1) + halfThickness;
+			const float minX =
+				(std::min)(x0, x1) - halfThickness - kLineEdgePadding;
+			const float minY =
+				(std::min)(y0, y1) - halfThickness - kLineEdgePadding;
+			const float maxX =
+				(std::max)(x0, x1) + halfThickness + kLineEdgePadding;
+			const float maxY =
+				(std::max)(y0, y1) + halfThickness + kLineEdgePadding;
 			const float centerX = (minX + maxX) * 0.5f;
 			const float centerY = (minY + maxY) * 0.5f;
 			return MakeShapeInstance(
@@ -369,6 +442,42 @@ namespace fdv::nativeproxy::shared::batch {
 				}
 
 				shapeInstances_.push_back(MakeStrokeRectInstance(command.commandData));
+				lastBatchStats_.commands.strokeRectCount++;
+				reader_->Next();
+				break;
+
+			case fdv::protocol::CommandType::FillRoundedRect:
+				if (kind == BatchKind::Unknown) {
+					kind = BatchKind::ShapeInstances;
+					out.kind = kind;
+				}
+				else if (kind != BatchKind::ShapeInstances) {
+					lastBatchStats_.shapeInstanceCount =
+						static_cast<int32_t>(shapeInstances_.size());
+					lastBatchStats_.textItemCount =
+						static_cast<int32_t>(textItems_.size());
+					return S_OK;
+				}
+
+				shapeInstances_.push_back(MakeFillRoundedRectInstance(command.commandData));
+				lastBatchStats_.commands.fillRectCount++;
+				reader_->Next();
+				break;
+
+			case fdv::protocol::CommandType::StrokeRoundedRect:
+				if (kind == BatchKind::Unknown) {
+					kind = BatchKind::ShapeInstances;
+					out.kind = kind;
+				}
+				else if (kind != BatchKind::ShapeInstances) {
+					lastBatchStats_.shapeInstanceCount =
+						static_cast<int32_t>(shapeInstances_.size());
+					lastBatchStats_.textItemCount =
+						static_cast<int32_t>(textItems_.size());
+					return S_OK;
+				}
+
+				shapeInstances_.push_back(MakeStrokeRoundedRectInstance(command.commandData));
 				lastBatchStats_.commands.strokeRectCount++;
 				reader_->Next();
 				break;

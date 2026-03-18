@@ -197,7 +197,39 @@ namespace FastDrawingVisual.Rendering
             public void DrawRoundedRectangle(Brush brush, Pen pen, Rect rectangle, double radiusX, double radiusY)
             {
                 ThrowIfDisposed();
-                DrawRectangle(brush, pen, rectangle);
+                if (radiusX <= 0d || radiusY <= 0d)
+                {
+                    DrawRectangle(brush, pen, rectangle);
+                    return;
+                }
+
+                if (!TryTransformRoundedRect(rectangle, radiusX, radiusY, out var transformedRectangle, out var transformedRadiusX, out var transformedRadiusY))
+                    return;
+
+                if (TryGetSolidColor(brush, out var fill))
+                {
+                    _commands.WriteFillRoundedRect(
+                        (float)transformedRectangle.X,
+                        (float)transformedRectangle.Y,
+                        (float)transformedRectangle.Width,
+                        (float)transformedRectangle.Height,
+                        (float)transformedRadiusX,
+                        (float)transformedRadiusY,
+                        ToProtocolColor(fill));
+                }
+
+                if (TryGetSolidPen(pen, out var stroke, out var thickness))
+                {
+                    _commands.WriteStrokeRoundedRect(
+                        (float)transformedRectangle.X,
+                        (float)transformedRectangle.Y,
+                        (float)transformedRectangle.Width,
+                        (float)transformedRectangle.Height,
+                        (float)transformedRadiusX,
+                        (float)transformedRadiusY,
+                        TransformThickness(thickness),
+                        ToProtocolColor(stroke));
+                }
             }
 
             public void DrawLine(Pen pen, Point point0, Point point1)
@@ -420,6 +452,23 @@ namespace FastDrawingVisual.Rendering
                     return false;
 
                 transformedCenter = TransformPoint(center);
+                transformedRadiusX = Math.Abs(radiusX * _currentTransform.M11);
+                transformedRadiusY = Math.Abs(radiusY * _currentTransform.M22);
+                return transformedRadiusX > 0d && transformedRadiusY > 0d;
+            }
+
+            private bool TryTransformRoundedRect(Rect rectangle, double radiusX, double radiusY, out Rect transformedRectangle, out double transformedRadiusX, out double transformedRadiusY)
+            {
+                transformedRectangle = rectangle;
+                transformedRadiusX = radiusX;
+                transformedRadiusY = radiusY;
+
+                if (!TryTransformAxisAlignedRect(rectangle, out transformedRectangle))
+                    return false;
+
+                if (_currentTransform.IsIdentity)
+                    return transformedRadiusX > 0d && transformedRadiusY > 0d;
+
                 transformedRadiusX = Math.Abs(radiusX * _currentTransform.M11);
                 transformedRadiusY = Math.Abs(radiusY * _currentTransform.M22);
                 return transformedRadiusX > 0d && transformedRadiusY > 0d;

@@ -41,6 +41,35 @@
       ]
     },
     {
+      "name": "FillRoundedRect",
+      "id": 8,
+      "slots": 2,
+      "fields": [
+        { "name": "X", "type": "f32" },
+        { "name": "Y", "type": "f32" },
+        { "name": "Width", "type": "f32" },
+        { "name": "Height", "type": "f32" },
+        { "name": "RadiusX", "type": "f32" },
+        { "name": "RadiusY", "type": "f32" },
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    },
+    {
+      "name": "StrokeRoundedRect",
+      "id": 9,
+      "slots": 2,
+      "fields": [
+        { "name": "X", "type": "f32" },
+        { "name": "Y", "type": "f32" },
+        { "name": "Width", "type": "f32" },
+        { "name": "Height", "type": "f32" },
+        { "name": "RadiusX", "type": "f32" },
+        { "name": "RadiusY", "type": "f32" },
+        { "name": "Thickness", "type": "f32" },
+        { "name": "Color", "type": "color_argb8" }
+      ]
+    },
+    {
       "name": "FillEllipse",
       "id": 4,
       "slots": 1,

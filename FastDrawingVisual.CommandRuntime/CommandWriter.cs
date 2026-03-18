@@ -76,6 +76,31 @@ namespace FastDrawingVisual.CommandRuntime
             WriteColor(span.Slice(CommandLayout.StrokeRectColorOffset), color);
         }
 
+        public void WriteFillRoundedRect(float x, float y, float width, float height, float radiusX, float radiusY, CommandColorArgb8 color)
+        {
+            var span = BeginCommand((ushort)CommandType.FillRoundedRect, CommandLayout.FillRoundedRectSlotCount, 0);
+            WriteSingle(span.Slice(CommandLayout.FillRoundedRectXOffset), x);
+            WriteSingle(span.Slice(CommandLayout.FillRoundedRectYOffset), y);
+            WriteSingle(span.Slice(CommandLayout.FillRoundedRectWidthOffset), width);
+            WriteSingle(span.Slice(CommandLayout.FillRoundedRectHeightOffset), height);
+            WriteSingle(span.Slice(CommandLayout.FillRoundedRectRadiusXOffset), radiusX);
+            WriteSingle(span.Slice(CommandLayout.FillRoundedRectRadiusYOffset), radiusY);
+            WriteColor(span.Slice(CommandLayout.FillRoundedRectColorOffset), color);
+        }
+
+        public void WriteStrokeRoundedRect(float x, float y, float width, float height, float radiusX, float radiusY, float thickness, CommandColorArgb8 color)
+        {
+            var span = BeginCommand((ushort)CommandType.StrokeRoundedRect, CommandLayout.StrokeRoundedRectSlotCount, 0);
+            WriteSingle(span.Slice(CommandLayout.StrokeRoundedRectXOffset), x);
+            WriteSingle(span.Slice(CommandLayout.StrokeRoundedRectYOffset), y);
+            WriteSingle(span.Slice(CommandLayout.StrokeRoundedRectWidthOffset), width);
+            WriteSingle(span.Slice(CommandLayout.StrokeRoundedRectHeightOffset), height);
+            WriteSingle(span.Slice(CommandLayout.StrokeRoundedRectRadiusXOffset), radiusX);
+            WriteSingle(span.Slice(CommandLayout.StrokeRoundedRectRadiusYOffset), radiusY);
+            WriteSingle(span.Slice(CommandLayout.StrokeRoundedRectThicknessOffset), thickness);
+            WriteColor(span.Slice(CommandLayout.StrokeRoundedRectColorOffset), color);
+        }
+
         public void WriteFillEllipse(float centerX, float centerY, float radiusX, float radiusY, CommandColorArgb8 color)
         {
             var span = BeginCommand((ushort)CommandType.FillEllipse, CommandLayout.FillEllipseSlotCount, 0);
