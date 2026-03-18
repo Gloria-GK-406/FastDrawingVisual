@@ -53,6 +53,8 @@ namespace fdv::nativeproxy::shared::batch {
 
 		ColorF TransparentColor() { return { 0.0f, 0.0f, 0.0f, 0.0f }; }
 
+		constexpr float kEllipseEdgePadding = 1.0f;
+
 		float ToShapeTypeValue(ShapeInstanceType type) {
 			return static_cast<float>(static_cast<std::uint32_t>(type));
 		}
@@ -134,10 +136,13 @@ namespace fdv::nativeproxy::shared::batch {
 
 		ShapeInstance MakeFillEllipseInstance(
 			const fdv::protocol::FillEllipsePayload& payload) {
-			return MakeShapeInstance(payload.centerX - payload.radiusX,
-				payload.centerY - payload.radiusY,
-				payload.radiusX * 2.0f, payload.radiusY * 2.0f,
-				0.0f, 0.0f, 0.0f, 0.0f,
+			const float outerRadiusX = payload.radiusX;
+			const float outerRadiusY = payload.radiusY;
+			return MakeShapeInstance(payload.centerX - outerRadiusX - kEllipseEdgePadding,
+				payload.centerY - outerRadiusY - kEllipseEdgePadding,
+				(outerRadiusX + kEllipseEdgePadding) * 2.0f,
+				(outerRadiusY + kEllipseEdgePadding) * 2.0f,
+				outerRadiusX, outerRadiusY, 0.0f, 0.0f,
 				ToPremultipliedColor(payload.color),
 				TransparentColor(), 0.0f, 0.0f,
 				ShapeInstanceType::FillEllipse);
@@ -153,8 +158,11 @@ namespace fdv::nativeproxy::shared::batch {
 			const float radiusY =
 				fdv::protocol::ReadF32(command + fdv::protocol::kFillEllipseRadiusYOffset);
 			return MakeShapeInstance(
-				centerX - radiusX, centerY - radiusY, radiusX * 2.0f, radiusY * 2.0f,
-				0.0f, 0.0f, 0.0f, 0.0f,
+				centerX - radiusX - kEllipseEdgePadding,
+				centerY - radiusY - kEllipseEdgePadding,
+				(radiusX + kEllipseEdgePadding) * 2.0f,
+				(radiusY + kEllipseEdgePadding) * 2.0f,
+				radiusX, radiusY, 0.0f, 0.0f,
 				ToPremultipliedColor(
 					fdv::protocol::ReadColorArgb8(command +
 						fdv::protocol::kFillEllipseColorOffset)),
@@ -167,8 +175,11 @@ namespace fdv::nativeproxy::shared::batch {
 			const float outerRadiusX = payload.radiusX + thickness * 0.5f;
 			const float outerRadiusY = payload.radiusY + thickness * 0.5f;
 			return MakeShapeInstance(
-				payload.centerX - outerRadiusX, payload.centerY - outerRadiusY,
-				outerRadiusX * 2.0f, outerRadiusY * 2.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+				payload.centerX - outerRadiusX - kEllipseEdgePadding,
+				payload.centerY - outerRadiusY - kEllipseEdgePadding,
+				(outerRadiusX + kEllipseEdgePadding) * 2.0f,
+				(outerRadiusY + kEllipseEdgePadding) * 2.0f,
+				outerRadiusX, outerRadiusY, 0.0f, 0.0f,
 				TransparentColor(), ToPremultipliedColor(payload.color), thickness, 0.0f,
 				ShapeInstanceType::StrokeEllipse);
 		}
@@ -189,8 +200,11 @@ namespace fdv::nativeproxy::shared::batch {
 			const float outerRadiusX = radiusX + thickness * 0.5f;
 			const float outerRadiusY = radiusY + thickness * 0.5f;
 			return MakeShapeInstance(
-				centerX - outerRadiusX, centerY - outerRadiusY, outerRadiusX * 2.0f,
-				outerRadiusY * 2.0f, 0.0f, 0.0f, 0.0f, 0.0f, TransparentColor(),
+				centerX - outerRadiusX - kEllipseEdgePadding,
+				centerY - outerRadiusY - kEllipseEdgePadding,
+				(outerRadiusX + kEllipseEdgePadding) * 2.0f,
+				(outerRadiusY + kEllipseEdgePadding) * 2.0f,
+				outerRadiusX, outerRadiusY, 0.0f, 0.0f, TransparentColor(),
 				ToPremultipliedColor(fdv::protocol::ReadColorArgb8(
 					command + fdv::protocol::kStrokeEllipseColorOffset)),
 				thickness, 0.0f, ShapeInstanceType::StrokeEllipse);

@@ -3,14 +3,19 @@
 #include "BatchComplier.h"
 #include "D3DBatchDraw.h"
 #include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
+#include "../FastDrawingVisual.NativeProxy.TextD2D/D2DTextRenderer.h"
 
 #include <d3d9.h>
+#include <d3d11.h>
 #include <d3dx9.h>
+#include <dxgi.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cwchar>
+#include <memory>
 #include <new>
 #include <stdio.h>
 #include <string.h>
@@ -28,14 +33,20 @@ enum class SurfaceState : uint8_t {
 };
 
 struct SurfaceSlot {
+  ComPtr<IDirect3DTexture9> renderTexture = nullptr;
   ComPtr<IDirect3DSurface9> renderTarget = nullptr;
   ComPtr<IDirect3DQuery9> renderDoneQuery = nullptr;
+  ComPtr<ID3D11Texture2D> textSharedTexture = nullptr;
+  HANDLE sharedHandle = nullptr;
   SurfaceState state = SurfaceState::Ready;
 };
 
 struct D3D9RendererState {
   ComPtr<IDirect3D9Ex> d3d9 = nullptr;
   ComPtr<IDirect3DDevice9Ex> device = nullptr;
+  ComPtr<ID3D11Device> textDevice = nullptr;
+  ComPtr<ID3D11DeviceContext> textContext = nullptr;
+  ComPtr<ID3D11Query> textDoneQuery = nullptr;
   ComPtr<IDirect3DVertexDeclaration9> instanceVertexDeclaration = nullptr;
   ComPtr<IDirect3DVertexShader9> instanceVertexShader = nullptr;
   ComPtr<IDirect3DPixelShader9> instancePixelShader = nullptr;
@@ -46,6 +57,8 @@ struct D3D9RendererState {
   batch::BatchCompiler batchCompiler{};
   SurfaceSlot slots[kFrameCount];
   ComPtr<IDirect3DSurface9> presentingSurface = nullptr;
+  std::unique_ptr<fdv::textd2d::D2DTextRenderer> textRenderer;
+  int activeTextTargetSlotIndex = -1;
 
   HWND hwnd = nullptr;
   int width = 0;
@@ -60,6 +73,21 @@ namespace {
 constexpr uint32_t kMetricWindowSec = 1;
 constexpr const wchar_t* kInstanceVertexShaderPath = L"Shader\\InstanceVS_Model3.cso";
 constexpr const wchar_t* kInstancePixelShaderPath = L"Shader\\InstancePS_Model3.cso";
+constexpr DXGI_FORMAT kTextInteropFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+int FindSlotIndex(const D3D9RendererState* state, const SurfaceSlot* slot) {
+  if (state == nullptr || slot == nullptr) {
+    return -1;
+  }
+
+  for (int index = 0; index < kFrameCount; ++index) {
+    if (&state->slots[index] == slot) {
+      return index;
+    }
+  }
+
+  return -1;
+}
 
 int FindSlotByState(const D3D9RendererState* state, SurfaceState slotState) {
   if (state == nullptr) {
@@ -315,13 +343,232 @@ void ReleaseFrameResources(D3D9RendererState* state) {
     return;
   }
 
+  if (state->textRenderer != nullptr) {
+    state->textRenderer->ReleaseRenderTargetResources();
+  }
+  state->activeTextTargetSlotIndex = -1;
   state->presentingSurface.Reset();
 
   for (int i = 0; i < kFrameCount; ++i) {
+    state->slots[i].textSharedTexture.Reset();
+    state->slots[i].sharedHandle = nullptr;
     state->slots[i].renderDoneQuery.Reset();
     state->slots[i].renderTarget.Reset();
+    state->slots[i].renderTexture.Reset();
     state->slots[i].state = SurfaceState::Ready;
   }
+}
+
+void ReleaseTextInteropDeviceResources(D3D9RendererState* state) {
+  if (state == nullptr) {
+    return;
+  }
+
+  if (state->textRenderer != nullptr) {
+    state->textRenderer->ReleaseRenderTargetResources();
+    state->textRenderer->ReleaseDeviceResources();
+    state->textRenderer.reset();
+  }
+
+  state->activeTextTargetSlotIndex = -1;
+  state->textDoneQuery.Reset();
+  state->textContext.Reset();
+  state->textDevice.Reset();
+
+  for (int i = 0; i < kFrameCount; ++i) {
+    state->slots[i].textSharedTexture.Reset();
+  }
+}
+
+HRESULT WaitForD3D9Query(IDirect3DQuery9* query) {
+  if (query == nullptr) {
+    return S_OK;
+  }
+
+  HRESULT hr = query->Issue(D3DISSUE_END);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  while (true) {
+    hr = query->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+    if (hr == S_OK) {
+      return S_OK;
+    }
+    if (hr != S_FALSE) {
+      return hr;
+    }
+    YieldProcessor();
+  }
+}
+
+HRESULT WaitForD3D11Query(ID3D11DeviceContext* context, ID3D11Query* query) {
+  if (context == nullptr || query == nullptr) {
+    return E_POINTER;
+  }
+
+  context->End(query);
+  context->Flush();
+
+  while (true) {
+    const HRESULT hr = context->GetData(query, nullptr, 0, 0);
+    if (hr == S_OK) {
+      return S_OK;
+    }
+    if (hr != S_FALSE) {
+      return hr;
+    }
+    YieldProcessor();
+  }
+}
+
+HRESULT OpenTextInteropTargets(D3D9RendererState* state) {
+  if (state == nullptr || state->textDevice == nullptr) {
+    return E_UNEXPECTED;
+  }
+
+  if (state->textRenderer != nullptr) {
+    state->textRenderer->ReleaseRenderTargetResources();
+  }
+  state->activeTextTargetSlotIndex = -1;
+
+  for (int i = 0; i < kFrameCount; ++i) {
+    auto& slot = state->slots[i];
+    slot.textSharedTexture.Reset();
+
+    if (slot.renderTexture == nullptr || slot.sharedHandle == nullptr) {
+      return E_FAIL;
+    }
+
+    HRESULT hr = state->textDevice->OpenSharedResource(
+        slot.sharedHandle, __uuidof(ID3D11Texture2D),
+        reinterpret_cast<void**>(slot.textSharedTexture.ReleaseAndGetAddressOf()));
+    if (FAILED(hr) || slot.textSharedTexture == nullptr) {
+      return FAILED(hr) ? hr : E_FAIL;
+    }
+  }
+
+  return S_OK;
+}
+
+HRESULT EnsureTextInteropResources(D3D9RendererState* state) {
+  if (state == nullptr) {
+    return E_OUTOFMEMORY;
+  }
+
+  if (state->textDevice != nullptr && state->textContext != nullptr &&
+      state->textDoneQuery != nullptr && state->textRenderer != nullptr) {
+    return S_OK;
+  }
+
+  ReleaseTextInteropDeviceResources(state);
+
+  const D3D_FEATURE_LEVEL featureLevels[] = {
+      D3D_FEATURE_LEVEL_11_0,
+      D3D_FEATURE_LEVEL_10_1,
+      D3D_FEATURE_LEVEL_10_0,
+      D3D_FEATURE_LEVEL_9_3,
+      D3D_FEATURE_LEVEL_9_1,
+  };
+  D3D_FEATURE_LEVEL supportedFeatureLevel = D3D_FEATURE_LEVEL_9_1;
+  constexpr UINT kTextCreationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+
+  HRESULT hr = D3D11CreateDevice(
+      nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, kTextCreationFlags,
+      featureLevels, ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
+      state->textDevice.ReleaseAndGetAddressOf(), &supportedFeatureLevel,
+      state->textContext.ReleaseAndGetAddressOf());
+  if (FAILED(hr)) {
+    hr = D3D11CreateDevice(
+        nullptr, D3D_DRIVER_TYPE_WARP, nullptr, kTextCreationFlags,
+        featureLevels, ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
+        state->textDevice.ReleaseAndGetAddressOf(), &supportedFeatureLevel,
+        state->textContext.ReleaseAndGetAddressOf());
+  }
+
+  if (FAILED(hr) || state->textDevice == nullptr || state->textContext == nullptr) {
+    ReleaseTextInteropDeviceResources(state);
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+  static_cast<void>(supportedFeatureLevel);
+
+  D3D11_QUERY_DESC textDoneQueryDesc = {};
+  textDoneQueryDesc.Query = D3D11_QUERY_EVENT;
+  hr = state->textDevice->CreateQuery(
+      &textDoneQueryDesc, state->textDoneQuery.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || state->textDoneQuery == nullptr) {
+    ReleaseTextInteropDeviceResources(state);
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  state->textRenderer = std::make_unique<fdv::textd2d::D2DTextRenderer>();
+  if (state->textRenderer == nullptr) {
+    ReleaseTextInteropDeviceResources(state);
+    return E_OUTOFMEMORY;
+  }
+
+  hr = state->textRenderer->EnsureDeviceResources(state->textDevice.Get());
+  if (FAILED(hr)) {
+    ReleaseTextInteropDeviceResources(state);
+    return hr;
+  }
+
+  hr = OpenTextInteropTargets(state);
+  if (FAILED(hr)) {
+    ReleaseTextInteropDeviceResources(state);
+    return hr;
+  }
+
+  return S_OK;
+}
+
+HRESULT DrawSharedTextBatch(
+    D3D9RendererState* state, SurfaceSlot* drawSlot,
+    const fdv::nativeproxy::shared::batch::TextBatchItem* items, int count) {
+  if (items == nullptr || count <= 0) {
+    return S_OK;
+  }
+
+  if (state == nullptr || drawSlot == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  const int slotIndex = FindSlotIndex(state, drawSlot);
+  if (slotIndex < 0) {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = EnsureTextInteropResources(state);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  if (drawSlot->textSharedTexture == nullptr || state->textRenderer == nullptr ||
+      state->textContext == nullptr || state->textDoneQuery == nullptr) {
+    return E_UNEXPECTED;
+  }
+
+  hr = WaitForD3D9Query(drawSlot->renderDoneQuery.Get());
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  if (state->activeTextTargetSlotIndex != slotIndex) {
+    hr = state->textRenderer->CreateTargetFromTexture(
+        drawSlot->textSharedTexture.Get(), kTextInteropFormat);
+    if (FAILED(hr)) {
+      state->activeTextTargetSlotIndex = -1;
+      return hr;
+    }
+    state->activeTextTargetSlotIndex = slotIndex;
+  }
+
+  hr = state->textRenderer->DrawTextBatch(state->textContext.Get(), items, count);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  return WaitForD3D11Query(state->textContext.Get(), state->textDoneQuery.Get());
 }
 
 bool CreateFrameResources(D3D9RendererState* state) {
@@ -333,17 +580,32 @@ bool CreateFrameResources(D3D9RendererState* state) {
   ReleaseFrameResources(state);
 
   for (int i = 0; i < kFrameCount; ++i) {
-    HRESULT hr = state->device->CreateRenderTarget(
+    HANDLE sharedHandle = nullptr;
+    HRESULT hr = state->device->CreateTexture(
         static_cast<UINT>(state->width), static_cast<UINT>(state->height),
-        D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE,
-        state->slots[i].renderTarget.ReleaseAndGetAddressOf(), nullptr);
+        1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+        state->slots[i].renderTexture.ReleaseAndGetAddressOf(), &sharedHandle);
     if (FAILED(hr)) {
       ReleaseFrameResources(state);
       return false;
     }
 
-    state->device->CreateQuery(D3DQUERYTYPE_EVENT,
-                               state->slots[i].renderDoneQuery.ReleaseAndGetAddressOf());
+    state->slots[i].sharedHandle = sharedHandle;
+
+    hr = state->slots[i].renderTexture->GetSurfaceLevel(
+        0, state->slots[i].renderTarget.ReleaseAndGetAddressOf());
+    if (FAILED(hr) || state->slots[i].renderTarget == nullptr) {
+      ReleaseFrameResources(state);
+      return false;
+    }
+
+    hr = state->device->CreateQuery(
+        D3DQUERYTYPE_EVENT,
+        state->slots[i].renderDoneQuery.ReleaseAndGetAddressOf());
+    if (FAILED(hr)) {
+      ReleaseFrameResources(state);
+      return false;
+    }
     state->slots[i].state = SurfaceState::Ready;
   }
 
@@ -352,6 +614,11 @@ bool CreateFrameResources(D3D9RendererState* state) {
       D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE,
       state->presentingSurface.ReleaseAndGetAddressOf(), nullptr);
   if (FAILED(hr)) {
+    ReleaseFrameResources(state);
+    return false;
+  }
+
+  if (state->textDevice != nullptr && FAILED(OpenTextInteropTargets(state))) {
     ReleaseFrameResources(state);
     return false;
   }
@@ -440,6 +707,7 @@ void ReleaseDeviceResources(D3D9RendererState* state) {
   }
 
   ReleaseFrameResources(state);
+  ReleaseTextInteropDeviceResources(state);
   ReleaseDrawPipeline(state);
   state->device.Reset();
 }
@@ -616,12 +884,6 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
     return hr;
   }
 
-  hr = device->BeginScene();
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  draw::SetupRenderState(device);
   state_->batchCompiler.Reset(state_->width, state_->height, layer.commandData,
                               layer.commandBytes, layer.blobData,
                               layer.blobBytes);
@@ -629,19 +891,47 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
   HRESULT submitHr = S_OK;
   batch::CompiledBatchView batch{};
   HRESULT batchHr = S_OK;
+  bool sceneOpen = false;
   while ((batchHr = state_->batchCompiler.TryGetNextBatch(batch)) == S_OK) {
     switch (batch.kind) {
     case batch::BatchKind::Clear:
+      if (sceneOpen) {
+        const HRESULT endSceneHr = device->EndScene();
+        sceneOpen = false;
+        if (FAILED(endSceneHr)) {
+          submitHr = endSceneHr;
+          break;
+        }
+      }
       device->Clear(0, nullptr, D3DCLEAR_TARGET,
                     ToD3DClearColor(batch.clearColor), 1.0f, 0);
       break;
 
     case batch::BatchKind::Triangles: {
+      if (!sceneOpen) {
+        hr = device->BeginScene();
+        if (FAILED(hr)) {
+          submitHr = hr;
+          break;
+        }
+        sceneOpen = true;
+        draw::SetupRenderState(device);
+      }
       submitHr = E_NOTIMPL;
       break;
     }
 
     case batch::BatchKind::ShapeInstances: {
+      if (!sceneOpen) {
+        hr = device->BeginScene();
+        if (FAILED(hr)) {
+          submitHr = hr;
+          break;
+        }
+        sceneOpen = true;
+        draw::SetupRenderState(device);
+      }
+
       const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
       draw::InstanceBatchDrawContext instanceContext{};
       instanceContext.device = device;
@@ -668,11 +958,18 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
     }
 
     case batch::BatchKind::Text: {
+      if (sceneOpen) {
+        const HRESULT endSceneHr = device->EndScene();
+        sceneOpen = false;
+        if (FAILED(endSceneHr)) {
+          submitHr = endSceneHr;
+          break;
+        }
+      }
+
       const auto& textItems = state_->batchCompiler.GetTextItems();
-      const draw::TextBatchDrawContext textContext{};
-      const draw::DrawTextData textData{textItems.data(),
-                                        static_cast<int>(textItems.size())};
-      submitHr = draw::DrawTextBatch(textContext, textData);
+      submitHr = DrawSharedTextBatch(state_, drawSlot, textItems.data(),
+                                     static_cast<int>(textItems.size()));
       break;
     }
     }
@@ -686,7 +983,10 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
     submitHr = FAILED(batchHr) ? batchHr : E_INVALIDARG;
   }
 
-  const HRESULT endSceneHr = device->EndScene();
+  HRESULT endSceneHr = S_OK;
+  if (sceneOpen) {
+    endSceneHr = device->EndScene();
+  }
   if (FAILED(submitHr)) {
     return submitHr;
   }

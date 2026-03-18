@@ -8,6 +8,8 @@
 namespace fdv::d3d9::draw {
 namespace {
 
+constexpr float kEllipseEdgePadding = 1.0f;
+
 struct ViewConstants {
   float viewportWidth = 0.0f;
   float viewportHeight = 0.0f;
@@ -260,16 +262,12 @@ batch::ShapeInstance MakeShapeEllipseInstance(
     const batch::EllipseInstance& instance) {
   const bool stroke = instance.thickness > 0.0f;
   const float strokeWidth = stroke ? (std::max)(1.0f, instance.thickness) : 0.0f;
-  float x = instance.centerX - instance.radiusX;
-  float y = instance.centerY - instance.radiusY;
-  float width = instance.radiusX * 2.0f;
-  float height = instance.radiusY * 2.0f;
-  if (stroke) {
-    x -= strokeWidth * 0.5f;
-    y -= strokeWidth * 0.5f;
-    width += strokeWidth;
-    height += strokeWidth;
-  }
+  const float outerRadiusX = instance.radiusX + (stroke ? strokeWidth * 0.5f : 0.0f);
+  const float outerRadiusY = instance.radiusY + (stroke ? strokeWidth * 0.5f : 0.0f);
+  const float x = instance.centerX - outerRadiusX - kEllipseEdgePadding;
+  const float y = instance.centerY - outerRadiusY - kEllipseEdgePadding;
+  const float width = (outerRadiusX + kEllipseEdgePadding) * 2.0f;
+  const float height = (outerRadiusY + kEllipseEdgePadding) * 2.0f;
 
   const float type =
       stroke ? static_cast<float>(batch::ShapeInstanceType::StrokeEllipse)
@@ -279,8 +277,8 @@ batch::ShapeInstance MakeShapeEllipseInstance(
       y,
       width,
       height,
-      0.0f,
-      0.0f,
+      outerRadiusX,
+      outerRadiusY,
       0.0f,
       0.0f,
       stroke ? 0.0f : instance.r,

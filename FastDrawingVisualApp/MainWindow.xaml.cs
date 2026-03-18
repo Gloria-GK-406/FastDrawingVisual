@@ -27,7 +27,8 @@ namespace FastDrawingVisualApp
                 new RendererOption("Skia", RendererPreference.Skia, "Primary accelerated path."),
                 new RendererOption("D3D9", RendererPreference.D3D9, "Native D3D9 command bridge."),
                 new RendererOption("WPF", RendererPreference.Wpf, "Compatibility fallback."),
-                new RendererOption("D3D11 AirSpace", RendererPreference.D3D11AirSpace, "Experimental explicit path.")
+                new RendererOption("D3D11 AirSpace", RendererPreference.D3D11AirSpace, "Experimental explicit path."),
+                new RendererOption("D3D11 ShareD3D9", RendererPreference.D3D11ShareD3D9, "Experimental D3D11-led render path presented through D3D9 shared surfaces.")
             };
 
             RendererCombo.ItemsSource = _rendererOptions;

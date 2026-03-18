@@ -1,5 +1,6 @@
 #include "D2DTextRenderer.h"
 
+#include <d2d1helper.h>
 #include <chrono>
 
 #pragma comment(lib, "d2d1.lib")
@@ -69,6 +70,16 @@ HRESULT D2DTextRenderer::EnsureDeviceResources(ID3D11Device* device) {
     textFormatCache_ = TextFormatCacheStore(dwriteFactory_.Get());
   }
 
+  if (textRenderingParams_ == nullptr) {
+    HRESULT hr = dwriteFactory_->CreateCustomRenderingParams(
+        2.2f, 1.0f, 1.0f, DWRITE_PIXEL_GEOMETRY_RGB,
+        DWRITE_RENDERING_MODE_CLEARTYPE_NATURAL_SYMMETRIC,
+        textRenderingParams_.ReleaseAndGetAddressOf());
+    if (FAILED(hr) || textRenderingParams_ == nullptr) {
+      return FAILED(hr) ? hr : E_FAIL;
+    }
+  }
+
   if (d2dDevice_ == nullptr || d2dContext_ == nullptr) {
     ComPtr<IDXGIDevice> dxgiDevice;
     HRESULT hr = device->QueryInterface(
@@ -135,7 +146,10 @@ HRESULT D2DTextRenderer::CreateTargetFromTexture(ID3D11Texture2D* targetTexture,
   }
 
   d2dContext_->SetTarget(d2dTargetBitmap_.Get());
-  d2dContext_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+  d2dContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+  d2dContext_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+  d2dContext_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+  d2dContext_->SetTextRenderingParams(textRenderingParams_.Get());
 
   D2D1_COLOR_F white = {1.0f, 1.0f, 1.0f, 1.0f};
   hr = d2dContext_->CreateSolidColorBrush(
@@ -166,6 +180,7 @@ HRESULT D2DTextRenderer::DrawTextBatch(ID3D11DeviceContext* d3dContext,
   }
 
   d2dContext_->BeginDraw();
+  d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
 
   HRESULT result = S_OK;
   const auto recordStart = std::chrono::steady_clock::now();
@@ -193,7 +208,7 @@ HRESULT D2DTextRenderer::DrawTextBatch(ID3D11DeviceContext* d3dContext,
     d2dContext_->DrawTextW(
         item.text.c_str(), static_cast<UINT32>(item.text.size()), textFormat,
         &layoutRect, solidBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP,
-        DWRITE_MEASURING_MODE_NATURAL);
+        DWRITE_MEASURING_MODE_GDI_NATURAL);
   }
   const auto recordEnd = std::chrono::steady_clock::now();
   if (stats != nullptr) {
@@ -228,6 +243,7 @@ void D2DTextRenderer::ReleaseDeviceResources() {
   d2dDevice_.Reset();
   d2dFactory_.Reset();
   dwriteFactory_.Reset();
+  textRenderingParams_.Reset();
   d3dDevice_.Reset();
   textFormatCache_ = TextFormatCacheStore(nullptr);
 }

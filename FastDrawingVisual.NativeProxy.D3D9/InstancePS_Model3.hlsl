@@ -97,12 +97,12 @@ float4 main(PSInput input) : COLOR0
     }
     else if (type < 2.5f)
     {
-        coverage = FillCoverageFromEllipse(input.local, input.halfSize);
+        coverage = FillCoverageFromEllipse(input.local, input.data0.xy);
         color = input.fillColor;
     }
     else if (type < 3.5f)
     {
-        coverage = StrokeCoverageFromEllipse(input.local, input.halfSize, strokeWidth);
+        coverage = StrokeCoverageFromEllipse(input.local, input.data0.xy, strokeWidth);
         color = input.strokeColor;
     }
     else

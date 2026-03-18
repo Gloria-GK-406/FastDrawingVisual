@@ -27,6 +27,7 @@ PSInput main(VSInput input)
     float2 halfSize = input.bounds.zw * 0.5f;
     float2 center = input.bounds.xy + halfSize;
     float2 pixelPos = center + input.quad * halfSize;
+    pixelPos -= float2(0.5f, 0.5f);
 
     float clipX = (pixelPos.x / viewportSize.x) * 2.0f - 1.0f;
     float clipY = 1.0f - (pixelPos.y / viewportSize.y) * 2.0f;

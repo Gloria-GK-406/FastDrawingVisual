@@ -29,6 +29,7 @@ namespace FastDrawingVisual
                 RendererPreference.Skia => capability.CanUseSkia,
                 RendererPreference.D3D9 => capability.CanUseNativeD3D9,
                 RendererPreference.D3D11AirSpace => capability.CanUseDCompD3D11,
+                RendererPreference.D3D11ShareD3D9 => capability.CanUseD3D11ShareD3D9,
                 RendererPreference.Wpf => true,
                 _ => false,
             };
@@ -114,6 +115,8 @@ namespace FastDrawingVisual
         public bool CanUseNativeD3D9 => HasD3D9 && HasNativeD3D9Bridge;
 
         public bool CanUseDCompD3D11 => IsWindows10OrGreater && HasD3D11 && HasNativeD3D11Bridge && HasDCompPresentation;
+
+        public bool CanUseD3D11ShareD3D9 => HasD3D9 && HasD3D11 && HasNativeD3D11Bridge;
     }
 
     internal static class NativeD3D9BackendProbe

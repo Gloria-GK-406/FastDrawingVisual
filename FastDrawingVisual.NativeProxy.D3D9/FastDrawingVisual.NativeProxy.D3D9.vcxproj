@@ -114,7 +114,7 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d9.lib;d3dx9d.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d9.lib;d3d11.lib;dxgi.lib;d3dx9d.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -133,7 +133,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d9.lib;d3dx9.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d9.lib;d3d11.lib;dxgi.lib;d3dx9.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -149,7 +149,7 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d9.lib;d3dx9d.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d9.lib;d3d11.lib;dxgi.lib;d3dx9d.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -168,7 +168,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d9.lib;d3dx9.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d9.lib;d3d11.lib;dxgi.lib;d3dx9.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -218,6 +218,10 @@
     </ProjectReference>
     <ProjectReference Include="..\FastDrawingVisual.NativeProxy.Shared\FastDrawingVisual.NativeProxy.Shared.vcxproj">
       <Project>{AD473786-9CD6-4DD2-AE55-DA642E40BA9D}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\FastDrawingVisual.NativeProxy.TextD2D\FastDrawingVisual.NativeProxy.TextD2D.vcxproj">
+      <Project>{9D851C37-A4C1-4D92-A41D-18814E5B7F53}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\FastDrawingVisual.LogCore\FastDrawingVisual.LogCore.vcxproj">

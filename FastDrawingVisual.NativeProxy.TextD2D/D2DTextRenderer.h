@@ -52,6 +52,7 @@ class D2DTextRenderer final {
   ComPtr<ID2D1Bitmap1> d2dTargetBitmap_ = nullptr;
   ComPtr<ID2D1SolidColorBrush> solidBrush_ = nullptr;
   ComPtr<IDWriteFactory> dwriteFactory_ = nullptr;
+  ComPtr<IDWriteRenderingParams> textRenderingParams_ = nullptr;
   ComPtr<ID3D11Device> d3dDevice_ = nullptr;
   TextFormatCacheStore textFormatCache_;
 };

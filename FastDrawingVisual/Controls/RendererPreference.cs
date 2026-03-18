@@ -30,5 +30,10 @@ namespace FastDrawingVisual.Controls
         /// This mode integrates best with WPF and serves as the most compatible fallback.
         /// </summary>
         Wpf = 4,
+        /// <summary>
+        /// Uses a D3D11-led renderer that exports shared surfaces for D3D9/D3DImage presentation.
+        /// This mode is experimental and intended for D3D9-vs-D3D11-led comparison.
+        /// </summary>
+        D3D11ShareD3D9 = 5,
     }
 }

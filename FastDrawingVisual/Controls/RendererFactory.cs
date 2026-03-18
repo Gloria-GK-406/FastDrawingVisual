@@ -45,6 +45,7 @@ namespace FastDrawingVisual.Controls
                 RendererPreference.Skia => TryCreateSkia() ?? new WpfFallbackRenderer(),
                 RendererPreference.D3D9 => TryCreateNativeD3D9() ?? new WpfFallbackRenderer(),
                 RendererPreference.D3D11AirSpace => TryCreateDCompD3D11() ?? new WpfFallbackRenderer(),
+                RendererPreference.D3D11ShareD3D9 => TryCreateD3D11ShareD3D9() ?? new WpfFallbackRenderer(),
                 RendererPreference.Wpf => new WpfFallbackRenderer(),
                 _ => CreateAuto(capability),
             };
@@ -82,6 +83,19 @@ namespace FastDrawingVisual.Controls
             try
             {
                 return new RenderComposition(new D3D11SwapChainBackend(), new DCompPresenter());
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static IRenderer? TryCreateD3D11ShareD3D9()
+        {
+            try
+            {
+                return new RenderComposition(new D3D11ShareD3D9Backend(), new D3DImagePresenter());
             }
             catch
             {

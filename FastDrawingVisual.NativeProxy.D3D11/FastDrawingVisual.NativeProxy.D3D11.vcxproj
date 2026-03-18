@@ -114,7 +114,7 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;d3d9.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -133,7 +133,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;d3d9.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -149,7 +149,7 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;d3d9.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -168,13 +168,17 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\FastDrawingVisual.LogCore\artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;$(SolutionDir)artifacts\FastDrawingVisual.LogCore\$(Configuration)\$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;d3d9.lib;dxgi.lib;FastDrawingVisual.LogCore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="D3DBatchDraw.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
+    <ClCompile Include="D3D11ShareD3D9Renderer.cpp">
+      <CompileAsManaged>false</CompileAsManaged>
+    </ClCompile>
+    <ClCompile Include="D3D11ShareD3D9Backend.cpp" />
     <ClCompile Include="D3D11SwapChainRenderer.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
@@ -205,6 +209,8 @@
     <ClInclude Include="D3DBatchDraw.h" />
     <ClInclude Include="D3DBatchTypes.h" />
     <ClInclude Include="D3DBatchDrawTypes.h" />
+    <ClInclude Include="D3D11ShareD3D9Renderer.h" />
+    <ClInclude Include="D3D11ShareD3D9Backend.h" />
     <ClInclude Include="D3D11SwapChainRenderer.h" />
     <ClInclude Include="D3D11SwapChainBackend.h" />
   </ItemGroup>

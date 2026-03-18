@@ -36,6 +36,8 @@ namespace FastDrawingVisual.Controls
 
         public FastDrawingVisual()
         {
+            UseLayoutRounding = true;
+            SnapsToDevicePixels = true;
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
