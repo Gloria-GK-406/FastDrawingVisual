@@ -12,6 +12,7 @@ using RectInstance = fdv::nativeproxy::shared::batch::RectInstance;
 using EllipseInstance = fdv::nativeproxy::shared::batch::EllipseInstance;
 using TextBatchItem = fdv::nativeproxy::shared::batch::TextBatchItem;
 using BatchCommandStats = fdv::nativeproxy::shared::batch::BatchCommandStats;
+using ImageBatchItem = fdv::nativeproxy::shared::batch::ImageBatchItem;
 using BatchCompileStats = fdv::nativeproxy::shared::batch::BatchCompileStats;
 using CompiledBatchView = fdv::nativeproxy::shared::batch::CompiledBatchView;
 

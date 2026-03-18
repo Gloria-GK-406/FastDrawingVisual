@@ -22,6 +22,7 @@ using RendererLockGuard = fdv::nativeproxy::shared::RendererLockGuard;
 
 struct D3D11SwapChainRendererState;
 struct SubmitFrameDiagnostics;
+struct D3D11FrameTask;
 
 class D3D11SwapChainRenderer final {
  public:
@@ -48,20 +49,16 @@ class D3D11SwapChainRenderer final {
   HRESULT SubmitLayeredCommandsAndPresent(
       const LayeredFramePacket* framePacket);
   HRESULT BeginSubmitFrame(void*& currentRtv);
-  HRESULT SubmitCompiledBatches(const LayerPacket& layer, int layerIndex,
-                                void* currentRtv,
-                                SubmitFrameDiagnostics& diagnostics);
+  HRESULT CollectFrameTask(const LayeredFramePacket* framePacket,
+                           D3D11FrameTask& task,
+                           SubmitFrameDiagnostics& diagnostics);
   void RecordFramePerformance(double drawDurationMs);
 
-  HRESULT CreateDeviceAndSwapChain();
   void ReleaseRendererResources();
   void ReleaseRenderTargetResources();
   HRESULT ResizeSwapChain(int width, int height);
-  HRESULT EnsureFactory();
   HRESULT CreateSwapChain();
-  HRESULT EnsureTextRenderer();
   HRESULT CreateRenderTarget();
-  HRESULT CreateDrawPipeline();
 
  private:
   D3D11SwapChainRendererState* state_ = nullptr;
@@ -80,6 +77,7 @@ class D3D11SwapChainRenderer final {
   int presentDurationMetricId_ = 0;
   std::uint64_t lastPresentQpc_ = 0;
   std::uint64_t submittedFrameCount_ = 0;
+  bool sharedManagerClientRegistered_ = false;
 
   bool csInitialized_ = false;
   CRITICAL_SECTION cs_{};

@@ -13,6 +13,9 @@
     <ClCompile Include="D3D11SwapChainBackend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="D3D11DeviceManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="D3D11SwapChainRenderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -38,10 +41,16 @@
     <ClInclude Include="D3DBatchDrawTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="D3DTaskType.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="D3D11ShareD3D9Renderer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="D3D11ShareD3D9Backend.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D11DeviceManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="D3D11SwapChainRenderer.h">
@@ -63,3 +72,4 @@
     </Filter>
   </ItemGroup>
 </Project>
+

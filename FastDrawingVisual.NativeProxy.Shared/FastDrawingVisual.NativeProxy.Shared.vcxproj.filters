@@ -12,6 +12,9 @@
     <ClInclude Include="BatchTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="D3DFrameTaskTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="FramePacket.h">
       <Filter>Header Files</Filter>
     </ClInclude>

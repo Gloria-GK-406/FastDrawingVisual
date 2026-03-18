@@ -1,47 +1,24 @@
 #include "D3D11SwapChainRenderer.h"
 #include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
-#include "../FastDrawingVisual.NativeProxy.TextD2D/D2DTextRenderer.h"
 #include "BatchComplier.h"
-#include "D3DBatchDraw.h"
+#include "D3D11DeviceManager.h"
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cwchar>
-#include <d3dcompiler.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <memory>
 #include <vector>
 #include <wrl/client.h>
 
-#pragma comment(lib, "d3dcompiler.lib")
-
 namespace fdv::d3d11 {
 using Microsoft::WRL::ComPtr;
 
 struct D3D11SwapChainRendererState {
-  ComPtr<ID3D11Device> device = nullptr;
-  ComPtr<ID3D11DeviceContext> context = nullptr;
-  ComPtr<IDXGIFactory2> dxgiFactory = nullptr;
+  D3D11DeviceManager* deviceManager = nullptr;
   ComPtr<IDXGISwapChain1> swapChain = nullptr;
   ComPtr<ID3D11RenderTargetView> rtv0 = nullptr;
-  ComPtr<ID3D11VertexShader> instanceVertexShader = nullptr;
-  ComPtr<ID3D11PixelShader> instancePixelShader = nullptr;
-  ComPtr<ID3D11InputLayout> instanceInputLayout = nullptr;
-  ComPtr<ID3D11BlendState> blendState = nullptr;
-  ComPtr<ID3D11RasterizerState> rasterizerState = nullptr;
-  ComPtr<ID3D11Buffer> unitQuadVertexBuffer = nullptr;
-  ComPtr<ID3D11Buffer> fillEllipseVertexBuffer = nullptr;
-  UINT fillEllipseVertexCount = 0;
-  ComPtr<ID3D11Buffer> strokeEllipseVertexBuffer = nullptr;
-  UINT strokeEllipseVertexCount = 0;
-  ComPtr<ID3D11Buffer> dynamicVertexBuffer = nullptr;
-  UINT dynamicVertexCapacityBytes = 0;
-  ComPtr<ID3D11Buffer> dynamicInstanceBuffer = nullptr;
-  UINT dynamicInstanceCapacityBytes = 0;
-  ComPtr<ID3D11Buffer> viewConstantsBuffer = nullptr;
-  std::unique_ptr<fdv::textd2d::D2DTextRenderer> textRenderer;
   batch::BatchCompiler batchCompiler;
 };
 
@@ -101,11 +78,7 @@ constexpr const wchar_t* kDrawMetricFormat =
 constexpr const wchar_t* kFpsMetricFormat =
     L"name={name} periodSec={periodSec}s samples={count} avgFps={avg} minFps={min} maxFps={max}";
 constexpr UINT kBufferCount = 3;
-constexpr UINT kCreationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 constexpr DXGI_FORMAT kSwapChainFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
-constexpr const wchar_t* kInstanceVertexShaderObject = L"Shader\\InstanceVS_Model4.cso";
-constexpr const wchar_t* kInstancePixelShaderObject = L"Shader\\InstancePS_Model4.cso";
-constexpr int kEllipseSegmentCount = 48;
 
 std::uint64_t QueryQpcNow() {
   LARGE_INTEGER value{};
@@ -122,156 +95,42 @@ std::uint64_t QueryQpcFrequency() {
   return cached;
 }
 
-HRESULT LoadShaderBlob(const wchar_t* filePath, ComPtr<ID3DBlob>& blobOut) {
-  if (filePath == nullptr || *filePath == L'\0') {
-    return E_INVALIDARG;
-  }
-
-  blobOut.Reset();
-  const HRESULT hr =
-      D3DReadFileToBlob(filePath, blobOut.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || blobOut == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-  return S_OK;
-}
-
-HRESULT EnsureDynamicBuffer(ID3D11Device* device, UINT byteWidth, UINT bindFlags,
-                            ComPtr<ID3D11Buffer>& bufferOut) {
-  if (device == nullptr || byteWidth == 0) {
-    return E_INVALIDARG;
-  }
-
-  if (bufferOut != nullptr) {
-    return S_OK;
-  }
-
-  D3D11_BUFFER_DESC bufferDesc = {};
-  bufferDesc.ByteWidth = byteWidth;
-  bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
-  bufferDesc.BindFlags = bindFlags;
-  bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-
-  const HRESULT hr =
-      device->CreateBuffer(&bufferDesc, nullptr, bufferOut.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || bufferOut == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  return S_OK;
-}
-
-HRESULT EnsureUnitQuadVertexBuffer(ID3D11Device* device,
-                                   ComPtr<ID3D11Buffer>& bufferOut) {
-  if (device == nullptr) {
-    return E_INVALIDARG;
-  }
-
-  if (bufferOut != nullptr) {
-    return S_OK;
-  }
-
-  constexpr float kUnitQuadVertices[8] = {
-      -1.0f, -1.0f,
-       1.0f, -1.0f,
-      -1.0f,  1.0f,
-       1.0f,  1.0f,
-  };
-
-  D3D11_BUFFER_DESC bufferDesc = {};
-  bufferDesc.ByteWidth = static_cast<UINT>(sizeof(kUnitQuadVertices));
-  bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
-  bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-
-  D3D11_SUBRESOURCE_DATA initialData = {};
-  initialData.pSysMem = kUnitQuadVertices;
-
-  const HRESULT hr =
-      device->CreateBuffer(&bufferDesc, &initialData,
-                           bufferOut.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || bufferOut == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  return S_OK;
-}
-
-HRESULT EnsureEllipseTemplateVertexBuffer(
-    ID3D11Device* device, bool stroke, ComPtr<ID3D11Buffer>& bufferOut,
-    UINT& vertexCountOut) {
-  if (device == nullptr) {
-    return E_INVALIDARG;
-  }
-
-  if (bufferOut != nullptr && vertexCountOut > 0) {
-    return S_OK;
-  }
-
-  struct EllipseTemplateVertex {
-    float x;
-    float y;
-    float blend;
-  };
-
-  std::vector<EllipseTemplateVertex> vertices;
-  if (!stroke) {
-    vertices.reserve(static_cast<std::size_t>(kEllipseSegmentCount) * 3u);
-    for (int i = 0; i < kEllipseSegmentCount; ++i) {
-      const float a0 = (2.0f * 3.14159265358979323846f * static_cast<float>(i)) /
-                       static_cast<float>(kEllipseSegmentCount);
-      const float a1 =
-          (2.0f * 3.14159265358979323846f * static_cast<float>(i + 1)) /
-          static_cast<float>(kEllipseSegmentCount);
-      vertices.push_back({0.0f, 0.0f, 0.0f});
-      vertices.push_back({static_cast<float>(std::cos(a0)),
-                          static_cast<float>(std::sin(a0)), 1.0f});
-      vertices.push_back({static_cast<float>(std::cos(a1)),
-                          static_cast<float>(std::sin(a1)), 1.0f});
-    }
-  } else {
-    vertices.reserve(static_cast<std::size_t>(kEllipseSegmentCount) * 6u);
-    for (int i = 0; i < kEllipseSegmentCount; ++i) {
-      const float a0 = (2.0f * 3.14159265358979323846f * static_cast<float>(i)) /
-                       static_cast<float>(kEllipseSegmentCount);
-      const float a1 =
-          (2.0f * 3.14159265358979323846f * static_cast<float>(i + 1)) /
-          static_cast<float>(kEllipseSegmentCount);
-      const float c0 = static_cast<float>(std::cos(a0));
-      const float s0 = static_cast<float>(std::sin(a0));
-      const float c1 = static_cast<float>(std::cos(a1));
-      const float s1 = static_cast<float>(std::sin(a1));
-      vertices.push_back({c0, s0, 1.0f});
-      vertices.push_back({c1, s1, 1.0f});
-      vertices.push_back({c0, s0, 0.0f});
-      vertices.push_back({c1, s1, 1.0f});
-      vertices.push_back({c1, s1, 0.0f});
-      vertices.push_back({c0, s0, 0.0f});
-    }
-  }
-
-  D3D11_BUFFER_DESC bufferDesc = {};
-  bufferDesc.ByteWidth =
-      static_cast<UINT>(vertices.size() * sizeof(EllipseTemplateVertex));
-  bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
-  bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-
-  D3D11_SUBRESOURCE_DATA initialData = {};
-  initialData.pSysMem = vertices.data();
-
-  const HRESULT hr =
-      device->CreateBuffer(&bufferDesc, &initialData,
-                           bufferOut.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || bufferOut == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  vertexCountOut = static_cast<UINT>(vertices.size());
-  return S_OK;
-}
-
 double DurationMs(const std::chrono::steady_clock::time_point& start,
                   const std::chrono::steady_clock::time_point& end) {
   return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+HRESULT CreateDxgiFactoryFromDevice(ID3D11Device* device,
+                                    ComPtr<IDXGIFactory2>& factoryOut) {
+  if (device == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  factoryOut.Reset();
+
+  ComPtr<IDXGIDevice> dxgiDevice;
+  ComPtr<IDXGIAdapter> adapter;
+
+  HRESULT hr = device->QueryInterface(__uuidof(IDXGIDevice),
+                                      reinterpret_cast<void**>(
+                                          dxgiDevice.GetAddressOf()));
+  if (FAILED(hr) || dxgiDevice == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  hr = dxgiDevice->GetAdapter(adapter.GetAddressOf());
+  if (FAILED(hr) || adapter == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  hr = adapter->GetParent(__uuidof(IDXGIFactory2),
+                          reinterpret_cast<void**>(
+                              factoryOut.ReleaseAndGetAddressOf()));
+  if (FAILED(hr) || factoryOut == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  return S_OK;
 }
 
 void RegisterDurationMetric(int& metricId, const void* renderer,
@@ -373,6 +232,39 @@ void LogStageFailure(const void* renderer, std::uint64_t frameId,
   FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
   FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
 }
+
+int EstimateFrameCommandCount(const LayeredFramePacket* framePacket) {
+  if (framePacket == nullptr) {
+    return 0;
+  }
+
+  int commandCount = 0;
+  for (int layerIndex = 0; layerIndex < LayeredFramePacket::kMaxLayerCount;
+       ++layerIndex) {
+    commandCount = (std::max)(0, commandCount) +
+                   (std::max)(0, framePacket->layers[layerIndex].commandCount);
+  }
+  return commandCount;
+}
+
+void AppendImageBatchItems(const std::vector<batch::ImageBatchItem>& source,
+                           D3D11FrameTask& task) {
+  task.imageItems.insert(task.imageItems.end(), source.begin(), source.end());
+}
+
+HRESULT WaitForTaskCompletion(
+    const std::shared_ptr<D3DFrameTaskCompletion>& completion,
+    D3DFrameTaskResult& result) {
+  if (completion == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  std::unique_lock<std::mutex> lock(completion->mutex);
+  completion->condition.wait(lock, [&completion]() {
+    return completion->completed;
+  });
+  return result.hr;
+}
 } // namespace
 
 void D3D11SwapChainRenderer::RegisterMetrics() {
@@ -424,214 +316,189 @@ void D3D11SwapChainRenderer::UnregisterMetrics() {
 }
 
 HRESULT D3D11SwapChainRenderer::BeginSubmitFrame(void*& currentRtv) {
-  if (state_ == nullptr || state_->context == nullptr ||
-      state_->swapChain == nullptr || state_->rtv0 == nullptr ||
-      width_ <= 0 || height_ <= 0) {
+  if (state_->rtv0 == nullptr || width_ <= 0 || height_ <= 0) {
     return E_UNEXPECTED;
   }
 
-  const HRESULT pipelineHr = CreateDrawPipeline();
-  if (FAILED(pipelineHr)) {
-    return pipelineHr;
-  }
-
-  ID3D11RenderTargetView* nativeRtv = state_->rtv0.Get();
-  currentRtv = nativeRtv;
-  state_->context->OMSetRenderTargets(1, &nativeRtv, nullptr);
-
-  D3D11_VIEWPORT viewport = {};
-  viewport.TopLeftX = 0.0f;
-  viewport.TopLeftY = 0.0f;
-  viewport.Width = static_cast<float>(width_);
-  viewport.Height = static_cast<float>(height_);
-  viewport.MinDepth = 0.0f;
-  viewport.MaxDepth = 1.0f;
-  state_->context->RSSetViewports(1, &viewport);
+  currentRtv = state_->rtv0.Get();
   return S_OK;
 }
 
-HRESULT D3D11SwapChainRenderer::SubmitCompiledBatches(
-    const LayerPacket& layer, int layerIndex, void* currentRtv,
+HRESULT D3D11SwapChainRenderer::CollectFrameTask(
+    const LayeredFramePacket* framePacket, D3D11FrameTask& task,
     SubmitFrameDiagnostics& diagnostics) {
-  if (state_ == nullptr) {
+  if (framePacket == nullptr) {
     return E_UNEXPECTED;
   }
 
-  if (layer.commandData == nullptr || layer.commandBytes <= 0) {
-    return S_OK;
+  auto& sharedManager = *state_->deviceManager;
+  const int estimatedCommandCount = EstimateFrameCommandCount(framePacket);
+  const UINT requiredInstanceBytes =
+      estimatedCommandCount > 0
+          ? static_cast<UINT>(estimatedCommandCount) *
+                static_cast<UINT>(sizeof(batch::ShapeInstance))
+          : 0u;
+
+  ComPtr<ID3D11Buffer> instanceBuffer;
+  UINT instanceBufferCapacityBytes = 0;
+  const HRESULT bufferHr = sharedManager.CreateDynamicInstanceBuffer(
+      requiredInstanceBytes, instanceBuffer, instanceBufferCapacityBytes);
+  if (FAILED(bufferHr)) {
+    return bufferHr;
   }
 
-  ++diagnostics.layerCount;
-  auto* nativeRtv = static_cast<ID3D11RenderTargetView*>(currentRtv);
-  state_->batchCompiler.Reset(width_, height_, layer.commandData,
-                              layer.commandBytes, layer.blobData,
-                              layer.blobBytes);
+  task.instanceBuffer = instanceBuffer;
+  task.shapeInstanceCount = 0;
+  task.textItems.clear();
+  task.imageItems.clear();
+  task.hasClear = false;
+  std::fill(std::begin(task.clearColor), std::end(task.clearColor), 0.0f);
+  UINT instanceBufferUsedBytes = 0;
 
-  batch::CompiledBatchView batch{};
-  HRESULT batchHr = S_OK;
-  int batchIndex = 0;
-  while (true) {
-    const auto compileStart = std::chrono::steady_clock::now();
-    batchHr = state_->batchCompiler.TryGetNextBatch(batch);
-    const auto compileEnd = std::chrono::steady_clock::now();
-    diagnostics.compileMs += DurationMs(compileStart, compileEnd);
-    AccumulateCompileStats(diagnostics, state_->batchCompiler.lastBatchStats());
-    if (batchHr != S_OK) {
-      break;
+  D3D11_MAPPED_SUBRESOURCE mapped = {};
+  std::uint8_t* mappedBytes = nullptr;
+  ComPtr<ID3D11DeviceContext> uploadContext;
+  bool instanceBufferMapped = false;
+  std::unique_ptr<ExecutionLockGuard<D3D11DeviceManager>> executionLock;
+  if (task.instanceBuffer != nullptr) {
+    executionLock =
+        std::make_unique<ExecutionLockGuard<D3D11DeviceManager>>(
+            sharedManager);
+    uploadContext = sharedManager.GetImmediateContext();
+    if (uploadContext == nullptr) {
+      return E_UNEXPECTED;
     }
 
-    ++batchIndex;
-    switch (batch.kind) {
-    case batch::BatchKind::Clear:
-      ++diagnostics.clearBatchCount;
-      state_->context->ClearRenderTargetView(nativeRtv, batch.clearColor);
-      break;
+    const HRESULT mapHr =
+        uploadContext->Map(task.instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD,
+                           0, &mapped);
+    if (FAILED(mapHr) || mapped.pData == nullptr) {
+      return FAILED(mapHr) ? mapHr : E_FAIL;
+    }
+    mappedBytes = static_cast<std::uint8_t*>(mapped.pData);
+    instanceBufferMapped = true;
+  }
 
-    case batch::BatchKind::Triangles: {
-      return E_NOTIMPL;
+  for (int layerIndex = 0; layerIndex < LayeredFramePacket::kMaxLayerCount;
+       ++layerIndex) {
+    const auto& layer = framePacket->layers[layerIndex];
+    if (layer.commandData == nullptr || layer.commandBytes <= 0) {
+      continue;
     }
 
-    case batch::BatchKind::ShapeInstances: {
-      ++diagnostics.shapeBatchCount;
-      const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
-      const int shapeInstanceCount = static_cast<int>(shapeInstances.size());
-      draw::InstanceBatchDrawContext instanceContext{};
-      instanceContext.context = state_->context;
-      instanceContext.inputLayout = state_->instanceInputLayout;
-      instanceContext.vertexShader = state_->instanceVertexShader;
-      instanceContext.pixelShader = state_->instancePixelShader;
-      instanceContext.blendState = state_->blendState;
-      instanceContext.rasterizerState = state_->rasterizerState;
-      instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer;
-      instanceContext.geometryVertexStrideBytes = sizeof(float) * 2;
-      instanceContext.geometryVertexCount = 4;
-      instanceContext.instanceBuffer = state_->dynamicInstanceBuffer;
-      instanceContext.instanceBufferCapacityBytes =
-          state_->dynamicInstanceCapacityBytes;
-      instanceContext.viewConstantsBuffer = state_->viewConstantsBuffer;
-      instanceContext.viewportWidth = static_cast<float>(width_);
-      instanceContext.viewportHeight = static_cast<float>(height_);
+    ++diagnostics.layerCount;
+    state_->batchCompiler.Reset(width_, height_, layer.commandData,
+                                layer.commandBytes, layer.blobData,
+                                layer.blobBytes);
 
-      const draw::ShapeInstanceData instanceData{shapeInstances.data(),
-                                                 shapeInstanceCount};
-      draw::InstanceBatchDrawStats instanceStats{};
-      const auto instanceStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = draw::DrawShapeInstanceBatch(instanceContext,
-                                                          instanceData,
-                                                          &instanceStats);
-      const auto instanceEnd = std::chrono::steady_clock::now();
-      diagnostics.triangleCpuMs += DurationMs(instanceStart, instanceEnd);
-      diagnostics.triangleEnsureVertexBufferMs +=
-          instanceStats.ensureInstanceBufferMs;
-      diagnostics.triangleUploadMs += instanceStats.uploadInstanceDataMs;
-      diagnostics.triangleDrawCallMs += instanceStats.issueDrawMs;
-      diagnostics.vertexBytesUploaded += instanceStats.uploadedBytes;
-      diagnostics.maxVertexBufferCapacityBytes =
-          (std::max)(diagnostics.maxVertexBufferCapacityBytes,
-                     instanceStats.instanceBufferCapacityBytes);
-      if (instanceStats.resizedInstanceBuffer) {
-        ++diagnostics.vertexBufferResizeCount;
+    batch::CompiledBatchView batch{};
+    HRESULT batchHr = S_OK;
+    while (true) {
+      const auto compileStart = std::chrono::steady_clock::now();
+      batchHr = state_->batchCompiler.TryGetNextBatch(batch);
+      const auto compileEnd = std::chrono::steady_clock::now();
+      diagnostics.compileMs += DurationMs(compileStart, compileEnd);
+      AccumulateCompileStats(diagnostics, state_->batchCompiler.lastBatchStats());
+      if (batchHr != S_OK) {
+        break;
       }
-      state_->dynamicInstanceBuffer = instanceContext.instanceBuffer;
-      state_->dynamicInstanceCapacityBytes =
-          instanceContext.instanceBufferCapacityBytes;
-      if (FAILED(drawHr)) {
-        wchar_t message[512]{};
-        swprintf_s(
-            message,
-            L"shape instance batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X instances=%d uploadedBytes=%u vbBytes=%u.",
-            static_cast<void*>(this), layerIndex, batchIndex,
-            static_cast<unsigned int>(drawHr), shapeInstanceCount,
-            instanceStats.uploadedBytes,
-            instanceStats.instanceBufferCapacityBytes);
-        FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
-        FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
-        return drawHr;
+
+      switch (batch.kind) {
+      case batch::BatchKind::Clear:
+        ++diagnostics.clearBatchCount;
+        task.hasClear = true;
+        std::copy(std::begin(batch.clearColor), std::end(batch.clearColor),
+                  std::begin(task.clearColor));
+        break;
+
+      case batch::BatchKind::Triangles:
+        if (instanceBufferMapped) {
+          uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+        }
+        return E_NOTIMPL;
+
+      case batch::BatchKind::ShapeInstances: {
+        ++diagnostics.shapeBatchCount;
+        const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
+        const UINT batchBytes =
+            static_cast<UINT>(shapeInstances.size()) *
+            static_cast<UINT>(sizeof(batch::ShapeInstance));
+        if (batchBytes > 0 &&
+            (mappedBytes == nullptr ||
+             instanceBufferUsedBytes + batchBytes >
+                 instanceBufferCapacityBytes)) {
+          if (instanceBufferMapped) {
+            uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+          }
+          return mappedBytes == nullptr ? E_UNEXPECTED : E_BOUNDS;
+        }
+
+        if (batchBytes > 0) {
+          std::memcpy(mappedBytes + instanceBufferUsedBytes,
+                      shapeInstances.data(), batchBytes);
+          instanceBufferUsedBytes += batchBytes;
+          task.shapeInstanceCount += static_cast<int>(shapeInstances.size());
+        }
+        diagnostics.maxVertexBufferCapacityBytes =
+            (std::max)(diagnostics.maxVertexBufferCapacityBytes,
+                       instanceBufferCapacityBytes);
+        diagnostics.vertexBytesUploaded = instanceBufferUsedBytes;
+        break;
       }
-      break;
+
+      case batch::BatchKind::Text: {
+        ++diagnostics.textBatchCount;
+        const auto& textItems = state_->batchCompiler.GetTextItems();
+        diagnostics.maxTextBatchItemCount =
+            (std::max)(diagnostics.maxTextBatchItemCount,
+                       static_cast<int>(textItems.size()));
+        task.textItems.insert(task.textItems.end(), textItems.begin(),
+                              textItems.end());
+        break;
+      }
+
+      case batch::BatchKind::Image: {
+        ++diagnostics.imageBatchCount;
+        const auto& imageItems = state_->batchCompiler.GetImageItems();
+        diagnostics.maxImageBatchItemCount =
+            (std::max)(diagnostics.maxImageBatchItemCount,
+                       static_cast<int>(imageItems.size()));
+        AppendImageBatchItems(imageItems, task);
+        break;
+      }
+
+      default:
+        if (instanceBufferMapped) {
+          uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+        }
+        return E_INVALIDARG;
+      }
     }
 
-    case batch::BatchKind::Text: {
-      ++diagnostics.textBatchCount;
-      const auto& textItems = state_->batchCompiler.GetTextItems();
-      const int textItemCount = static_cast<int>(textItems.size());
-      diagnostics.maxTextBatchItemCount =
-          (std::max)(diagnostics.maxTextBatchItemCount, textItemCount);
-      if (state_->textRenderer == nullptr) {
-        return E_UNEXPECTED;
+    if (batchHr != S_FALSE) {
+      if (instanceBufferMapped) {
+        uploadContext->Unmap(task.instanceBuffer.Get(), 0);
       }
-
-      fdv::textd2d::TextBatchDrawStats textStats{};
-      const auto textStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = state_->textRenderer->DrawTextBatch(
-          state_->context.Get(), textItems.data(), textItemCount, &textStats);
-      const auto textEnd = std::chrono::steady_clock::now();
-      diagnostics.textDrawMs += DurationMs(textStart, textEnd);
-      diagnostics.textFlushMs += textStats.flushMs;
-      diagnostics.textRecordMs += textStats.recordTextMs;
-      diagnostics.textEndDrawMs += textStats.endDrawMs;
-      if (FAILED(drawHr)) {
-        wchar_t message[512]{};
-        swprintf_s(
-            message,
-            L"text batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X items=%d.",
-            static_cast<void*>(this), layerIndex, batchIndex,
-            static_cast<unsigned int>(drawHr), textItemCount);
-        FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
-        FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
-        return drawHr;
-      }
-      break;
-    }
-
-    case batch::BatchKind::Image: {
-      ++diagnostics.imageBatchCount;
-      const auto& imageItems = state_->batchCompiler.GetImageItems();
-      const int imageItemCount = static_cast<int>(imageItems.size());
-      diagnostics.maxImageBatchItemCount =
-          (std::max)(diagnostics.maxImageBatchItemCount, imageItemCount);
-      if (state_->textRenderer == nullptr) {
-        return E_UNEXPECTED;
-      }
-
-      fdv::textd2d::ImageBatchDrawStats imageStats{};
-      const auto imageStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = state_->textRenderer->DrawImageBatch(
-          state_->context.Get(), imageItems.data(), imageItemCount, &imageStats);
-      const auto imageEnd = std::chrono::steady_clock::now();
-      diagnostics.imageDrawMs += DurationMs(imageStart, imageEnd);
-      diagnostics.imageFlushMs += imageStats.flushMs;
-      diagnostics.imageRecordMs += imageStats.recordImageMs;
-      diagnostics.imageEndDrawMs += imageStats.endDrawMs;
-      if (FAILED(drawHr)) {
-        wchar_t message[512]{};
-        swprintf_s(
-            message,
-            L"image batch failed renderer=0x%p layer=%d batch=%d hr=0x%08X items=%d.",
-            static_cast<void*>(this), layerIndex, batchIndex,
-            static_cast<unsigned int>(drawHr), imageItemCount);
-        FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
-        FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
-        return drawHr;
-      }
-      break;
-    }
+      const HRESULT hr = FAILED(batchHr) ? batchHr : E_INVALIDARG;
+      wchar_t message[512]{};
+      swprintf_s(
+          message,
+          L"batch compilation failed renderer=0x%p layer=%d hr=0x%08X commandBytes=%d blobBytes=%d compileMs=%.3f readMs=%.3f buildMs=%.3f.",
+          static_cast<void*>(this), layerIndex, static_cast<unsigned int>(hr),
+          layer.commandBytes, layer.blobBytes, diagnostics.compileMs,
+          diagnostics.commandReadMs, diagnostics.commandBuildMs);
+      FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
+      FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
+      return hr;
     }
   }
 
-  if (batchHr != S_FALSE) {
-    const HRESULT hr = FAILED(batchHr) ? batchHr : E_INVALIDARG;
-    wchar_t message[512]{};
-    swprintf_s(
-        message,
-        L"batch compilation failed renderer=0x%p layer=%d hr=0x%08X commandBytes=%d blobBytes=%d compileMs=%.3f readMs=%.3f buildMs=%.3f.",
-        static_cast<void*>(this), layerIndex, static_cast<unsigned int>(hr),
-        layer.commandBytes, layer.blobBytes, diagnostics.compileMs,
-        diagnostics.commandReadMs, diagnostics.commandBuildMs);
-    FDVLOG_Log(FDVLOG_LevelError, kLogCategory, message, false);
-    FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
-    return hr;
+  if (instanceBufferMapped) {
+    uploadContext->Unmap(task.instanceBuffer.Get(), 0);
   }
+
+  task.viewportWidth = static_cast<float>(width_);
+  task.viewportHeight = static_cast<float>(height_);
 
   return S_OK;
 }
@@ -719,23 +586,51 @@ HRESULT D3D11SwapChainRenderer::SubmitLayeredCommandsAndPresent(
     return beginHr;
   }
 
-  for (int layerIndex = 0; layerIndex < LayeredFramePacket::kMaxLayerCount;
-       ++layerIndex) {
-    const auto& layer = framePacket->layers[layerIndex];
-    if (layer.commandBytes <= 0 || layer.commandData == nullptr) {
-      continue;
-    }
-
-    const HRESULT submitHr =
-        SubmitCompiledBatches(layer, layerIndex, currentRtv, diagnostics);
-    if (FAILED(submitHr)) {
-      LogStageFailure(static_cast<void*>(this), frameId, L"submit_batches",
-                      submitHr, diagnostics, width_, height_);
-      return submitHr;
-    }
+  D3D11FrameTask task{};
+  task.renderTargetView =
+      static_cast<ID3D11RenderTargetView*>(currentRtv);
+  task.completion = std::make_shared<D3DFrameTaskCompletion>();
+  if (task.completion == nullptr) {
+    return E_OUTOFMEMORY;
   }
 
-  if (state_ == nullptr || state_->swapChain == nullptr) {
+  const HRESULT collectHr = CollectFrameTask(framePacket, task, diagnostics);
+  if (FAILED(collectHr)) {
+    LogStageFailure(static_cast<void*>(this), frameId, L"collect_frame_task",
+                    collectHr, diagnostics, width_, height_);
+    return collectHr;
+  }
+
+  D3DFrameTaskResult taskResult{};
+  task.completion->resultSink = &taskResult;
+  task.completion->completed = false;
+  const auto completion = task.completion;
+
+  const HRESULT submitTaskHr =
+      state_->deviceManager->SubmitFrame(std::move(task));
+  if (FAILED(submitTaskHr)) {
+    LogStageFailure(static_cast<void*>(this), frameId, L"submit_frame_task",
+                    submitTaskHr, diagnostics, width_, height_);
+    return submitTaskHr;
+  }
+
+  const HRESULT waitHr = WaitForTaskCompletion(completion, taskResult);
+  diagnostics.triangleCpuMs += taskResult.stats.shapeDrawMs;
+  diagnostics.textDrawMs += taskResult.stats.textDrawMs;
+  diagnostics.textFlushMs += taskResult.stats.textFlushMs;
+  diagnostics.textRecordMs += taskResult.stats.textRecordMs;
+  diagnostics.textEndDrawMs += taskResult.stats.textEndDrawMs;
+  diagnostics.imageDrawMs += taskResult.stats.imageDrawMs;
+  diagnostics.imageFlushMs += taskResult.stats.imageFlushMs;
+  diagnostics.imageRecordMs += taskResult.stats.imageRecordMs;
+  diagnostics.imageEndDrawMs += taskResult.stats.imageEndDrawMs;
+  if (FAILED(waitHr)) {
+    LogStageFailure(static_cast<void*>(this), frameId, L"wait_frame_task",
+                    waitHr, diagnostics, width_, height_);
+    return waitHr;
+  }
+
+  if (state_->swapChain == nullptr) {
     return E_UNEXPECTED;
   }
 
@@ -794,7 +689,9 @@ HRESULT D3D11SwapChainRenderer::SubmitLayeredCommandsAndPresent(
 
 D3D11SwapChainRenderer::D3D11SwapChainRenderer(int width, int height)
     : width_(width), height_(height) {
-  state_ = new (std::nothrow) D3D11SwapChainRendererState();
+  state_ = new D3D11SwapChainRendererState();
+  state_->deviceManager = &D3D11DeviceManager::Instance();
+
   InitializeCriticalSectionAndSpinCount(&cs_, 1000);
   csInitialized_ = true;
 }
@@ -811,43 +708,20 @@ D3D11SwapChainRenderer::~D3D11SwapChainRenderer() {
 }
 
 void D3D11SwapChainRenderer::ReleaseRenderTargetResources() {
-  if (state_ == nullptr) {
-    return;
-  }
-
-  if (state_->textRenderer != nullptr) {
-    state_->textRenderer->ReleaseRenderTargetResources();
-  }
   state_->rtv0.Reset();
 }
 
-HRESULT D3D11SwapChainRenderer::EnsureTextRenderer() {
-  if (state_ == nullptr || state_->device == nullptr) {
-    return E_UNEXPECTED;
-  }
-
-  if (state_->textRenderer == nullptr) {
-    state_->textRenderer = std::make_unique<fdv::textd2d::D2DTextRenderer>();
-    if (state_->textRenderer == nullptr) {
-      return E_OUTOFMEMORY;
-    }
-  }
-
-  return state_->textRenderer->EnsureDeviceResources(state_->device.Get());
-}
-
 HRESULT D3D11SwapChainRenderer::CreateRenderTarget() {
-  if (state_ == nullptr || state_->device == nullptr ||
-      state_->swapChain == nullptr) {
+  if (state_->swapChain == nullptr) {
     return E_UNEXPECTED;
-  }
-
-  const HRESULT ensureHr = EnsureTextRenderer();
-  if (FAILED(ensureHr)) {
-    return ensureHr;
   }
 
   ReleaseRenderTargetResources();
+
+  ComPtr<ID3D11Device> device = state_->deviceManager->GetDevice();
+  if (device == nullptr) {
+    return E_UNEXPECTED;
+  }
 
   ComPtr<ID3D11Texture2D> backBuffer;
   HRESULT hr = state_->swapChain->GetBuffer(
@@ -857,54 +731,25 @@ HRESULT D3D11SwapChainRenderer::CreateRenderTarget() {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
-  hr = state_->device->CreateRenderTargetView(
+  hr = device->CreateRenderTargetView(
       backBuffer.Get(), nullptr, state_->rtv0.ReleaseAndGetAddressOf());
   if (FAILED(hr) || state_->rtv0 == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
-
-  return state_->textRenderer->CreateTargetFromTexture(backBuffer.Get(),
-                                                       kSwapChainFormat);
-}
-
-HRESULT D3D11SwapChainRenderer::EnsureFactory() {
-  if (state_ == nullptr || state_->device == nullptr) {
-    return E_UNEXPECTED;
-  }
-
-  if (state_->dxgiFactory != nullptr) {
-    return S_OK;
-  }
-
-  ComPtr<IDXGIDevice> dxgiDevice;
-  ComPtr<IDXGIAdapter> adapter;
-
-  HRESULT hr = state_->device->QueryInterface(__uuidof(IDXGIDevice),
-                                       reinterpret_cast<void**>(
-                                           dxgiDevice.GetAddressOf()));
-  if (FAILED(hr) || dxgiDevice == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  hr = dxgiDevice->GetAdapter(adapter.GetAddressOf());
-  if (FAILED(hr) || adapter == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  hr = adapter->GetParent(__uuidof(IDXGIFactory2),
-                          reinterpret_cast<void**>(
-                              state_->dxgiFactory.ReleaseAndGetAddressOf()));
-  if (FAILED(hr) || state_->dxgiFactory == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
   return S_OK;
 }
 
 HRESULT D3D11SwapChainRenderer::CreateSwapChain() {
-  if (state_ == nullptr || state_->device == nullptr ||
-      state_->dxgiFactory == nullptr) {
+  ComPtr<ID3D11Device> device = state_->deviceManager->GetDevice();
+  ComPtr<IDXGIFactory2> dxgiFactory;
+  if (device == nullptr) {
     return E_UNEXPECTED;
+  }
+
+  const HRESULT ensureFactoryHr =
+      CreateDxgiFactoryFromDevice(device.Get(), dxgiFactory);
+  if (FAILED(ensureFactoryHr)) {
+    return ensureFactoryHr;
   }
 
   DXGI_SWAP_CHAIN_DESC1 swapDesc = {};
@@ -921,8 +766,8 @@ HRESULT D3D11SwapChainRenderer::CreateSwapChain() {
   swapDesc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
   swapDesc.Flags = 0;
 
-  HRESULT hr = state_->dxgiFactory->CreateSwapChainForComposition(
-      state_->device.Get(), &swapDesc, nullptr,
+  HRESULT hr = dxgiFactory->CreateSwapChainForComposition(
+      device.Get(), &swapDesc, nullptr,
       state_->swapChain.ReleaseAndGetAddressOf());
   if (FAILED(hr) || state_->swapChain == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
@@ -931,219 +776,44 @@ HRESULT D3D11SwapChainRenderer::CreateSwapChain() {
   return S_OK;
 }
 
-HRESULT D3D11SwapChainRenderer::CreateDrawPipeline() {
-  if (state_ == nullptr || state_->device == nullptr) {
-    return E_UNEXPECTED;
-  }
-
-  if (state_->instanceVertexShader != nullptr &&
-      state_->instancePixelShader != nullptr &&
-      state_->instanceInputLayout != nullptr &&
-      state_->unitQuadVertexBuffer != nullptr &&
-      state_->viewConstantsBuffer != nullptr &&
-      state_->blendState != nullptr && state_->rasterizerState != nullptr) {
-    return S_OK;
-  }
-
-  ComPtr<ID3DBlob> instanceVsBlob;
-  ComPtr<ID3DBlob> instancePsBlob;
-
-  HRESULT hr = LoadShaderBlob(kInstanceVertexShaderObject, instanceVsBlob);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = LoadShaderBlob(kInstancePixelShaderObject, instancePsBlob);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = state_->device->CreateVertexShader(
-      instanceVsBlob->GetBufferPointer(), instanceVsBlob->GetBufferSize(),
-      nullptr, state_->instanceVertexShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->instanceVertexShader == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  hr = state_->device->CreatePixelShader(
-      instancePsBlob->GetBufferPointer(), instancePsBlob->GetBufferSize(),
-      nullptr, state_->instancePixelShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->instancePixelShader == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_INPUT_ELEMENT_DESC instanceInputLayout[] = {
-      {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
-       D3D11_INPUT_PER_VERTEX_DATA, 0},
-      {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 64,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-  };
-  hr = state_->device->CreateInputLayout(
-      instanceInputLayout, ARRAYSIZE(instanceInputLayout),
-      instanceVsBlob->GetBufferPointer(), instanceVsBlob->GetBufferSize(),
-      state_->instanceInputLayout.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->instanceInputLayout == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_BLEND_DESC blendDesc = {};
-  blendDesc.AlphaToCoverageEnable = FALSE;
-  blendDesc.IndependentBlendEnable = FALSE;
-  blendDesc.RenderTarget[0].BlendEnable = TRUE;
-  blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
-  blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-  blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-  blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-  blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-  blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-  blendDesc.RenderTarget[0].RenderTargetWriteMask =
-      D3D11_COLOR_WRITE_ENABLE_ALL;
-
-  hr = state_->device->CreateBlendState(
-      &blendDesc, state_->blendState.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->blendState == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_RASTERIZER_DESC rsDesc = {};
-  rsDesc.FillMode = D3D11_FILL_SOLID;
-  rsDesc.CullMode = D3D11_CULL_NONE;
-  rsDesc.FrontCounterClockwise = FALSE;
-  rsDesc.DepthBias = 0;
-  rsDesc.DepthBiasClamp = 0.0f;
-  rsDesc.SlopeScaledDepthBias = 0.0f;
-  rsDesc.DepthClipEnable = FALSE;
-  rsDesc.ScissorEnable = FALSE;
-  rsDesc.MultisampleEnable = FALSE;
-  rsDesc.AntialiasedLineEnable = FALSE;
-
-  hr = state_->device->CreateRasterizerState(
-      &rsDesc, state_->rasterizerState.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->rasterizerState == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  hr = EnsureDynamicBuffer(state_->device.Get(), 16u,
-                           D3D11_BIND_CONSTANT_BUFFER,
-                           state_->viewConstantsBuffer);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = EnsureUnitQuadVertexBuffer(state_->device.Get(),
-                                  state_->unitQuadVertexBuffer);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  return S_OK;
-}
-
 void D3D11SwapChainRenderer::ReleaseRendererResources() {
-  if (state_ == nullptr) {
-    return;
-  }
-
   state_->batchCompiler = batch::BatchCompiler();
 
   ReleaseRenderTargetResources();
-  state_->textRenderer.reset();
-  state_->dynamicVertexBuffer.Reset();
-  state_->dynamicVertexCapacityBytes = 0;
-  state_->unitQuadVertexBuffer.Reset();
-  state_->fillEllipseVertexBuffer.Reset();
-  state_->fillEllipseVertexCount = 0;
-  state_->strokeEllipseVertexBuffer.Reset();
-  state_->strokeEllipseVertexCount = 0;
-  state_->dynamicInstanceBuffer.Reset();
-  state_->dynamicInstanceCapacityBytes = 0;
-  state_->viewConstantsBuffer.Reset();
-  state_->rasterizerState.Reset();
-  state_->blendState.Reset();
-  state_->instanceInputLayout.Reset();
-  state_->instancePixelShader.Reset();
-  state_->instanceVertexShader.Reset();
   state_->swapChain.Reset();
-  state_->dxgiFactory.Reset();
-  state_->context.Reset();
-  state_->device.Reset();
+
+  if (sharedManagerClientRegistered_) {
+    state_->deviceManager->ReleaseClient();
+    sharedManagerClientRegistered_ = false;
+  }
 }
 
 HRESULT D3D11SwapChainRenderer::Initialize() {
   RendererLockGuard lock(&cs_);
-  return CreateDeviceAndSwapChain();
-}
-
-HRESULT D3D11SwapChainRenderer::CreateDeviceAndSwapChain() {
   if (width_ <= 0 || height_ <= 0) {
-    return E_INVALIDARG;
+      return E_INVALIDARG;
   }
 
-  if (state_ == nullptr) {
-    return E_OUTOFMEMORY;
+  if (state_->swapChain != nullptr && state_->rtv0 != nullptr) {
+      return S_OK;
   }
 
-  if (state_->device != nullptr && state_->swapChain != nullptr &&
-      state_->rtv0 != nullptr) {
-    return S_OK;
-  }
-
-  const D3D_FEATURE_LEVEL featureLevels[] = {
-      D3D_FEATURE_LEVEL_11_0,
-      D3D_FEATURE_LEVEL_10_1,
-      D3D_FEATURE_LEVEL_10_0,
-  };
-  D3D_FEATURE_LEVEL createdFeatureLevel = D3D_FEATURE_LEVEL_10_0;
-
-  HRESULT hr = D3D11CreateDevice(
-      nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, kCreationFlags, featureLevels,
-      ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
-      state_->device.ReleaseAndGetAddressOf(), &createdFeatureLevel,
-      state_->context.ReleaseAndGetAddressOf());
+  HRESULT hr = state_->deviceManager->EnsureReady();
   if (FAILED(hr)) {
-    hr = D3D11CreateDevice(
-        nullptr, D3D_DRIVER_TYPE_WARP, nullptr, kCreationFlags, featureLevels,
-        ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
-        state_->device.ReleaseAndGetAddressOf(), &createdFeatureLevel,
-        state_->context.ReleaseAndGetAddressOf());
-  }
-
-  if (FAILED(hr) || state_->device == nullptr || state_->context == nullptr) {
-    ReleaseRendererResources();
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-  static_cast<void>(createdFeatureLevel);
-
-  const HRESULT ensureFactoryHr = EnsureFactory();
-  if (FAILED(ensureFactoryHr)) {
-    ReleaseRendererResources();
-    return ensureFactoryHr;
+      ReleaseRendererResources();
+      return hr;
   }
 
   const HRESULT createSwapChainHr = CreateSwapChain();
   if (FAILED(createSwapChainHr)) {
-    ReleaseRendererResources();
-    return createSwapChainHr;
+      ReleaseRendererResources();
+      return createSwapChainHr;
   }
 
   const HRESULT createRenderTargetHr = CreateRenderTarget();
   if (FAILED(createRenderTargetHr)) {
-    ReleaseRendererResources();
-    return createRenderTargetHr;
-  }
-
-  const HRESULT createPipelineHr = CreateDrawPipeline();
-  if (FAILED(createPipelineHr)) {
-    ReleaseRendererResources();
-    return createPipelineHr;
+      ReleaseRendererResources();
+      return createRenderTargetHr;
   }
 
   return S_OK;
@@ -1155,8 +825,7 @@ HRESULT D3D11SwapChainRenderer::Resize(int width, int height) {
 }
 
 HRESULT D3D11SwapChainRenderer::ResizeSwapChain(int width, int height) {
-  if (state_ == nullptr || state_->swapChain == nullptr ||
-      state_->device == nullptr || state_->context == nullptr) {
+  if (state_->swapChain == nullptr ) {
     return E_UNEXPECTED;
   }
 
@@ -1190,7 +859,7 @@ HRESULT D3D11SwapChainRenderer::TryGetSwapChain(void** outSwapChain) {
   *outSwapChain = nullptr;
 
   RendererLockGuard lock(&cs_);
-  if (state_ == nullptr || state_->swapChain == nullptr) {
+  if (state_->swapChain == nullptr) {
     return E_UNEXPECTED;
   }
 
@@ -1199,3 +868,4 @@ HRESULT D3D11SwapChainRenderer::TryGetSwapChain(void** outSwapChain) {
 }
 
 } // namespace fdv::d3d11
+

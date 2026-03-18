@@ -143,6 +143,7 @@
   <ItemGroup>
     <ClInclude Include="BatchComplier.h" />
     <ClInclude Include="BatchTypes.h" />
+    <ClInclude Include="D3DFrameTaskTypes.h" />
     <ClInclude Include="FramePacket.h" />
     <ClInclude Include="RendererLockGuard.h" />
   </ItemGroup>
@@ -154,3 +155,4 @@
     <Exec Command="set DOTNET_CLI_HOME=$(MSBuildProjectDirectory)\..\.dotnet-home&amp;&amp; set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1&amp;&amp; dotnet run --project &quot;$(CommandProtocolProjectDir)\FastDrawingVisual.CommandProtocol.csproj&quot;" />
   </Target>
 </Project>
+
