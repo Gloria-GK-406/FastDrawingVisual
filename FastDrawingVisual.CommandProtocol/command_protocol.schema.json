@@ -119,6 +119,21 @@
         { "name": "TextUtf8", "type": "blob_ref" },
         { "name": "FontFamilyUtf8", "type": "blob_ref" }
       ]
+    },
+    {
+      "name": "DrawImage",
+      "id": 10,
+      "slots": 2,
+      "fields": [
+        { "name": "X", "type": "f32" },
+        { "name": "Y", "type": "f32" },
+        { "name": "Width", "type": "f32" },
+        { "name": "Height", "type": "f32" },
+        { "name": "PixelWidth", "type": "u32" },
+        { "name": "PixelHeight", "type": "u32" },
+        { "name": "Stride", "type": "u32" },
+        { "name": "Pixels", "type": "blob_ref" }
+      ]
     }
   ]
 }

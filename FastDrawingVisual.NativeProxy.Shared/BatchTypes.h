@@ -12,6 +12,7 @@ enum class BatchKind : std::uint8_t {
   Triangles = 1,
   ShapeInstances = 2,
   Text = 3,
+  Image = 4,
   Unknown = 255,
 };
 
@@ -91,6 +92,18 @@ struct TextBatchItem {
   fdv::protocol::ColorArgb8 color{};
 };
 
+struct ImageBatchItem {
+  const std::uint8_t* pixels = nullptr;
+  std::uint32_t pixelBytes = 0;
+  std::uint32_t pixelWidth = 0;
+  std::uint32_t pixelHeight = 0;
+  std::uint32_t stride = 0;
+  float destLeft = 0.0f;
+  float destTop = 0.0f;
+  float destRight = 0.0f;
+  float destBottom = 0.0f;
+};
+
 struct BatchCommandStats {
   int32_t clearCount = 0;
   int32_t fillRectCount = 0;
@@ -99,6 +112,7 @@ struct BatchCommandStats {
   int32_t strokeEllipseCount = 0;
   int32_t lineCount = 0;
   int32_t drawTextRunCount = 0;
+  int32_t drawImageCount = 0;
 };
 
 struct BatchCompileStats {
@@ -107,6 +121,8 @@ struct BatchCompileStats {
   int32_t shapeInstanceCount = 0;
   int32_t textItemCount = 0;
   int32_t textCharCount = 0;
+  int32_t imageItemCount = 0;
+  int32_t imagePixelBytes = 0;
   double commandReadMs = 0.0;
   double commandBuildMs = 0.0;
   BatchCommandStats commands{};

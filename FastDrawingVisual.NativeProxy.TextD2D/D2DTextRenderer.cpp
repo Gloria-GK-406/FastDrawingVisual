@@ -228,6 +228,80 @@ HRESULT D2DTextRenderer::DrawTextBatch(ID3D11DeviceContext* d3dContext,
   return result;
 }
 
+HRESULT D2DTextRenderer::DrawImageBatch(ID3D11DeviceContext* d3dContext,
+                                        const ImageBatchItem* items, int count,
+                                        ImageBatchDrawStats* stats) {
+  if (items == nullptr || count <= 0) {
+    return S_OK;
+  }
+
+  if (d3dContext == nullptr || d2dContext_ == nullptr) {
+    return E_POINTER;
+  }
+
+  const auto flushStart = std::chrono::steady_clock::now();
+  d3dContext->Flush();
+  const auto flushEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->flushMs += DurationMs(flushStart, flushEnd);
+  }
+
+  d2dContext_->BeginDraw();
+  d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+
+  HRESULT result = S_OK;
+  const auto recordStart = std::chrono::steady_clock::now();
+  for (int i = 0; i < count; ++i) {
+    const auto& item = items[i];
+    if (item.pixels == nullptr || item.pixelBytes == 0 || item.pixelWidth == 0 ||
+        item.pixelHeight == 0 || item.stride < item.pixelWidth * 4u) {
+      continue;
+    }
+
+    D2D1_BITMAP_PROPERTIES1 bitmapProps = {};
+    bitmapProps.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    bitmapProps.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+    bitmapProps.dpiX = 96.0f;
+    bitmapProps.dpiY = 96.0f;
+    bitmapProps.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+
+    D2D1_SIZE_U bitmapSize = {item.pixelWidth, item.pixelHeight};
+    ComPtr<ID2D1Bitmap1> bitmap;
+    const HRESULT bitmapHr = d2dContext_->CreateBitmap(
+        bitmapSize, item.pixels, item.stride, &bitmapProps,
+        bitmap.ReleaseAndGetAddressOf());
+    if (FAILED(bitmapHr) || bitmap == nullptr) {
+      result = FAILED(bitmapHr) ? bitmapHr : E_FAIL;
+      break;
+    }
+
+    const D2D1_RECT_F destRect = {
+        item.destLeft,
+        item.destTop,
+        item.destRight,
+        item.destBottom,
+    };
+    d2dContext_->DrawBitmap(bitmap.Get(), &destRect, 1.0f,
+                            D2D1_INTERPOLATION_MODE_LINEAR, nullptr);
+  }
+  const auto recordEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->recordImageMs += DurationMs(recordStart, recordEnd);
+  }
+
+  const auto endDrawStart = std::chrono::steady_clock::now();
+  const HRESULT endDrawHr = d2dContext_->EndDraw();
+  const auto endDrawEnd = std::chrono::steady_clock::now();
+  if (stats != nullptr) {
+    stats->endDrawMs += DurationMs(endDrawStart, endDrawEnd);
+  }
+  if (FAILED(endDrawHr)) {
+    return endDrawHr;
+  }
+
+  return result;
+}
+
 void D2DTextRenderer::ReleaseRenderTargetResources() {
   if (d2dContext_ != nullptr) {
     d2dContext_->SetTarget(nullptr);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <stringapiset.h>
 
 namespace fdv::nativeproxy::shared::batch {
@@ -339,6 +340,26 @@ namespace fdv::nativeproxy::shared::batch {
 			return payload;
 		}
 
+		fdv::protocol::DrawImagePayload ReadDrawImagePayload(
+			const std::uint8_t* command) {
+			fdv::protocol::DrawImagePayload payload{};
+			payload.x = fdv::protocol::ReadF32(command + fdv::protocol::kDrawImageXOffset);
+			payload.y = fdv::protocol::ReadF32(command + fdv::protocol::kDrawImageYOffset);
+			payload.width =
+				fdv::protocol::ReadF32(command + fdv::protocol::kDrawImageWidthOffset);
+			payload.height =
+				fdv::protocol::ReadF32(command + fdv::protocol::kDrawImageHeightOffset);
+			payload.pixelWidth =
+				fdv::protocol::ReadU32(command + fdv::protocol::kDrawImagePixelWidthOffset);
+			payload.pixelHeight =
+				fdv::protocol::ReadU32(command + fdv::protocol::kDrawImagePixelHeightOffset);
+			payload.stride =
+				fdv::protocol::ReadU32(command + fdv::protocol::kDrawImageStrideOffset);
+			payload.pixels =
+				fdv::protocol::ReadBlobRef(command + fdv::protocol::kDrawImagePixelsOffset);
+			return payload;
+		}
+
 		double DurationMs(const std::chrono::steady_clock::time_point& start,
 			const std::chrono::steady_clock::time_point& end) {
 			return std::chrono::duration<double, std::milli>(end - start).count();
@@ -366,9 +387,16 @@ namespace fdv::nativeproxy::shared::batch {
 			if (textItems_.capacity() < textCapacityHint) {
 				textItems_.reserve(textCapacityHint);
 			}
+
+			const std::size_t imageCapacityHint = static_cast<std::size_t>(
+				commandBytes / fdv::protocol::kDrawImageCommandBytes);
+			if (imageItems_.capacity() < imageCapacityHint) {
+				imageItems_.reserve(imageCapacityHint);
+			}
 		}
 		shapeInstances_.clear();
 		textItems_.clear();
+		imageItems_.clear();
 	}
 
 	HRESULT BatchCompiler::TryGetNextBatch(CompiledBatchView& out) {
@@ -377,9 +405,18 @@ namespace fdv::nativeproxy::shared::batch {
 
 		shapeInstances_.clear();
 		textItems_.clear();
+		imageItems_.clear();
 
 		fdv::protocol::RawCommandView command{};
 		BatchKind kind = BatchKind::Unknown;
+		auto finalizeBatchStats = [this]() {
+			lastBatchStats_.shapeInstanceCount =
+				static_cast<int32_t>(shapeInstances_.size());
+			lastBatchStats_.textItemCount =
+				static_cast<int32_t>(textItems_.size());
+			lastBatchStats_.imageItemCount =
+				static_cast<int32_t>(imageItems_.size());
+		};
 
 		while (true) {
 			const auto readStart = std::chrono::steady_clock::now();
@@ -388,10 +425,7 @@ namespace fdv::nativeproxy::shared::batch {
 			lastBatchStats_.commandReadMs += DurationMs(readStart, readEnd);
 
 			if (!hasCommand) {
-				lastBatchStats_.shapeInstanceCount =
-					static_cast<int32_t>(shapeInstances_.size());
-				lastBatchStats_.textItemCount =
-					static_cast<int32_t>(textItems_.size());
+				finalizeBatchStats();
 				return kind == BatchKind::Unknown ? S_FALSE : S_OK;
 			}
 
@@ -416,10 +450,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::ShapeInstances) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -434,10 +465,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::ShapeInstances) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -452,10 +480,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::ShapeInstances) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -470,10 +495,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::ShapeInstances) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -488,10 +510,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::ShapeInstances) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -506,10 +525,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::ShapeInstances) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -524,10 +540,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::ShapeInstances) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -542,10 +555,7 @@ namespace fdv::nativeproxy::shared::batch {
 					out.kind = kind;
 				}
 				else if (kind != BatchKind::Text) {
-					lastBatchStats_.shapeInstanceCount =
-						static_cast<int32_t>(shapeInstances_.size());
-					lastBatchStats_.textItemCount =
-						static_cast<int32_t>(textItems_.size());
+					finalizeBatchStats();
 					return S_OK;
 				}
 
@@ -579,11 +589,54 @@ namespace fdv::nativeproxy::shared::batch {
 				break;
 			}
 
+			case fdv::protocol::CommandType::DrawImage: {
+				if (kind == BatchKind::Unknown) {
+					kind = BatchKind::Image;
+					out.kind = kind;
+				}
+				else if (kind != BatchKind::Image) {
+					finalizeBatchStats();
+					return S_OK;
+				}
+
+				const auto payload = ReadDrawImagePayload(command.commandData);
+				fdv::protocol::BlobSpan pixels{};
+				reader_->TryResolveBlob(payload.pixels, pixels);
+				lastBatchStats_.commands.drawImageCount++;
+
+				const std::uint64_t requiredBytes =
+					static_cast<std::uint64_t>(payload.stride) *
+					static_cast<std::uint64_t>(payload.pixelHeight);
+				if (payload.width > 0.0f &&
+					payload.height > 0.0f &&
+					payload.pixelWidth > 0 &&
+					payload.pixelHeight > 0 &&
+					payload.stride >= payload.pixelWidth * 4u &&
+					requiredBytes > 0 &&
+					requiredBytes <= pixels.bytes) {
+					ImageBatchItem item{};
+					item.pixels = pixels.data;
+					item.pixelBytes = static_cast<std::uint32_t>(requiredBytes);
+					item.pixelWidth = payload.pixelWidth;
+					item.pixelHeight = payload.pixelHeight;
+					item.stride = payload.stride;
+					item.destLeft = payload.x;
+					item.destTop = payload.y;
+					item.destRight = payload.x + payload.width;
+					item.destBottom = payload.y + payload.height;
+					imageItems_.push_back(item);
+					++lastBatchStats_.imageItemCount;
+					lastBatchStats_.imagePixelBytes += static_cast<int32_t>(
+						(std::min<std::uint64_t>)(requiredBytes,
+							static_cast<std::uint64_t>((std::numeric_limits<int32_t>::max)())));
+				}
+
+				reader_->Next();
+				break;
+			}
+
 			default:
-				lastBatchStats_.shapeInstanceCount =
-					static_cast<int32_t>(shapeInstances_.size());
-				lastBatchStats_.textItemCount =
-					static_cast<int32_t>(textItems_.size());
+				finalizeBatchStats();
 				return E_INVALIDARG;
 			}
 		}

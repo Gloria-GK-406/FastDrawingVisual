@@ -571,6 +571,55 @@ HRESULT DrawSharedTextBatch(
   return WaitForD3D11Query(state->textContext.Get(), state->textDoneQuery.Get());
 }
 
+HRESULT DrawSharedImageBatch(
+    D3D9RendererState* state, SurfaceSlot* drawSlot,
+    const fdv::nativeproxy::shared::batch::ImageBatchItem* items, int count) {
+  if (items == nullptr || count <= 0) {
+    return S_OK;
+  }
+
+  if (state == nullptr || drawSlot == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  const int slotIndex = FindSlotIndex(state, drawSlot);
+  if (slotIndex < 0) {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = EnsureTextInteropResources(state);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  if (drawSlot->textSharedTexture == nullptr || state->textRenderer == nullptr ||
+      state->textContext == nullptr || state->textDoneQuery == nullptr) {
+    return E_UNEXPECTED;
+  }
+
+  hr = WaitForD3D9Query(drawSlot->renderDoneQuery.Get());
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  if (state->activeTextTargetSlotIndex != slotIndex) {
+    hr = state->textRenderer->CreateTargetFromTexture(
+        drawSlot->textSharedTexture.Get(), kTextInteropFormat);
+    if (FAILED(hr)) {
+      state->activeTextTargetSlotIndex = -1;
+      return hr;
+    }
+    state->activeTextTargetSlotIndex = slotIndex;
+  }
+
+  hr = state->textRenderer->DrawImageBatch(state->textContext.Get(), items, count);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  return WaitForD3D11Query(state->textContext.Get(), state->textDoneQuery.Get());
+}
+
 bool CreateFrameResources(D3D9RendererState* state) {
   if (state == nullptr || state->device == nullptr || state->width <= 0 ||
       state->height <= 0) {
@@ -970,6 +1019,22 @@ HRESULT D3D9Renderer::SubmitCompiledBatches(SurfaceSlot* drawSlot,
       const auto& textItems = state_->batchCompiler.GetTextItems();
       submitHr = DrawSharedTextBatch(state_, drawSlot, textItems.data(),
                                      static_cast<int>(textItems.size()));
+      break;
+    }
+
+    case batch::BatchKind::Image: {
+      if (sceneOpen) {
+        const HRESULT endSceneHr = device->EndScene();
+        sceneOpen = false;
+        if (FAILED(endSceneHr)) {
+          submitHr = endSceneHr;
+          break;
+        }
+      }
+
+      const auto& imageItems = state_->batchCompiler.GetImageItems();
+      submitHr = DrawSharedImageBatch(state_, drawSlot, imageItems.data(),
+                                      static_cast<int>(imageItems.size()));
       break;
     }
     }

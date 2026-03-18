@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace FastDrawingVisual.Rendering
 {
@@ -271,6 +272,28 @@ namespace FastDrawingVisual.Rendering
             public void DrawImage(ImageSource imageSource, Rect rectangle)
             {
                 ThrowIfDisposed();
+                if (imageSource is not BitmapSource bitmapSource || rectangle.Width <= 0d || rectangle.Height <= 0d)
+                    return;
+
+                if (!TryTransformAxisAlignedRect(rectangle, out var transformedRectangle) ||
+                    transformedRectangle.Width <= 0d ||
+                    transformedRectangle.Height <= 0d)
+                {
+                    return;
+                }
+
+                if (!TryPrepareBitmapPixels(bitmapSource, _currentOpacity, out var pixels, out var pixelWidth, out var pixelHeight, out var stride))
+                    return;
+
+                _commands.WriteDrawImage(
+                    (float)transformedRectangle.X,
+                    (float)transformedRectangle.Y,
+                    (float)transformedRectangle.Width,
+                    (float)transformedRectangle.Height,
+                    pixelWidth,
+                    pixelHeight,
+                    stride,
+                    pixels);
             }
 
             public void DrawText(string text, Point origin, Brush foreground, string fontFamily = "Segoe UI", double fontSize = 12)
@@ -514,6 +537,74 @@ namespace FastDrawingVisual.Rendering
                     color.R,
                     color.G,
                     color.B);
+            }
+
+            private static bool TryPrepareBitmapPixels(BitmapSource bitmapSource, double opacity, out byte[] pixels, out uint pixelWidth, out uint pixelHeight, out uint stride)
+            {
+                pixels = Array.Empty<byte>();
+                pixelWidth = 0;
+                pixelHeight = 0;
+                stride = 0;
+
+                if (bitmapSource == null || bitmapSource.PixelWidth <= 0 || bitmapSource.PixelHeight <= 0)
+                    return false;
+
+                if (!bitmapSource.IsFrozen)
+                    return false;
+
+                if (!TryGetPbgra32BitmapSource(bitmapSource, out var convertedSource))
+                    return false;
+
+                checked
+                {
+                    pixelWidth = (uint)convertedSource.PixelWidth;
+                    pixelHeight = (uint)convertedSource.PixelHeight;
+                    stride = (uint)(convertedSource.PixelWidth * 4);
+                }
+
+                pixels = new byte[checked((int)(stride * pixelHeight))];
+                convertedSource.CopyPixels(pixels, (int)stride, 0);
+
+                if (opacity < 0.9999d)
+                    ApplyOpacityToPremultipliedPixels(pixels, opacity);
+
+                return true;
+            }
+
+            private static bool TryGetPbgra32BitmapSource(BitmapSource bitmapSource, out BitmapSource convertedSource)
+            {
+                convertedSource = bitmapSource;
+                if (bitmapSource.Format == PixelFormats.Pbgra32)
+                    return true;
+
+                var converted = new FormatConvertedBitmap();
+                converted.BeginInit();
+                converted.Source = bitmapSource;
+                converted.DestinationFormat = PixelFormats.Pbgra32;
+                converted.EndInit();
+                converted.Freeze();
+                convertedSource = converted;
+                return true;
+            }
+
+            private static void ApplyOpacityToPremultipliedPixels(byte[] pixels, double opacity)
+            {
+                if (pixels.Length == 0)
+                    return;
+
+                var scale = Math.Clamp(opacity, 0d, 1d);
+                for (int index = 0; index <= pixels.Length - 4; index += 4)
+                {
+                    pixels[index + 0] = ScaleByte(pixels[index + 0], scale);
+                    pixels[index + 1] = ScaleByte(pixels[index + 1], scale);
+                    pixels[index + 2] = ScaleByte(pixels[index + 2], scale);
+                    pixels[index + 3] = ScaleByte(pixels[index + 3], scale);
+                }
+            }
+
+            private static byte ScaleByte(byte value, double scale)
+            {
+                return (byte)Math.Clamp(Math.Round(value * scale), 0d, 255d);
             }
 
             private Point GetGlyphRunTextOrigin(GlyphRun glyphRun, double scaledFontSize)

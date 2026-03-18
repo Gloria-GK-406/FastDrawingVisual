@@ -81,12 +81,15 @@ struct SubmitFrameDiagnostics {
   int triangleBatchCount = 0;
   int shapeBatchCount = 0;
   int textBatchCount = 0;
+  int imageBatchCount = 0;
   int triangleVertexCount = 0;
   int shapeInstanceCount = 0;
   int maxTriangleBatchVertexCount = 0;
   int textItemCount = 0;
   int maxTextBatchItemCount = 0;
   int textCharCount = 0;
+  int imageItemCount = 0;
+  int maxImageBatchItemCount = 0;
   int vertexBufferResizeCount = 0;
   UINT vertexBytesUploaded = 0;
   UINT maxVertexBufferCapacityBytes = 0;
@@ -102,6 +105,10 @@ struct SubmitFrameDiagnostics {
   double textFlushMs = 0.0;
   double textRecordMs = 0.0;
   double textEndDrawMs = 0.0;
+  double imageDrawMs = 0.0;
+  double imageFlushMs = 0.0;
+  double imageRecordMs = 0.0;
+  double imageEndDrawMs = 0.0;
   double presentMs = 0.0;
 };
 
@@ -325,6 +332,7 @@ void AccumulateCompileStats(SubmitFrameDiagnostics& diagnostics,
   diagnostics.shapeInstanceCount += stats.shapeInstanceCount;
   diagnostics.textItemCount += stats.textItemCount;
   diagnostics.textCharCount += stats.textCharCount;
+  diagnostics.imageItemCount += stats.imageItemCount;
   diagnostics.commandReadMs += stats.commandReadMs;
   diagnostics.commandBuildMs += stats.commandBuildMs;
 }
@@ -679,6 +687,42 @@ HRESULT D3D11ShareD3D9Renderer::SubmitCompiledBatches(
           &textStats);
       const auto textEnd = std::chrono::steady_clock::now();
       diagnostics.textDrawMs += DurationMs(textStart, textEnd);
+      if (FAILED(drawHr)) {
+        return drawHr;
+      }
+      break;
+    }
+
+    case batch::BatchKind::Image: {
+      ++diagnostics.imageBatchCount;
+      const auto& imageItems = state_->batchCompiler.GetImageItems();
+      const int imageItemCount = static_cast<int>(imageItems.size());
+      diagnostics.maxImageBatchItemCount =
+          (std::max)(diagnostics.maxImageBatchItemCount, imageItemCount);
+      if (state_->textRenderer == nullptr ||
+          state_->slots[drawSlotIndex].workTexture == nullptr) {
+        return E_UNEXPECTED;
+      }
+
+      if (state_->activeTextTargetSlotIndex != drawSlotIndex) {
+        const HRESULT targetHr = state_->textRenderer->CreateTargetFromTexture(
+            state_->slots[drawSlotIndex].workTexture.Get(), kSharedTextureFormat);
+        if (FAILED(targetHr)) {
+          state_->activeTextTargetSlotIndex = -1;
+          return targetHr;
+        }
+        state_->activeTextTargetSlotIndex = drawSlotIndex;
+      }
+
+      fdv::textd2d::ImageBatchDrawStats imageStats{};
+      const auto imageStart = std::chrono::steady_clock::now();
+      const HRESULT drawHr = state_->textRenderer->DrawImageBatch(
+          state_->context.Get(), imageItems.data(), imageItemCount, &imageStats);
+      const auto imageEnd = std::chrono::steady_clock::now();
+      diagnostics.imageDrawMs += DurationMs(imageStart, imageEnd);
+      diagnostics.imageFlushMs += imageStats.flushMs;
+      diagnostics.imageRecordMs += imageStats.recordImageMs;
+      diagnostics.imageEndDrawMs += imageStats.endDrawMs;
       if (FAILED(drawHr)) {
         return drawHr;
       }

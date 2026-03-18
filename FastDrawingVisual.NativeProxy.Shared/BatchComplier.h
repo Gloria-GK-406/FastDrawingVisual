@@ -32,6 +32,7 @@ class BatchCompiler {
     return shapeInstances_;
   }
   const std::vector<TextBatchItem>& GetTextItems() const { return textItems_; }
+  const std::vector<ImageBatchItem>& GetImageItems() const { return imageItems_; }
   const BatchCompileStats& lastBatchStats() const { return lastBatchStats_; }
 
  private:
@@ -43,6 +44,7 @@ class BatchCompiler {
   BatchCompileStats lastBatchStats_{};
   std::vector<ShapeInstance> shapeInstances_;
   std::vector<TextBatchItem> textItems_;
+  std::vector<ImageBatchItem> imageItems_;
 };
 
 } // namespace fdv::nativeproxy::shared::batch

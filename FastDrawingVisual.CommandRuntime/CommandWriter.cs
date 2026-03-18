@@ -146,6 +146,20 @@ namespace FastDrawingVisual.CommandRuntime
             WriteBlobRef(span.Slice(CommandLayout.DrawTextRunFontFamilyUtf8Offset), fontFamilyUtf8Ref);
         }
 
+        public void WriteDrawImage(float x, float y, float width, float height, uint pixelWidth, uint pixelHeight, uint stride, ReadOnlySpan<byte> pixels)
+        {
+            var pixelsRef = AppendBytes(pixels);
+            var span = BeginCommand((ushort)CommandType.DrawImage, CommandLayout.DrawImageSlotCount, 0);
+            WriteSingle(span.Slice(CommandLayout.DrawImageXOffset), x);
+            WriteSingle(span.Slice(CommandLayout.DrawImageYOffset), y);
+            WriteSingle(span.Slice(CommandLayout.DrawImageWidthOffset), width);
+            WriteSingle(span.Slice(CommandLayout.DrawImageHeightOffset), height);
+            WriteUInt32(span.Slice(CommandLayout.DrawImagePixelWidthOffset), pixelWidth);
+            WriteUInt32(span.Slice(CommandLayout.DrawImagePixelHeightOffset), pixelHeight);
+            WriteUInt32(span.Slice(CommandLayout.DrawImageStrideOffset), stride);
+            WriteBlobRef(span.Slice(CommandLayout.DrawImagePixelsOffset), pixelsRef);
+        }
+
         public void Dispose()
         {
             if (_isDisposed)
@@ -182,6 +196,17 @@ namespace FastDrawingVisual.CommandRuntime
             return new CommandBlobRef(offset, byteCount);
         }
 
+        private CommandBlobRef AppendBytes(ReadOnlySpan<byte> value)
+        {
+            if (value.IsEmpty)
+                return default;
+
+            AlignBlobBuffer();
+            var offset = _blobBuffer.Length;
+            value.CopyTo(_blobBuffer.Allocate(value.Length));
+            return new CommandBlobRef(offset, value.Length);
+        }
+
         private void AlignBlobBuffer()
         {
             var padding = PaddingFor(_blobBuffer.Length, CommandProtocolConstants.BlobAlignment);
@@ -208,6 +233,11 @@ namespace FastDrawingVisual.CommandRuntime
         private static void WriteSingle(Span<byte> target, float value)
         {
             BinaryPrimitives.WriteInt32LittleEndian(target, BitConverter.SingleToInt32Bits(value));
+        }
+
+        private static void WriteUInt32(Span<byte> target, uint value)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(target, value);
         }
 
         private static void WriteBlobRef(Span<byte> target, CommandBlobRef blobRef)

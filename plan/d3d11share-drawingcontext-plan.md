@@ -7,6 +7,14 @@ Scope: `FastDrawingVisual.NativeProxy.D3D11` + shared command path used by `Rend
 
 Complete the highest-value missing `IDrawingContext` features for the D3D11Share path in dependency order, starting with rounded rectangles and then closing the most visible coverage gaps.
 
+## Progress
+
+- Phase 1 completed: rounded rectangle commands record and render end-to-end through the shared batch path.
+- Phase 2 completed: `PushOpacity` now folds into recorded colors for shapes and text.
+- Phase 3 completed (fallback scope): `DrawGlyphRun` falls back to text and baseline alignment has been corrected for the coverage scene.
+- Phase 4 completed (MVP scope): `DrawImage` now supports frozen `BitmapSource` inputs by copying `Pbgra32` pixels into the shared blob buffer and drawing them through the D2D interop path on D3D11/D3D9.
+- Remaining priority order is unchanged: clip, opacity mask, then broader geometry/guideline completeness.
+
 ## Current Findings
 
 - The D3D11Share backend records drawing through `LayeredCommandRecordingContext`.
@@ -114,4 +122,4 @@ Exit criteria:
 
 ## Immediate Execution Target
 
-Start with Phase 1 and do not begin image/clip/mask work until rounded rectangle is fully encoded through protocol, managed recording, native compile, and shader dispatch.
+Move to Phase 5 and implement rectangle clip support without expanding into arbitrary geometry clip yet.

@@ -20,10 +20,17 @@ namespace fdv::textd2d {
 
 using Microsoft::WRL::ComPtr;
 using TextBatchItem = fdv::nativeproxy::shared::batch::TextBatchItem;
+using ImageBatchItem = fdv::nativeproxy::shared::batch::ImageBatchItem;
 
 struct TextBatchDrawStats {
   double flushMs = 0.0;
   double recordTextMs = 0.0;
+  double endDrawMs = 0.0;
+};
+
+struct ImageBatchDrawStats {
+  double flushMs = 0.0;
+  double recordImageMs = 0.0;
   double endDrawMs = 0.0;
 };
 
@@ -41,6 +48,9 @@ class D2DTextRenderer final {
   HRESULT DrawTextBatch(ID3D11DeviceContext* d3dContext,
                         const TextBatchItem* items, int count,
                         TextBatchDrawStats* stats = nullptr);
+  HRESULT DrawImageBatch(ID3D11DeviceContext* d3dContext,
+                         const ImageBatchItem* items, int count,
+                         ImageBatchDrawStats* stats = nullptr);
 
   void ReleaseRenderTargetResources();
   void ReleaseDeviceResources();
