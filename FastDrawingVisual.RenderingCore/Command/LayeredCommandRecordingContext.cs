@@ -147,13 +147,16 @@ namespace FastDrawingVisual.Rendering
             {
                 NoOp,
                 Transform,
+                Opacity,
             }
 
             private readonly LayeredCommandRecordingContext _root;
             private readonly CommandWriter _commands = new();
             private readonly Stack<PushStateKind> _pushStates = new();
             private readonly Stack<Matrix> _transformStack = new();
+            private readonly Stack<double> _opacityStack = new();
             private Matrix _currentTransform = Matrix.Identity;
+            private double _currentOpacity = 1d;
             private const double TransformEpsilon = 0.0001d;
 
             public LayerCommandWriter(LayeredCommandRecordingContext root, int layerIndex)
@@ -175,10 +178,10 @@ namespace FastDrawingVisual.Rendering
                     return;
 
                 if (TryGetSolidColor(brush, out var fill))
-                    _commands.WriteFillEllipse((float)transformedCenter.X, (float)transformedCenter.Y, (float)transformedRadiusX, (float)transformedRadiusY, ToProtocolColor(fill));
+                    _commands.WriteFillEllipse((float)transformedCenter.X, (float)transformedCenter.Y, (float)transformedRadiusX, (float)transformedRadiusY, ToProtocolColor(ApplyOpacity(fill)));
 
                 if (TryGetSolidPen(pen, out var stroke, out var thickness))
-                    _commands.WriteStrokeEllipse((float)transformedCenter.X, (float)transformedCenter.Y, (float)transformedRadiusX, (float)transformedRadiusY, TransformThickness(thickness), ToProtocolColor(stroke));
+                    _commands.WriteStrokeEllipse((float)transformedCenter.X, (float)transformedCenter.Y, (float)transformedRadiusX, (float)transformedRadiusY, TransformThickness(thickness), ToProtocolColor(ApplyOpacity(stroke)));
             }
 
             public void DrawRectangle(Brush brush, Pen pen, Rect rectangle)
@@ -188,10 +191,10 @@ namespace FastDrawingVisual.Rendering
                     return;
 
                 if (TryGetSolidColor(brush, out var fill))
-                    _commands.WriteFillRect((float)transformedRectangle.X, (float)transformedRectangle.Y, (float)transformedRectangle.Width, (float)transformedRectangle.Height, ToProtocolColor(fill));
+                    _commands.WriteFillRect((float)transformedRectangle.X, (float)transformedRectangle.Y, (float)transformedRectangle.Width, (float)transformedRectangle.Height, ToProtocolColor(ApplyOpacity(fill)));
 
                 if (TryGetSolidPen(pen, out var stroke, out var thickness))
-                    _commands.WriteStrokeRect((float)transformedRectangle.X, (float)transformedRectangle.Y, (float)transformedRectangle.Width, (float)transformedRectangle.Height, TransformThickness(thickness), ToProtocolColor(stroke));
+                    _commands.WriteStrokeRect((float)transformedRectangle.X, (float)transformedRectangle.Y, (float)transformedRectangle.Width, (float)transformedRectangle.Height, TransformThickness(thickness), ToProtocolColor(ApplyOpacity(stroke)));
             }
 
             public void DrawRoundedRectangle(Brush brush, Pen pen, Rect rectangle, double radiusX, double radiusY)
@@ -215,7 +218,7 @@ namespace FastDrawingVisual.Rendering
                         (float)transformedRectangle.Height,
                         (float)transformedRadiusX,
                         (float)transformedRadiusY,
-                        ToProtocolColor(fill));
+                        ToProtocolColor(ApplyOpacity(fill)));
                 }
 
                 if (TryGetSolidPen(pen, out var stroke, out var thickness))
@@ -228,7 +231,7 @@ namespace FastDrawingVisual.Rendering
                         (float)transformedRadiusX,
                         (float)transformedRadiusY,
                         TransformThickness(thickness),
-                        ToProtocolColor(stroke));
+                        ToProtocolColor(ApplyOpacity(stroke)));
                 }
             }
 
@@ -238,7 +241,7 @@ namespace FastDrawingVisual.Rendering
                 var transformedStart = TransformPoint(point0);
                 var transformedEnd = TransformPoint(point1);
                 if (TryGetSolidPen(pen, out var color, out var thickness))
-                    _commands.WriteLine((float)transformedStart.X, (float)transformedStart.Y, (float)transformedEnd.X, (float)transformedEnd.Y, TransformThickness(thickness), ToProtocolColor(color));
+                    _commands.WriteLine((float)transformedStart.X, (float)transformedStart.Y, (float)transformedEnd.X, (float)transformedEnd.Y, TransformThickness(thickness), ToProtocolColor(ApplyOpacity(color)));
             }
 
             public void DrawGeometry(Brush brush, Pen pen, Geometry geometry)
@@ -289,7 +292,7 @@ namespace FastDrawingVisual.Rendering
                     (float)origin.X,
                     (float)origin.Y,
                     (float)fontSize,
-                    ToProtocolColor(color),
+                    ToProtocolColor(ApplyOpacity(color)),
                     text,
                     fontFamily);
             }
@@ -297,6 +300,23 @@ namespace FastDrawingVisual.Rendering
             public void DrawGlyphRun(Brush foregroundBrush, GlyphRun glyphRun)
             {
                 ThrowIfDisposed();
+                if (!TryGetSolidColor(foregroundBrush, out var color) || glyphRun == null)
+                    return;
+
+                if (!TryExtractGlyphRunText(glyphRun, out var text) || string.IsNullOrEmpty(text))
+                    return;
+
+                var fontSize = Math.Max(1d, glyphRun.FontRenderingEmSize * GetApproximateFontScale());
+                var origin = GetGlyphRunTextOrigin(glyphRun, fontSize);
+                var fontFamily = TryGetGlyphRunFontFamily(glyphRun) ?? "Segoe UI";
+
+                _commands.WriteDrawTextRun(
+                    (float)origin.X,
+                    (float)origin.Y,
+                    (float)fontSize,
+                    ToProtocolColor(ApplyOpacity(color)),
+                    text,
+                    fontFamily);
             }
 
             public void DrawDrawing(Drawing drawing)
@@ -337,7 +357,9 @@ namespace FastDrawingVisual.Rendering
             public void PushOpacity(double opacity)
             {
                 ThrowIfDisposed();
-                _pushStates.Push(PushStateKind.NoOp);
+                _opacityStack.Push(_currentOpacity);
+                _pushStates.Push(PushStateKind.Opacity);
+                _currentOpacity = Math.Clamp(_currentOpacity * opacity, 0d, 1d);
             }
 
             public void PushOpacityMask(Brush opacityMask)
@@ -368,6 +390,8 @@ namespace FastDrawingVisual.Rendering
                 var pushKind = _pushStates.Pop();
                 if (pushKind == PushStateKind.Transform && _transformStack.Count > 0)
                     _currentTransform = _transformStack.Pop();
+                else if (pushKind == PushStateKind.Opacity && _opacityStack.Count > 0)
+                    _currentOpacity = _opacityStack.Pop();
             }
 
             public void Close() => Dispose();
@@ -478,6 +502,66 @@ namespace FastDrawingVisual.Rendering
             {
                 var scale = GetApproximateFontScale();
                 return (float)Math.Max(0.1d, thickness * scale);
+            }
+
+            private Color ApplyOpacity(Color color)
+            {
+                if (_currentOpacity >= 0.9999d)
+                    return color;
+
+                return Color.FromArgb(
+                    (byte)Math.Clamp(Math.Round(color.A * _currentOpacity), 0d, 255d),
+                    color.R,
+                    color.G,
+                    color.B);
+            }
+
+            private Point GetGlyphRunTextOrigin(GlyphRun glyphRun, double scaledFontSize)
+            {
+                var baselineOrigin = TransformPoint(glyphRun.BaselineOrigin);
+                var glyphTypeface = glyphRun.GlyphTypeface;
+                if (glyphTypeface == null)
+                    return baselineOrigin;
+
+                // DrawTextRun is top-left based, while GlyphRun uses baseline origin.
+                var baselineOffset = glyphTypeface.Baseline * scaledFontSize;
+                return new Point(baselineOrigin.X, baselineOrigin.Y - baselineOffset);
+            }
+
+            private static bool TryExtractGlyphRunText(GlyphRun glyphRun, out string text)
+            {
+                text = string.Empty;
+                var characters = glyphRun.Characters;
+                if (characters == null || characters.Count == 0)
+                    return false;
+
+                var buffer = new char[characters.Count];
+                for (int i = 0; i < characters.Count; i++)
+                    buffer[i] = characters[i];
+
+                text = new string(buffer);
+                return text.Length > 0;
+            }
+
+            private static string? TryGetGlyphRunFontFamily(GlyphRun glyphRun)
+            {
+                var glyphTypeface = glyphRun.GlyphTypeface;
+                if (glyphTypeface == null)
+                    return null;
+
+                foreach (var familyName in glyphTypeface.FamilyNames.Values)
+                {
+                    if (!string.IsNullOrWhiteSpace(familyName))
+                        return familyName;
+                }
+
+                foreach (var win32FamilyName in glyphTypeface.Win32FamilyNames.Values)
+                {
+                    if (!string.IsNullOrWhiteSpace(win32FamilyName))
+                        return win32FamilyName;
+                }
+
+                return null;
             }
 
             private double GetApproximateFontScale()

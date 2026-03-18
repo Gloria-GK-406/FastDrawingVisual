@@ -22,6 +22,11 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
 
         private sealed class Session : IPreparedBenchmarkScenarioSession
         {
+            private static readonly Brush AlphaWarmBrush = Freeze(new SolidColorBrush(Color.FromArgb(0xB8, 0xFF, 0xB4, 0x54)));
+            private static readonly Brush AlphaCoolBrush = Freeze(new SolidColorBrush(Color.FromArgb(0xA8, 0x55, 0xC7, 0xF7)));
+            private static readonly Brush AlphaVioletBrush = Freeze(new SolidColorBrush(Color.FromArgb(0x98, 0xBF, 0x8B, 0xFF)));
+            private static readonly Pen AlphaOutlinePen = Freeze(new Pen(new SolidColorBrush(Color.FromArgb(0xCC, 0xD4, 0xDB, 0xE4)), 1.2));
+
             private readonly BenchmarkScalePreset _scale;
             private PreparedFrame? _cachedFrame;
             private int _cachedWidth;
@@ -85,6 +90,11 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
                 ctx.DrawEllipse(BenchmarkDrawingPalette.TertiaryAccentBrush, BenchmarkDrawingPalette.NeutralPen, frame.EllipseCenter, frame.EllipseRadiusX, frame.EllipseRadiusY);
                 ctx.DrawLine(BenchmarkDrawingPalette.AccentPen, frame.LineStart, frame.LineEnd);
                 ctx.DrawGeometry(null!, BenchmarkDrawingPalette.SecondaryAccentPen, frame.GeometryGroup);
+                ctx.DrawRectangle(BenchmarkDrawingPalette.GridBrush, null!, frame.AlphaBlendBackdrop);
+                ctx.DrawRoundedRectangle(AlphaWarmBrush, AlphaOutlinePen, frame.AlphaBlendRectA, frame.CornerRadius, frame.CornerRadius);
+                ctx.DrawRoundedRectangle(AlphaCoolBrush, AlphaOutlinePen, frame.AlphaBlendRectB, frame.CornerRadius, frame.CornerRadius);
+                ctx.DrawEllipse(AlphaVioletBrush, AlphaOutlinePen, frame.AlphaBlendEllipseCenter, frame.AlphaBlendEllipseRadiusX, frame.AlphaBlendEllipseRadiusY);
+                ctx.DrawText("ARGB alpha blend", frame.AlphaBlendCaptionOrigin, BenchmarkDrawingPalette.MutedBrush, fontSize: frame.BodyFontSize);
                 ctx.DrawText("DrawText(...)", frame.DrawTextOrigin, BenchmarkDrawingPalette.NeutralBrush, fontSize: frame.SectionTitleFontSize);
 
                 DrawPanelChrome(ctx, frame.MediaPanelRect, "Image + Glyph");
@@ -151,6 +161,27 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
                 Point lineStart = new(primitivePanel.Left + primitivePanel.Width * 0.46, primitivePanel.Top + primitivePanel.Height * 0.52);
                 Point lineEnd = new(primitivePanel.Left + primitivePanel.Width * 0.86, primitivePanel.Top + primitivePanel.Height * 0.78);
                 Point drawTextOrigin = new(primitivePanel.Left + 22, primitivePanel.Bottom - 34);
+                Rect alphaBlendBackdrop = new(
+                    primitivePanel.Left + primitivePanel.Width * 0.54,
+                    primitivePanel.Top + primitivePanel.Height * 0.48,
+                    primitivePanel.Width * 0.28,
+                    primitivePanel.Height * 0.24);
+                Rect alphaBlendRectA = new(
+                    alphaBlendBackdrop.Left + 6,
+                    alphaBlendBackdrop.Top + 8,
+                    alphaBlendBackdrop.Width * 0.54,
+                    alphaBlendBackdrop.Height * 0.62);
+                Rect alphaBlendRectB = new(
+                    alphaBlendBackdrop.Left + alphaBlendBackdrop.Width * 0.32,
+                    alphaBlendBackdrop.Top + alphaBlendBackdrop.Height * 0.20,
+                    alphaBlendBackdrop.Width * 0.52,
+                    alphaBlendBackdrop.Height * 0.58);
+                Point alphaBlendEllipseCenter = new(
+                    alphaBlendBackdrop.Left + alphaBlendBackdrop.Width * 0.54,
+                    alphaBlendBackdrop.Top + alphaBlendBackdrop.Height * 0.68);
+                double alphaBlendEllipseRadiusX = Math.Max(10, alphaBlendBackdrop.Width * 0.18);
+                double alphaBlendEllipseRadiusY = Math.Max(8, alphaBlendBackdrop.Height * 0.22);
+                Point alphaBlendCaptionOrigin = new(alphaBlendBackdrop.Left, alphaBlendBackdrop.Bottom + 8);
 
                 Rect imageRect = new(
                     mediaPanel.Left + 22,
@@ -211,6 +242,13 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
                     lineStart,
                     lineEnd,
                     drawTextOrigin,
+                    alphaBlendBackdrop,
+                    alphaBlendRectA,
+                    alphaBlendRectB,
+                    alphaBlendEllipseCenter,
+                    alphaBlendEllipseRadiusX,
+                    alphaBlendEllipseRadiusY,
+                    alphaBlendCaptionOrigin,
                     imageRect,
                     glyphRun,
                     mediaCaptionOrigin,
@@ -424,6 +462,13 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
                     Point lineStart,
                     Point lineEnd,
                     Point drawTextOrigin,
+                    Rect alphaBlendBackdrop,
+                    Rect alphaBlendRectA,
+                    Rect alphaBlendRectB,
+                    Point alphaBlendEllipseCenter,
+                    double alphaBlendEllipseRadiusX,
+                    double alphaBlendEllipseRadiusY,
+                    Point alphaBlendCaptionOrigin,
                     Rect imageRect,
                     GlyphRun glyphRun,
                     Point mediaCaptionOrigin,
@@ -464,6 +509,13 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
                     LineStart = lineStart;
                     LineEnd = lineEnd;
                     DrawTextOrigin = drawTextOrigin;
+                    AlphaBlendBackdrop = alphaBlendBackdrop;
+                    AlphaBlendRectA = alphaBlendRectA;
+                    AlphaBlendRectB = alphaBlendRectB;
+                    AlphaBlendEllipseCenter = alphaBlendEllipseCenter;
+                    AlphaBlendEllipseRadiusX = alphaBlendEllipseRadiusX;
+                    AlphaBlendEllipseRadiusY = alphaBlendEllipseRadiusY;
+                    AlphaBlendCaptionOrigin = alphaBlendCaptionOrigin;
                     ImageRect = imageRect;
                     GlyphRun = glyphRun;
                     MediaCaptionOrigin = mediaCaptionOrigin;
@@ -505,6 +557,13 @@ namespace FastDrawingVisualApp.Benchmark.Scenarios
                 public Point LineStart { get; }
                 public Point LineEnd { get; }
                 public Point DrawTextOrigin { get; }
+                public Rect AlphaBlendBackdrop { get; }
+                public Rect AlphaBlendRectA { get; }
+                public Rect AlphaBlendRectB { get; }
+                public Point AlphaBlendEllipseCenter { get; }
+                public double AlphaBlendEllipseRadiusX { get; }
+                public double AlphaBlendEllipseRadiusY { get; }
+                public Point AlphaBlendCaptionOrigin { get; }
                 public Rect ImageRect { get; }
                 public GlyphRun GlyphRun { get; }
                 public Point MediaCaptionOrigin { get; }
