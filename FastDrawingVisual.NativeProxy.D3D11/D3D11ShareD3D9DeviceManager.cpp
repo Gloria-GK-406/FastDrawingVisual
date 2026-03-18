@@ -1,24 +1,24 @@
+#include "D3D11ShareD3D9DeviceManager.h"
+
 #include "D3D11DeviceManager.h"
 #include "D3D11DeviceManagerShared.h"
-
 #include "../FastDrawingVisual.NativeProxy.TextD2D/D2DTextRenderer.h"
 
 #include <algorithm>
 #include <chrono>
-#include <cstring>
+
 #include <d3dcompiler.h>
-#include <d3d11.h>
 
 #pragma comment(lib, "d3dcompiler.lib")
 
 namespace fdv::d3d11 {
 
-D3D11DeviceManager& D3D11DeviceManager::Instance() {
-  static D3D11DeviceManager instance;
+D3D11ShareD3D9DeviceManager& D3D11ShareD3D9DeviceManager::Instance() {
+  static D3D11ShareD3D9DeviceManager instance;
   return instance;
 }
 
-D3D11DeviceManager::D3D11DeviceManager() {
+D3D11ShareD3D9DeviceManager::D3D11ShareD3D9DeviceManager() {
   InitializeCriticalSectionAndSpinCount(&stateCs_, 1000);
   InitializeCriticalSectionAndSpinCount(&executionCs_, 1000);
   InitializeCriticalSectionAndSpinCount(&queueCs_, 1000);
@@ -27,7 +27,7 @@ D3D11DeviceManager::D3D11DeviceManager() {
   queueCsInitialized_ = true;
 }
 
-void D3D11DeviceManager::StopWorker() {
+void D3D11ShareD3D9DeviceManager::StopWorker() {
   HANDLE workerThread = nullptr;
   HANDLE stopEvent = nullptr;
   HANDLE queueSemaphore = nullptr;
@@ -64,7 +64,7 @@ void D3D11DeviceManager::StopWorker() {
   LeaveCriticalSection(&stateCs_);
 }
 
-D3D11DeviceManager::~D3D11DeviceManager() {
+D3D11ShareD3D9DeviceManager::~D3D11ShareD3D9DeviceManager() {
   StopWorker();
   EnterCriticalSection(&stateCs_);
   ResetUnlocked();
@@ -84,11 +84,77 @@ D3D11DeviceManager::~D3D11DeviceManager() {
   }
 }
 
-HRESULT D3D11DeviceManager::CreateSharedDevice() {
-  return CreateHardwareD3D11Device(device_, context_, true, false);
+HRESULT D3D11ShareD3D9DeviceManager::EnsureHiddenWindowUnlocked() {
+  if (hiddenHwnd_ != nullptr) {
+    return S_OK;
+  }
+
+  const HRESULT classHr = EnsureHiddenWindowClassRegistered();
+  if (FAILED(classHr)) {
+    return classHr;
+  }
+
+  hiddenHwnd_ = CreateWindowExW(0, kHiddenWindowClassName,
+                                L"FastDrawingVisual.D3D11.SharedDeviceWindow",
+                                WS_POPUP, 0, 0, 1, 1, nullptr, nullptr,
+                                GetModuleHandleW(nullptr), nullptr);
+  if (hiddenHwnd_ == nullptr) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+
+  return S_OK;
 }
 
-HRESULT D3D11DeviceManager::EnsurePipelineResourcesUnlocked() {
+HRESULT D3D11ShareD3D9DeviceManager::CreateSharedInteropDevices() {
+  HRESULT hr = EnsureHiddenWindowUnlocked();
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = CreateHardwareD3D11Device(device_, context_, false, true);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d9_.ReleaseAndGetAddressOf());
+  if (FAILED(hr) || d3d9_ == nullptr) {
+    ResetUnlocked();
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  D3DPRESENT_PARAMETERS parameters = {};
+  parameters.Windowed = TRUE;
+  parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
+  parameters.BackBufferFormat = D3DFMT_UNKNOWN;
+  parameters.BackBufferWidth = 1;
+  parameters.BackBufferHeight = 1;
+  parameters.BackBufferCount = 1;
+  parameters.hDeviceWindow = hiddenHwnd_;
+  parameters.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+  parameters.EnableAutoDepthStencil = FALSE;
+
+  hr = d3d9_->CreateDeviceEx(
+      D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hiddenHwnd_,
+      D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
+          D3DCREATE_FPU_PRESERVE,
+      &parameters, nullptr, d3d9Device_.ReleaseAndGetAddressOf());
+  if (FAILED(hr)) {
+    hr = d3d9_->CreateDeviceEx(
+        D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hiddenHwnd_,
+        D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
+            D3DCREATE_FPU_PRESERVE,
+        &parameters, nullptr, d3d9Device_.ReleaseAndGetAddressOf());
+  }
+
+  if (FAILED(hr) || d3d9Device_ == nullptr) {
+    ResetUnlocked();
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  return S_OK;
+}
+
+HRESULT D3D11ShareD3D9DeviceManager::EnsurePipelineResourcesUnlocked() {
   if (device_ == nullptr) {
     return E_UNEXPECTED;
   }
@@ -198,7 +264,7 @@ HRESULT D3D11DeviceManager::EnsurePipelineResourcesUnlocked() {
   return S_OK;
 }
 
-HRESULT D3D11DeviceManager::EnsureWorkerReady() {
+HRESULT D3D11ShareD3D9DeviceManager::EnsureWorkerReady() {
   if (queueSemaphore_ != nullptr && stopEvent_ != nullptr &&
       workerThread_ != nullptr) {
     return S_OK;
@@ -230,7 +296,7 @@ HRESULT D3D11DeviceManager::EnsureWorkerReady() {
   return S_OK;
 }
 
-void D3D11DeviceManager::ResetUnlocked() {
+void D3D11ShareD3D9DeviceManager::ResetUnlocked() {
   viewConstantsBuffer_.Reset();
   unitQuadVertexBuffer_.Reset();
   rasterizerState_.Reset();
@@ -238,13 +304,16 @@ void D3D11DeviceManager::ResetUnlocked() {
   instanceInputLayout_.Reset();
   instancePixelShader_.Reset();
   instanceVertexShader_.Reset();
+  d3d9Device_.Reset();
+  d3d9_.Reset();
   context_.Reset();
   device_.Reset();
 }
 
-HRESULT D3D11DeviceManager::EnsureReady() {
+HRESULT D3D11ShareD3D9DeviceManager::EnsureReady() {
   EnterCriticalSection(&stateCs_);
-  if (device_ != nullptr && context_ != nullptr) {
+  if (device_ != nullptr && context_ != nullptr && d3d9_ != nullptr &&
+      d3d9Device_ != nullptr && hiddenHwnd_ != nullptr) {
     const HRESULT pipelineHr = EnsurePipelineResourcesUnlocked();
     const HRESULT workerHr = EnsureWorkerReady();
     LeaveCriticalSection(&stateCs_);
@@ -255,7 +324,7 @@ HRESULT D3D11DeviceManager::EnsureReady() {
   }
 
   ResetUnlocked();
-  const HRESULT hr = CreateSharedDevice();
+  const HRESULT hr = CreateSharedInteropDevices();
   HRESULT pipelineHr = S_OK;
   HRESULT workerHr = S_OK;
   if (SUCCEEDED(hr)) {
@@ -273,22 +342,23 @@ HRESULT D3D11DeviceManager::EnsureReady() {
   return workerHr;
 }
 
-void D3D11DeviceManager::RegisterClient() {
+void D3D11ShareD3D9DeviceManager::RegisterClient() {
   EnterCriticalSection(&stateCs_);
   ++clientCount_;
   LeaveCriticalSection(&stateCs_);
 }
 
-void D3D11DeviceManager::ReleaseClient() {
-  bool shouldShutdown = false;
+void D3D11ShareD3D9DeviceManager::ReleaseClient() {
+  bool shouldReset = false;
+
   EnterCriticalSection(&stateCs_);
   if (clientCount_ > 0) {
     --clientCount_;
-    shouldShutdown = (clientCount_ == 0);
+    shouldReset = (clientCount_ == 0);
   }
   LeaveCriticalSection(&stateCs_);
 
-  if (!shouldShutdown) {
+  if (!shouldReset) {
     return;
   }
 
@@ -298,43 +368,66 @@ void D3D11DeviceManager::ReleaseClient() {
   LeaveCriticalSection(&stateCs_);
 }
 
-void D3D11DeviceManager::Invalidate() {
+void D3D11ShareD3D9DeviceManager::Invalidate() {
   StopWorker();
   EnterCriticalSection(&stateCs_);
   ResetUnlocked();
   LeaveCriticalSection(&stateCs_);
 }
 
-std::uint64_t D3D11DeviceManager::generation() const {
+std::uint64_t D3D11ShareD3D9DeviceManager::generation() const {
   EnterCriticalSection(&stateCs_);
   const std::uint64_t generation = generation_;
   LeaveCriticalSection(&stateCs_);
   return generation;
 }
 
-ComPtr<ID3D11Device> D3D11DeviceManager::GetDevice() const {
+ComPtr<ID3D11Device> D3D11ShareD3D9DeviceManager::GetDevice() const {
   EnterCriticalSection(&stateCs_);
   ComPtr<ID3D11Device> device = device_;
   LeaveCriticalSection(&stateCs_);
   return device;
 }
 
-ComPtr<ID3D11DeviceContext> D3D11DeviceManager::GetImmediateContext() const {
+ComPtr<ID3D11DeviceContext>
+D3D11ShareD3D9DeviceManager::GetImmediateContext() const {
   EnterCriticalSection(&stateCs_);
   ComPtr<ID3D11DeviceContext> context = context_;
   LeaveCriticalSection(&stateCs_);
   return context;
 }
 
-void D3D11DeviceManager::LockExecution() {
+ComPtr<IDirect3D9Ex> D3D11ShareD3D9DeviceManager::GetD3D9() const {
+  EnterCriticalSection(&stateCs_);
+  ComPtr<IDirect3D9Ex> d3d9 = d3d9_;
+  LeaveCriticalSection(&stateCs_);
+  return d3d9;
+}
+
+ComPtr<IDirect3DDevice9Ex>
+D3D11ShareD3D9DeviceManager::GetD3D9Device() const {
+  EnterCriticalSection(&stateCs_);
+  ComPtr<IDirect3DDevice9Ex> d3d9Device = d3d9Device_;
+  LeaveCriticalSection(&stateCs_);
+  return d3d9Device;
+}
+
+HWND D3D11ShareD3D9DeviceManager::GetDeviceHwnd() const {
+  EnterCriticalSection(&stateCs_);
+  const HWND hwnd = hiddenHwnd_;
+  LeaveCriticalSection(&stateCs_);
+  return hwnd;
+}
+
+void D3D11ShareD3D9DeviceManager::LockExecution() {
   EnterCriticalSection(&executionCs_);
 }
 
-void D3D11DeviceManager::UnlockExecution() {
+void D3D11ShareD3D9DeviceManager::UnlockExecution() {
   LeaveCriticalSection(&executionCs_);
 }
 
-HRESULT D3D11DeviceManager::CreateDynamicInstanceBuffer(
+HRESULT D3D11ShareD3D9DeviceManager::CreateDynamicInstanceBuffer(
     UINT requiredBytes, ComPtr<ID3D11Buffer>& bufferOut,
     UINT& capacityBytesOut) {
   bufferOut.Reset();
@@ -369,11 +462,11 @@ HRESULT D3D11DeviceManager::CreateDynamicInstanceBuffer(
   return S_OK;
 }
 
-struct D3D11DeviceManager::FrameTaskQueueEntry {
+struct D3D11ShareD3D9DeviceManager::FrameTaskQueueEntry {
   D3D11FrameTask task;
 };
 
-HRESULT D3D11DeviceManager::SubmitFrame(D3D11FrameTask&& task) {
+HRESULT D3D11ShareD3D9DeviceManager::SubmitFrame(D3D11FrameTask&& task) {
   const HRESULT readyHr = EnsureReady();
   if (FAILED(readyHr)) {
     return readyHr;
@@ -417,11 +510,12 @@ HRESULT D3D11DeviceManager::SubmitFrame(D3D11FrameTask&& task) {
     LeaveCriticalSection(&queueCs_);
     return hr;
   }
+
   return S_OK;
 }
 
-DWORD WINAPI D3D11DeviceManager::WorkerThreadProc(LPVOID parameter) {
-  auto* manager = static_cast<D3D11DeviceManager*>(parameter);
+DWORD WINAPI D3D11ShareD3D9DeviceManager::WorkerThreadProc(LPVOID parameter) {
+  auto* manager = static_cast<D3D11ShareD3D9DeviceManager*>(parameter);
   if (manager == nullptr) {
     return 0;
   }
@@ -430,7 +524,7 @@ DWORD WINAPI D3D11DeviceManager::WorkerThreadProc(LPVOID parameter) {
   return 0;
 }
 
-void D3D11DeviceManager::FailQueuedTasksUnlocked(HRESULT hr) {
+void D3D11ShareD3D9DeviceManager::FailQueuedTasksUnlocked(HRESULT hr) {
   for (auto& entry : queue_) {
     if (entry == nullptr || entry->task.completion == nullptr) {
       continue;
@@ -446,7 +540,7 @@ void D3D11DeviceManager::FailQueuedTasksUnlocked(HRESULT hr) {
   queue_.clear();
 }
 
-void D3D11DeviceManager::WorkerLoop() {
+void D3D11ShareD3D9DeviceManager::WorkerLoop() {
   HANDLE waitHandles[2] = {stopEvent_, queueSemaphore_};
 
   while (true) {
@@ -491,14 +585,14 @@ void D3D11DeviceManager::WorkerLoop() {
   }
 }
 
-HRESULT D3D11DeviceManager::ExecuteFrameTask(
+HRESULT D3D11ShareD3D9DeviceManager::ExecuteFrameTask(
     const D3D11FrameTask& task, D3DFrameTaskResult& result) {
   if (task.renderTargetView == nullptr || task.viewportWidth <= 0.0f ||
       task.viewportHeight <= 0.0f) {
     return E_INVALIDARG;
   }
 
-  ExecutionLockGuard<D3D11DeviceManager> lock(*this);
+  ExecutionLockGuard<D3D11ShareD3D9DeviceManager> lock(*this);
   ComPtr<ID3D11DeviceContext> context = GetImmediateContext();
   if (context == nullptr) {
     return E_UNEXPECTED;
@@ -600,9 +694,12 @@ HRESULT D3D11DeviceManager::ExecuteFrameTask(
     }
   }
 
+  if (task.renderDoneQuery != nullptr) {
+    context->End(task.renderDoneQuery);
+  }
+
   context->Flush();
   return S_OK;
 }
 
 } // namespace fdv::d3d11
-

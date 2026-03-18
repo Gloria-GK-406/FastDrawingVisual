@@ -11,9 +11,11 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <vector>
 
 #include "../FastDrawingVisual.NativeProxy.Shared/FramePacket.h"
 #include "../FastDrawingVisual.NativeProxy.Shared/RendererLockGuard.h"
+#include "D3DBatchTypes.h"
 
 namespace fdv::d3d11 {
 
@@ -23,10 +25,11 @@ using RendererLockGuard = fdv::nativeproxy::shared::RendererLockGuard;
 
 struct D3D11ShareD3D9RendererState;
 struct SubmitFrameDiagnostics;
+struct D3D11FrameTask;
 
 class D3D11ShareD3D9Renderer final {
  public:
-  D3D11ShareD3D9Renderer(HWND hwnd, int width, int height);
+  D3D11ShareD3D9Renderer(int width, int height);
   ~D3D11ShareD3D9Renderer();
 
   D3D11ShareD3D9Renderer(const D3D11ShareD3D9Renderer&) = delete;
@@ -50,21 +53,19 @@ class D3D11ShareD3D9Renderer final {
   bool ValidateFramePacket(const void* framePacket, int framePacketBytes) const;
   HRESULT SubmitLayeredCommandsAndPreparePresent(
       const LayeredFramePacket* framePacket);
-  HRESULT BeginSubmitFrame(void*& currentRtv, int& drawSlotIndex);
+  HRESULT BeginSubmitFrame(int& drawSlotIndex, D3D11FrameTask& task);
   HRESULT SubmitCompiledBatches(const LayerPacket& layer, int layerIndex,
-                                int drawSlotIndex, void* currentRtv,
+                                D3D11FrameTask& task,
+                                std::vector<batch::ShapeInstance>& shapeInstances,
                                 SubmitFrameDiagnostics& diagnostics);
   void RecordFramePerformance(double drawDurationMs);
 
-  HRESULT CreateDevicesAndResources();
+  HRESULT EnsureSharedDeviceResources();
+  HRESULT CreateDeviceResources();
   void ReleaseRendererResources();
   void ReleaseRenderTargetResources();
   HRESULT ResizeFrameResources(int width, int height);
-  HRESULT CreateD3D11Device();
-  HRESULT CreateD3D9Device();
   HRESULT CreateFrameResources();
-  HRESULT EnsureTextRenderer();
-  HRESULT CreateDrawPipeline();
 
  private:
   D3D11ShareD3D9RendererState* state_ = nullptr;
@@ -83,6 +84,7 @@ class D3D11ShareD3D9Renderer final {
   int presentDurationMetricId_ = 0;
   std::uint64_t lastPresentQpc_ = 0;
   std::uint64_t submittedFrameCount_ = 0;
+  bool managerClientRegistered_ = false;
 
   bool csInitialized_ = false;
   CRITICAL_SECTION cs_{};

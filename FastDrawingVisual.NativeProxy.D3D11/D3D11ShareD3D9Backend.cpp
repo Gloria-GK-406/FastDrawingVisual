@@ -1,10 +1,8 @@
 #include "D3D11ShareD3D9Backend.h"
+#include "D3D11ShareD3D9Renderer.h"
 
 #include <new>
 #include <vcclr.h>
-
-using namespace System::Windows;
-using namespace System::Windows::Interop;
 
 namespace FastDrawingVisual::Rendering::Backends {
 
@@ -16,10 +14,6 @@ D3D11ShareD3D9Backend::~D3D11ShareD3D9Backend() {
   }
 
   DestroyRenderer();
-  if (fallbackHwndSource_ != nullptr) {
-    delete fallbackHwndSource_;
-    fallbackHwndSource_ = nullptr;
-  }
 
   isDisposed_ = true;
   UpdateReadyState();
@@ -27,7 +21,6 @@ D3D11ShareD3D9Backend::~D3D11ShareD3D9Backend() {
 
 D3D11ShareD3D9Backend::!D3D11ShareD3D9Backend() {
   DestroyRenderer();
-  fallbackHwndSource_ = nullptr;
   isDisposed_ = true;
 }
 
@@ -161,13 +154,8 @@ void D3D11ShareD3D9Backend::NotifyFrontBufferAvailable(bool available) {
 }
 
 bool D3D11ShareD3D9Backend::CreateNativeRenderer(int width, int height) {
-  IntPtr hwnd = GetOrCreateDeviceHwnd();
-  if (hwnd == IntPtr::Zero) {
-    return false;
-  }
-
   auto* renderer = new (std::nothrow) fdv::d3d11::D3D11ShareD3D9Renderer(
-      static_cast<HWND>(hwnd.ToPointer()), width, height);
+      width, height);
   if (renderer == nullptr) {
     return false;
   }
@@ -211,29 +199,6 @@ void D3D11ShareD3D9Backend::DestroyRenderer() {
   renderer_ = nullptr;
   isInitialized_ = false;
   isFaulted_ = false;
-}
-
-IntPtr D3D11ShareD3D9Backend::GetOrCreateDeviceHwnd() {
-  Application^ app = Application::Current;
-  Window^ mainWindow = app != nullptr ? app->MainWindow : nullptr;
-  if (mainWindow != nullptr) {
-    WindowInteropHelper helper(mainWindow);
-    IntPtr mainHwnd = helper.Handle;
-    if (mainHwnd != IntPtr::Zero) {
-      return mainHwnd;
-    }
-  }
-
-  if (fallbackHwndSource_ == nullptr) {
-    HwndSourceParameters parameters(
-        gcnew String(L"FastDrawingVisual.D3D11ShareD3D9Backend"));
-    parameters.Width = 1;
-    parameters.Height = 1;
-    parameters.WindowStyle = static_cast<int>(0x80000000u);
-    fallbackHwndSource_ = gcnew HwndSource(parameters);
-  }
-
-  return fallbackHwndSource_->Handle;
 }
 
 void D3D11ShareD3D9Backend::UpdateReadyState() {

@@ -1,4 +1,7 @@
 #include "D3D11ShareD3D9Renderer.h"
+#include "D3DTaskType.h"
+#include "D3D11ShareD3D9DeviceManager.h"
+#include "D3D11DeviceManager.h"
 #include "../FastDrawingVisual.LogCore/FdvLogCoreExports.h"
 #include "../FastDrawingVisual.NativeProxy.TextD2D/D2DTextRenderer.h"
 #include "BatchComplier.h"
@@ -50,20 +53,9 @@ struct D3D11ShareD3D9RendererState {
   ComPtr<IDirect3D9Ex> d3d9 = nullptr;
   ComPtr<IDirect3DDevice9Ex> d3d9Device = nullptr;
   ComPtr<IDirect3DSurface9> presentingSurface = nullptr;
-  ComPtr<ID3D11VertexShader> instanceVertexShader = nullptr;
-  ComPtr<ID3D11PixelShader> instancePixelShader = nullptr;
-  ComPtr<ID3D11InputLayout> instanceInputLayout = nullptr;
-  ComPtr<ID3D11BlendState> blendState = nullptr;
-  ComPtr<ID3D11RasterizerState> rasterizerState = nullptr;
-  ComPtr<ID3D11Buffer> unitQuadVertexBuffer = nullptr;
-  ComPtr<ID3D11Buffer> dynamicInstanceBuffer = nullptr;
-  UINT dynamicInstanceCapacityBytes = 0;
-  ComPtr<ID3D11Buffer> viewConstantsBuffer = nullptr;
-  std::unique_ptr<fdv::textd2d::D2DTextRenderer> textRenderer;
   batch::BatchCompiler batchCompiler;
   SurfaceSlot slots[kFrameCount];
-  int activeTextTargetSlotIndex = -1;
-  HWND hwnd = nullptr;
+  std::uint64_t deviceGeneration = 0;
   bool frontBufferAvailable = true;
 };
 
@@ -395,6 +387,87 @@ void LogStageFailure(const void* renderer, std::uint64_t frameId,
   FDVLOG_WriteETW(FDVLOG_LevelError, kLogCategory, message, false);
 }
 
+D3D11ShareD3D9DeviceManager& GetDeviceManager() {
+  return D3D11ShareD3D9DeviceManager::Instance();
+}
+
+HRESULT CreateShapeInstanceBuffer(
+    ID3D11Device* device, const std::vector<batch::ShapeInstance>& shapeInstances,
+    ID3D11Buffer*& bufferOut) {
+  if (bufferOut != nullptr) {
+    bufferOut->Release();
+    bufferOut = nullptr;
+  }
+  if (shapeInstances.empty()) {
+    return S_OK;
+  }
+
+  if (device == nullptr) {
+    return E_POINTER;
+  }
+
+  D3D11_BUFFER_DESC bufferDesc = {};
+  bufferDesc.ByteWidth =
+      static_cast<UINT>(shapeInstances.size() * sizeof(batch::ShapeInstance));
+  bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
+  bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+  D3D11_SUBRESOURCE_DATA initialData = {};
+  initialData.pSysMem = shapeInstances.data();
+
+  ComPtr<ID3D11Buffer> createdBuffer;
+  const HRESULT hr = device->CreateBuffer(&bufferDesc, &initialData,
+                                          createdBuffer.GetAddressOf());
+  if (FAILED(hr) || createdBuffer == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  bufferOut = createdBuffer.Detach();
+  return S_OK;
+}
+
+HRESULT AppendImageItems(const std::vector<batch::ImageBatchItem>& sourceItems,
+                        D3D11FrameTask& task) {
+  const std::size_t baseIndex = task.imageItems.size();
+  task.imagePixelBlobs.reserve(baseIndex + sourceItems.size());
+  task.imageItems.reserve(baseIndex + sourceItems.size());
+
+  for (const auto& sourceItem : sourceItems) {
+    if (sourceItem.pixels == nullptr || sourceItem.pixelBytes == 0) {
+      batch::ImageBatchItem item = sourceItem;
+      item.pixels = nullptr;
+      task.imagePixelBlobs.emplace_back();
+      task.imageItems.push_back(item);
+      continue;
+    }
+
+    task.imagePixelBlobs.emplace_back(
+        sourceItem.pixels,
+        sourceItem.pixels + static_cast<std::size_t>(sourceItem.pixelBytes));
+
+    const auto& pixels = task.imagePixelBlobs.back();
+    batch::ImageBatchItem item = sourceItem;
+    item.pixels = pixels.data();
+    task.imageItems.push_back(item);
+  }
+
+  return S_OK;
+}
+
+HRESULT WaitForTaskCompletion(
+    const std::shared_ptr<D3DFrameTaskCompletion>& completion,
+    D3DFrameTaskResult& result) {
+  if (completion == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  std::unique_lock<std::mutex> lock(completion->mutex);
+  completion->condition.wait(lock, [&completion]() {
+    return completion->completed;
+  });
+  return result.hr;
+}
+
 int FindSlotByState(const D3D11ShareD3D9RendererState* state,
                     SurfaceState slotState) {
   if (state == nullptr) {
@@ -468,12 +541,6 @@ void ReleaseFrameResources(D3D11ShareD3D9RendererState* state) {
   if (state == nullptr) {
     return;
   }
-
-  if (state->textRenderer != nullptr) {
-    state->textRenderer->ReleaseRenderTargetResources();
-  }
-
-  state->activeTextTargetSlotIndex = -1;
   state->presentingSurface.Reset();
 
   for (int index = 0; index < kFrameCount; ++index) {
@@ -540,10 +607,10 @@ void D3D11ShareD3D9Renderer::UnregisterMetrics() {
   UnregisterMetric(presentDurationMetricId_);
 }
 
-HRESULT D3D11ShareD3D9Renderer::BeginSubmitFrame(void*& currentRtv,
-                                                 int& drawSlotIndex) {
+HRESULT D3D11ShareD3D9Renderer::BeginSubmitFrame(int& drawSlotIndex,
+                                                 D3D11FrameTask& task) {
   drawSlotIndex = -1;
-  if (state_ == nullptr || state_->context == nullptr || width_ <= 0 ||
+  if (state_ == nullptr || width_ <= 0 ||
       height_ <= 0 || !state_->frontBufferAvailable) {
     return E_UNEXPECTED;
   }
@@ -553,34 +620,27 @@ HRESULT D3D11ShareD3D9Renderer::BeginSubmitFrame(void*& currentRtv,
     return S_FALSE;
   }
 
-  const HRESULT pipelineHr = CreateDrawPipeline();
-  if (FAILED(pipelineHr)) {
-    return pipelineHr;
-  }
-
   drawSlotIndex = readySlotIndex;
   state_->slots[readySlotIndex].state = SurfaceState::Drawing;
 
-  ID3D11RenderTargetView* nativeRtv = state_->slots[readySlotIndex].workRtv.Get();
-  if (nativeRtv == nullptr) {
+  if (state_->slots[readySlotIndex].workRtv == nullptr ||
+      state_->slots[readySlotIndex].renderDoneQuery == nullptr) {
     state_->slots[readySlotIndex].state = SurfaceState::Ready;
     drawSlotIndex = -1;
     return E_UNEXPECTED;
   }
-  currentRtv = nativeRtv;
-  state_->context->OMSetRenderTargets(1, &nativeRtv, nullptr);
 
-  D3D11_VIEWPORT viewport = {};
-  viewport.Width = static_cast<float>(width_);
-  viewport.Height = static_cast<float>(height_);
-  viewport.MinDepth = 0.0f;
-  viewport.MaxDepth = 1.0f;
-  state_->context->RSSetViewports(1, &viewport);
+  task.Reset();
+  task.SetRenderTargetView(state_->slots[readySlotIndex].workRtv.Get());
+  task.SetRenderDoneQuery(state_->slots[readySlotIndex].renderDoneQuery.Get());
+  task.viewportWidth = static_cast<float>(width_);
+  task.viewportHeight = static_cast<float>(height_);
   return S_OK;
 }
 
 HRESULT D3D11ShareD3D9Renderer::SubmitCompiledBatches(
-    const LayerPacket& layer, int layerIndex, int drawSlotIndex, void* currentRtv,
+    const LayerPacket& layer, int layerIndex, D3D11FrameTask& task,
+    std::vector<batch::ShapeInstance>& shapeInstances,
     SubmitFrameDiagnostics& diagnostics) {
   if (state_ == nullptr) {
     return E_UNEXPECTED;
@@ -591,7 +651,6 @@ HRESULT D3D11ShareD3D9Renderer::SubmitCompiledBatches(
   }
 
   ++diagnostics.layerCount;
-  auto* nativeRtv = static_cast<ID3D11RenderTargetView*>(currentRtv);
   state_->batchCompiler.Reset(width_, height_, layer.commandData,
                               layer.commandBytes, layer.blobData,
                               layer.blobBytes);
@@ -612,7 +671,11 @@ HRESULT D3D11ShareD3D9Renderer::SubmitCompiledBatches(
     ++batchIndex;
     switch (batch.kind) {
     case batch::BatchKind::Clear:
-      state_->context->ClearRenderTargetView(nativeRtv, batch.clearColor);
+      task.hasClear = true;
+      task.clearColor[0] = batch.clearColor[0];
+      task.clearColor[1] = batch.clearColor[1];
+      task.clearColor[2] = batch.clearColor[2];
+      task.clearColor[3] = batch.clearColor[3];
       break;
 
     case batch::BatchKind::Triangles: {
@@ -620,76 +683,16 @@ HRESULT D3D11ShareD3D9Renderer::SubmitCompiledBatches(
     }
 
     case batch::BatchKind::ShapeInstances: {
-      const auto& shapeInstances = state_->batchCompiler.GetShapeInstances();
-      const int shapeInstanceCount = static_cast<int>(shapeInstances.size());
-      draw::InstanceBatchDrawContext instanceContext{};
-      instanceContext.context = state_->context;
-      instanceContext.inputLayout = state_->instanceInputLayout;
-      instanceContext.vertexShader = state_->instanceVertexShader;
-      instanceContext.pixelShader = state_->instancePixelShader;
-      instanceContext.blendState = state_->blendState;
-      instanceContext.rasterizerState = state_->rasterizerState;
-      instanceContext.geometryVertexBuffer = state_->unitQuadVertexBuffer;
-      instanceContext.geometryVertexStrideBytes = sizeof(float) * 2;
-      instanceContext.geometryVertexCount = 4;
-      instanceContext.instanceBuffer = state_->dynamicInstanceBuffer;
-      instanceContext.instanceBufferCapacityBytes =
-          state_->dynamicInstanceCapacityBytes;
-      instanceContext.viewConstantsBuffer = state_->viewConstantsBuffer;
-      instanceContext.viewportWidth = static_cast<float>(width_);
-      instanceContext.viewportHeight = static_cast<float>(height_);
-
-      const draw::ShapeInstanceData instanceData{shapeInstances.data(),
-                                                 shapeInstanceCount};
-      draw::InstanceBatchDrawStats instanceStats{};
-      const auto instanceStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = draw::DrawShapeInstanceBatch(instanceContext,
-                                                          instanceData,
-                                                          &instanceStats);
-      const auto instanceEnd = std::chrono::steady_clock::now();
-      diagnostics.triangleCpuMs += DurationMs(instanceStart, instanceEnd);
-      diagnostics.triangleUploadMs += instanceStats.uploadInstanceDataMs;
-      diagnostics.triangleDrawCallMs += instanceStats.issueDrawMs;
-      diagnostics.vertexBytesUploaded += instanceStats.uploadedBytes;
-      diagnostics.maxVertexBufferCapacityBytes =
-          (std::max)(diagnostics.maxVertexBufferCapacityBytes,
-                     instanceStats.instanceBufferCapacityBytes);
-      state_->dynamicInstanceBuffer = instanceContext.instanceBuffer;
-      state_->dynamicInstanceCapacityBytes =
-          instanceContext.instanceBufferCapacityBytes;
-      if (FAILED(drawHr)) {
-        return drawHr;
-      }
+      const auto& batchShapeInstances = state_->batchCompiler.GetShapeInstances();
+      shapeInstances.insert(shapeInstances.end(), batchShapeInstances.begin(),
+                            batchShapeInstances.end());
       break;
     }
 
     case batch::BatchKind::Text: {
       const auto& textItems = state_->batchCompiler.GetTextItems();
-      if (state_->textRenderer == nullptr ||
-          state_->slots[drawSlotIndex].workTexture == nullptr) {
-        return E_UNEXPECTED;
-      }
-
-      if (state_->activeTextTargetSlotIndex != drawSlotIndex) {
-        const HRESULT targetHr = state_->textRenderer->CreateTargetFromTexture(
-            state_->slots[drawSlotIndex].workTexture.Get(), kSharedTextureFormat);
-        if (FAILED(targetHr)) {
-          state_->activeTextTargetSlotIndex = -1;
-          return targetHr;
-        }
-        state_->activeTextTargetSlotIndex = drawSlotIndex;
-      }
-
-      fdv::textd2d::TextBatchDrawStats textStats{};
-      const auto textStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = state_->textRenderer->DrawTextBatch(
-          state_->context.Get(), textItems.data(), static_cast<int>(textItems.size()),
-          &textStats);
-      const auto textEnd = std::chrono::steady_clock::now();
-      diagnostics.textDrawMs += DurationMs(textStart, textEnd);
-      if (FAILED(drawHr)) {
-        return drawHr;
-      }
+      task.textItems.insert(task.textItems.end(), textItems.begin(),
+                            textItems.end());
       break;
     }
 
@@ -699,32 +702,9 @@ HRESULT D3D11ShareD3D9Renderer::SubmitCompiledBatches(
       const int imageItemCount = static_cast<int>(imageItems.size());
       diagnostics.maxImageBatchItemCount =
           (std::max)(diagnostics.maxImageBatchItemCount, imageItemCount);
-      if (state_->textRenderer == nullptr ||
-          state_->slots[drawSlotIndex].workTexture == nullptr) {
-        return E_UNEXPECTED;
-      }
-
-      if (state_->activeTextTargetSlotIndex != drawSlotIndex) {
-        const HRESULT targetHr = state_->textRenderer->CreateTargetFromTexture(
-            state_->slots[drawSlotIndex].workTexture.Get(), kSharedTextureFormat);
-        if (FAILED(targetHr)) {
-          state_->activeTextTargetSlotIndex = -1;
-          return targetHr;
-        }
-        state_->activeTextTargetSlotIndex = drawSlotIndex;
-      }
-
-      fdv::textd2d::ImageBatchDrawStats imageStats{};
-      const auto imageStart = std::chrono::steady_clock::now();
-      const HRESULT drawHr = state_->textRenderer->DrawImageBatch(
-          state_->context.Get(), imageItems.data(), imageItemCount, &imageStats);
-      const auto imageEnd = std::chrono::steady_clock::now();
-      diagnostics.imageDrawMs += DurationMs(imageStart, imageEnd);
-      diagnostics.imageFlushMs += imageStats.flushMs;
-      diagnostics.imageRecordMs += imageStats.recordImageMs;
-      diagnostics.imageEndDrawMs += imageStats.endDrawMs;
-      if (FAILED(drawHr)) {
-        return drawHr;
+      const HRESULT copyHr = AppendImageItems(imageItems, task);
+      if (FAILED(copyHr)) {
+        return copyHr;
       }
       break;
     }
@@ -804,20 +784,34 @@ HRESULT D3D11ShareD3D9Renderer::SubmitLayeredCommandsAndPreparePresent(
     const LayeredFramePacket* framePacket) {
   SubmitFrameDiagnostics diagnostics{};
   const auto drawStart = std::chrono::steady_clock::now();
+  const std::uint64_t frameId = submittedFrameCount_ + 1;
 
   if (framePacket == nullptr) {
     return E_INVALIDARG;
   }
 
-  void* currentRtv = nullptr;
+  const HRESULT sharedHr = EnsureSharedDeviceResources();
+  if (FAILED(sharedHr)) {
+    return sharedHr;
+  }
+
+  auto& deviceManager = GetDeviceManager();
+
+  D3D11FrameTask task{};
   int drawSlotIndex = -1;
   const auto beginStart = std::chrono::steady_clock::now();
-  const HRESULT beginHr = BeginSubmitFrame(currentRtv, drawSlotIndex);
+  const HRESULT beginHr = BeginSubmitFrame(drawSlotIndex, task);
   const auto beginEnd = std::chrono::steady_clock::now();
   diagnostics.beginFrameMs = DurationMs(beginStart, beginEnd);
   if (FAILED(beginHr) || drawSlotIndex < 0) {
+    if (FAILED(beginHr)) {
+      LogStageFailure(static_cast<void*>(this), frameId, L"begin_frame", beginHr,
+                      diagnostics, width_, height_);
+    }
     return beginHr;
   }
+
+  std::vector<batch::ShapeInstance> shapeInstances;
 
   for (int layerIndex = 0; layerIndex < LayeredFramePacket::kMaxLayerCount;
        ++layerIndex) {
@@ -826,37 +820,94 @@ HRESULT D3D11ShareD3D9Renderer::SubmitLayeredCommandsAndPreparePresent(
       continue;
     }
 
-    const HRESULT submitHr = SubmitCompiledBatches(layer, layerIndex,
-                                                   drawSlotIndex, currentRtv,
-                                                   diagnostics);
+    const HRESULT submitHr =
+        SubmitCompiledBatches(layer, layerIndex, task, shapeInstances, diagnostics);
     if (FAILED(submitHr)) {
       state_->slots[drawSlotIndex].state = SurfaceState::Ready;
+      LogStageFailure(static_cast<void*>(this), frameId, L"compile_batches",
+                      submitHr, diagnostics, width_, height_);
       return submitHr;
     }
   }
 
-  if (state_->slots[drawSlotIndex].renderDoneQuery == nullptr) {
-    state_->slots[drawSlotIndex].state = SurfaceState::Ready;
-    return E_UNEXPECTED;
+  if (!shapeInstances.empty()) {
+    const HRESULT bufferHr =
+        CreateShapeInstanceBuffer(state_->device.Get(), shapeInstances,
+                                  task.instanceBuffer);
+    if (FAILED(bufferHr)) {
+      state_->slots[drawSlotIndex].state = SurfaceState::Ready;
+      LogStageFailure(static_cast<void*>(this), frameId, L"build_shape_buffer",
+                      bufferHr, diagnostics, width_, height_);
+      return bufferHr;
+    }
+    task.shapeInstanceCount = static_cast<int>(shapeInstances.size());
+    diagnostics.vertexBytesUploaded =
+        static_cast<UINT>(shapeInstances.size() * sizeof(batch::ShapeInstance));
+    diagnostics.maxVertexBufferCapacityBytes = diagnostics.vertexBytesUploaded;
   }
 
-  state_->context->End(state_->slots[drawSlotIndex].renderDoneQuery.Get());
-  state_->context->Flush();
+  auto completion = std::make_shared<D3DFrameTaskCompletion>();
+  if (completion == nullptr) {
+    state_->slots[drawSlotIndex].state = SurfaceState::Ready;
+    return E_OUTOFMEMORY;
+  }
+  D3DFrameTaskResult taskResult{};
+  completion->resultSink = &taskResult;
+  completion->completed = false;
+  task.completion = completion;
+  const auto taskCompletion = completion;
+
+  const HRESULT submitTaskHr = deviceManager.SubmitFrame(std::move(task));
+  if (FAILED(submitTaskHr)) {
+    state_->slots[drawSlotIndex].state = SurfaceState::Ready;
+    LogStageFailure(static_cast<void*>(this), frameId, L"submit_task",
+                    submitTaskHr, diagnostics, width_, height_);
+    return submitTaskHr;
+  }
+
+  const HRESULT waitHr = WaitForTaskCompletion(taskCompletion, taskResult);
+  diagnostics.triangleCpuMs += taskResult.stats.shapeDrawMs;
+  diagnostics.textDrawMs += taskResult.stats.textDrawMs;
+  diagnostics.textFlushMs += taskResult.stats.textFlushMs;
+  diagnostics.textRecordMs += taskResult.stats.textRecordMs;
+  diagnostics.textEndDrawMs += taskResult.stats.textEndDrawMs;
+  diagnostics.imageDrawMs += taskResult.stats.imageDrawMs;
+  diagnostics.imageFlushMs += taskResult.stats.imageFlushMs;
+  diagnostics.imageRecordMs += taskResult.stats.imageRecordMs;
+  diagnostics.imageEndDrawMs += taskResult.stats.imageEndDrawMs;
+  if (FAILED(waitHr)) {
+    state_->slots[drawSlotIndex].state = SurfaceState::Ready;
+    LogStageFailure(static_cast<void*>(this), frameId, L"wait_task",
+                    waitHr, diagnostics, width_, height_);
+    return waitHr;
+  }
+
   DemoteReadyForPresentSlots(state_, drawSlotIndex);
   state_->slots[drawSlotIndex].state = SurfaceState::ReadyForPresent;
 
   const auto drawEnd = std::chrono::steady_clock::now();
   const double drawDurationMs = DurationMs(drawStart, drawEnd);
 
+  if (compileDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(compileDurationMetricId_, diagnostics.compileMs);
+  }
+  if (commandReadDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(commandReadDurationMetricId_, diagnostics.commandReadMs);
+  }
+  if (commandBuildDurationMetricId_ > 0) {
+    FDVLOG_LogMetric(commandBuildDurationMetricId_, diagnostics.commandBuildMs);
+  }
+
   RecordFramePerformance(drawDurationMs);
   return S_OK;
 }
 
-D3D11ShareD3D9Renderer::D3D11ShareD3D9Renderer(HWND hwnd, int width, int height)
+D3D11ShareD3D9Renderer::D3D11ShareD3D9Renderer(int width, int height)
     : width_(width), height_(height) {
   state_ = new (std::nothrow) D3D11ShareD3D9RendererState();
   if (state_ != nullptr) {
-    state_->hwnd = hwnd;
+    GetDeviceManager().RegisterClient();
+    managerClientRegistered_ = true;
   }
   InitializeCriticalSectionAndSpinCount(&cs_, 1000);
   csInitialized_ = true;
@@ -865,6 +916,10 @@ D3D11ShareD3D9Renderer::D3D11ShareD3D9Renderer(HWND hwnd, int width, int height)
 D3D11ShareD3D9Renderer::~D3D11ShareD3D9Renderer() {
   UnregisterMetrics();
   ReleaseRendererResources();
+  if (managerClientRegistered_) {
+    GetDeviceManager().ReleaseClient();
+    managerClientRegistered_ = false;
+  }
   delete state_;
   state_ = nullptr;
 
@@ -882,132 +937,36 @@ void D3D11ShareD3D9Renderer::ReleaseRenderTargetResources() {
   ReleaseFrameResources(state_);
 }
 
-HRESULT D3D11ShareD3D9Renderer::EnsureTextRenderer() {
-  if (state_ == nullptr || state_->device == nullptr) {
-    return E_UNEXPECTED;
+HRESULT D3D11ShareD3D9Renderer::EnsureSharedDeviceResources() {
+  if (state_ == nullptr) {
+    return E_OUTOFMEMORY;
   }
 
-  if (state_->textRenderer == nullptr) {
-    state_->textRenderer = std::make_unique<fdv::textd2d::D2DTextRenderer>();
-    if (state_->textRenderer == nullptr) {
-      return E_OUTOFMEMORY;
-    }
+  auto& deviceManager = GetDeviceManager();
+  const HRESULT readyHr = deviceManager.EnsureReady();
+  if (FAILED(readyHr)) {
+    return readyHr;
   }
 
-  return state_->textRenderer->EnsureDeviceResources(state_->device.Get());
-}
-
-HRESULT D3D11ShareD3D9Renderer::CreateDrawPipeline() {
-  if (state_ == nullptr || state_->device == nullptr) {
-    return E_UNEXPECTED;
-  }
-
-  if (state_->instanceVertexShader != nullptr &&
-      state_->instancePixelShader != nullptr &&
-      state_->instanceInputLayout != nullptr &&
-      state_->unitQuadVertexBuffer != nullptr &&
-      state_->viewConstantsBuffer != nullptr &&
-      state_->blendState != nullptr && state_->rasterizerState != nullptr) {
+  const std::uint64_t generation = deviceManager.generation();
+  if (state_->device != nullptr && state_->context != nullptr &&
+      state_->d3d9 != nullptr && state_->d3d9Device != nullptr &&
+      state_->deviceGeneration == generation) {
     return S_OK;
   }
 
-  ComPtr<ID3DBlob> instanceVsBlob;
-  ComPtr<ID3DBlob> instancePsBlob;
+  ReleaseRendererResources();
 
-  HRESULT hr = LoadShaderBlob(kInstanceVertexShaderObject, instanceVsBlob);
-  if (FAILED(hr)) {
-    return hr;
-  }
+  state_->device = deviceManager.GetDevice();
+  state_->context = deviceManager.GetImmediateContext();
+  state_->d3d9 = deviceManager.GetD3D9();
+  state_->d3d9Device = deviceManager.GetD3D9Device();
+  state_->deviceGeneration = generation;
 
-  hr = LoadShaderBlob(kInstancePixelShaderObject, instancePsBlob);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = state_->device->CreateVertexShader(
-      instanceVsBlob->GetBufferPointer(), instanceVsBlob->GetBufferSize(),
-      nullptr, state_->instanceVertexShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->instanceVertexShader == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  hr = state_->device->CreatePixelShader(
-      instancePsBlob->GetBufferPointer(), instancePsBlob->GetBufferSize(),
-      nullptr, state_->instancePixelShader.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->instancePixelShader == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_INPUT_ELEMENT_DESC instanceInputLayout[] = {
-      {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
-       D3D11_INPUT_PER_VERTEX_DATA, 0},
-      {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-      {"TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 64,
-       D3D11_INPUT_PER_INSTANCE_DATA, 1},
-  };
-  hr = state_->device->CreateInputLayout(
-      instanceInputLayout, ARRAYSIZE(instanceInputLayout),
-      instanceVsBlob->GetBufferPointer(), instanceVsBlob->GetBufferSize(),
-      state_->instanceInputLayout.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->instanceInputLayout == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_BLEND_DESC blendDesc = {};
-  blendDesc.AlphaToCoverageEnable = FALSE;
-  blendDesc.IndependentBlendEnable = FALSE;
-  blendDesc.RenderTarget[0].BlendEnable = TRUE;
-  blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
-  blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-  blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-  blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-  blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-  blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-  blendDesc.RenderTarget[0].RenderTargetWriteMask =
-      D3D11_COLOR_WRITE_ENABLE_ALL;
-
-  hr = state_->device->CreateBlendState(
-      &blendDesc, state_->blendState.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->blendState == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  D3D11_RASTERIZER_DESC rsDesc = {};
-  rsDesc.FillMode = D3D11_FILL_SOLID;
-  rsDesc.CullMode = D3D11_CULL_NONE;
-  rsDesc.FrontCounterClockwise = FALSE;
-  rsDesc.DepthBias = 0;
-  rsDesc.DepthBiasClamp = 0.0f;
-  rsDesc.SlopeScaledDepthBias = 0.0f;
-  rsDesc.DepthClipEnable = FALSE;
-  rsDesc.ScissorEnable = FALSE;
-  rsDesc.MultisampleEnable = FALSE;
-  rsDesc.AntialiasedLineEnable = FALSE;
-
-  hr = state_->device->CreateRasterizerState(
-      &rsDesc, state_->rasterizerState.ReleaseAndGetAddressOf());
-  if (FAILED(hr) || state_->rasterizerState == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  hr = EnsureDynamicBuffer(state_->device.Get(), 16u,
-                           D3D11_BIND_CONSTANT_BUFFER,
-                           state_->viewConstantsBuffer);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = EnsureUnitQuadVertexBuffer(state_->device.Get(),
-                                  state_->unitQuadVertexBuffer);
-  if (FAILED(hr)) {
-    return hr;
+  if (state_->device == nullptr || state_->context == nullptr ||
+      state_->d3d9 == nullptr || state_->d3d9Device == nullptr) {
+    ReleaseRendererResources();
+    return E_FAIL;
   }
 
   return S_OK;
@@ -1021,16 +980,7 @@ void D3D11ShareD3D9Renderer::ReleaseRendererResources() {
   state_->batchCompiler = batch::BatchCompiler();
 
   ReleaseRenderTargetResources();
-  state_->textRenderer.reset();
-  state_->unitQuadVertexBuffer.Reset();
-  state_->dynamicInstanceBuffer.Reset();
-  state_->dynamicInstanceCapacityBytes = 0;
-  state_->viewConstantsBuffer.Reset();
-  state_->rasterizerState.Reset();
-  state_->blendState.Reset();
-  state_->instanceInputLayout.Reset();
-  state_->instancePixelShader.Reset();
-  state_->instanceVertexShader.Reset();
+  state_->deviceGeneration = 0;
   state_->d3d9Device.Reset();
   state_->d3d9.Reset();
   state_->context.Reset();
@@ -1043,99 +993,11 @@ HRESULT D3D11ShareD3D9Renderer::Initialize() {
     return E_OUTOFMEMORY;
   }
 
-  if (state_->hwnd == nullptr || width_ <= 0 || height_ <= 0) {
-    return E_INVALIDARG;
-  }
-
-  return CreateDevicesAndResources();
-}
-
-HRESULT D3D11ShareD3D9Renderer::CreateD3D11Device() {
-  if (state_ == nullptr) {
-    return E_OUTOFMEMORY;
-  }
-
-  if (state_->device != nullptr && state_->context != nullptr) {
-    return S_OK;
-  }
-
-  const D3D_FEATURE_LEVEL featureLevels[] = {
-      D3D_FEATURE_LEVEL_11_0,
-      D3D_FEATURE_LEVEL_10_1,
-      D3D_FEATURE_LEVEL_10_0,
-      D3D_FEATURE_LEVEL_9_3,
-      D3D_FEATURE_LEVEL_9_1,
-  };
-  D3D_FEATURE_LEVEL createdFeatureLevel = D3D_FEATURE_LEVEL_9_1;
-
-  HRESULT hr = D3D11CreateDevice(
-      nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, kCreationFlags, featureLevels,
-      ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
-      state_->device.ReleaseAndGetAddressOf(), &createdFeatureLevel,
-      state_->context.ReleaseAndGetAddressOf());
-
-  if (FAILED(hr) || state_->device == nullptr || state_->context == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  static_cast<void>(createdFeatureLevel);
-  return S_OK;
-}
-
-HRESULT D3D11ShareD3D9Renderer::CreateD3D9Device() {
   if (width_ <= 0 || height_ <= 0) {
     return E_INVALIDARG;
   }
 
-  if (state_ == nullptr) {
-    return E_OUTOFMEMORY;
-  }
-
-  if (state_->hwnd == nullptr) {
-    return E_INVALIDARG;
-  }
-
-  if (state_->d3d9Device != nullptr) {
-    return S_OK;
-  }
-
-  if (state_->d3d9 == nullptr) {
-    const HRESULT createD3D9Hr =
-        Direct3DCreate9Ex(D3D_SDK_VERSION, state_->d3d9.ReleaseAndGetAddressOf());
-    if (FAILED(createD3D9Hr) || state_->d3d9 == nullptr) {
-      return FAILED(createD3D9Hr) ? createD3D9Hr : E_FAIL;
-    }
-  }
-
-  D3DPRESENT_PARAMETERS parameters = {};
-  parameters.Windowed = TRUE;
-  parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
-  parameters.BackBufferFormat = D3DFMT_UNKNOWN;
-  parameters.BackBufferWidth = 1;
-  parameters.BackBufferHeight = 1;
-  parameters.BackBufferCount = 1;
-  parameters.hDeviceWindow = state_->hwnd;
-  parameters.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
-  parameters.EnableAutoDepthStencil = FALSE;
-
-  HRESULT hr = state_->d3d9->CreateDeviceEx(
-      D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, state_->hwnd,
-      D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
-          D3DCREATE_FPU_PRESERVE,
-      &parameters, nullptr, state_->d3d9Device.ReleaseAndGetAddressOf());
-  if (FAILED(hr)) {
-    hr = state_->d3d9->CreateDeviceEx(
-        D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, state_->hwnd,
-        D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
-            D3DCREATE_FPU_PRESERVE,
-        &parameters, nullptr, state_->d3d9Device.ReleaseAndGetAddressOf());
-  }
-
-  if (FAILED(hr) || state_->d3d9Device == nullptr) {
-    return FAILED(hr) ? hr : E_FAIL;
-  }
-
-  return S_OK;
+  return CreateDeviceResources();
 }
 
 HRESULT D3D11ShareD3D9Renderer::CreateFrameResources() {
@@ -1234,42 +1096,25 @@ HRESULT D3D11ShareD3D9Renderer::CreateFrameResources() {
     return FAILED(presentSurfaceHr) ? presentSurfaceHr : E_FAIL;
   }
 
-  state_->activeTextTargetSlotIndex = -1;
   return S_OK;
 }
 
-HRESULT D3D11ShareD3D9Renderer::CreateDevicesAndResources() {
+HRESULT D3D11ShareD3D9Renderer::CreateDeviceResources() {
   if (state_ == nullptr) {
     return E_OUTOFMEMORY;
   }
 
-  ReleaseRendererResources();
-
-  HRESULT hr = CreateD3D11Device();
-  if (FAILED(hr)) {
-    ReleaseRendererResources();
-    return hr;
+  const HRESULT sharedHr = EnsureSharedDeviceResources();
+  if (FAILED(sharedHr)) {
+    return sharedHr;
   }
 
-  hr = CreateD3D9Device();
-  if (FAILED(hr)) {
-    ReleaseRendererResources();
-    return hr;
+  if (state_->presentingSurface != nullptr &&
+      state_->slots[0].workTexture != nullptr) {
+    return S_OK;
   }
 
-  hr = EnsureTextRenderer();
-  if (FAILED(hr)) {
-    ReleaseRendererResources();
-    return hr;
-  }
-
-  hr = CreateDrawPipeline();
-  if (FAILED(hr)) {
-    ReleaseRendererResources();
-    return hr;
-  }
-
-  hr = CreateFrameResources();
+  const HRESULT hr = CreateFrameResources();
   if (FAILED(hr)) {
     ReleaseRendererResources();
     return hr;
@@ -1290,9 +1135,14 @@ HRESULT D3D11ShareD3D9Renderer::ResizeFrameResources(int width, int height) {
   width_ = width;
   height_ = height;
 
+  const HRESULT sharedHr = EnsureSharedDeviceResources();
+  if (FAILED(sharedHr)) {
+    return sharedHr;
+  }
+
   if (state_->device == nullptr || state_->context == nullptr ||
       state_->d3d9Device == nullptr) {
-    return CreateDevicesAndResources();
+    return CreateDeviceResources();
   }
 
   return CreateFrameResources();
@@ -1329,6 +1179,14 @@ HRESULT D3D11ShareD3D9Renderer::CopyReadyToPresentSurface() {
   if (state_ == nullptr) {
     return E_OUTOFMEMORY;
   }
+
+  const HRESULT sharedHr = EnsureSharedDeviceResources();
+  if (FAILED(sharedHr)) {
+    return sharedHr;
+  }
+
+  auto& deviceManager = GetDeviceManager();
+  ExecutionLockGuard<D3D11ShareD3D9DeviceManager> executionLock(deviceManager);
 
   if (state_->d3d9Device == nullptr || state_->context == nullptr ||
       state_->presentingSurface == nullptr || !state_->frontBufferAvailable) {
@@ -1399,7 +1257,6 @@ void D3D11ShareD3D9Renderer::OnFrontBufferAvailable(bool available) {
   }
 
   state_->frontBufferAvailable = available;
-  state_->activeTextTargetSlotIndex = -1;
 
   for (int index = 0; index < kFrameCount; ++index) {
     state_->slots[index].state = SurfaceState::Ready;

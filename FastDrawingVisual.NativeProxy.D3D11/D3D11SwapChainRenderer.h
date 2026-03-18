@@ -77,7 +77,6 @@ class D3D11SwapChainRenderer final {
   int presentDurationMetricId_ = 0;
   std::uint64_t lastPresentQpc_ = 0;
   std::uint64_t submittedFrameCount_ = 0;
-  bool sharedManagerClientRegistered_ = false;
 
   bool csInitialized_ = false;
   CRITICAL_SECTION cs_{};

@@ -178,6 +178,9 @@
     <ClCompile Include="D3D11ShareD3D9Renderer.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
+    <ClCompile Include="D3D11ShareD3D9DeviceManager.cpp">
+      <CompileAsManaged>false</CompileAsManaged>
+    </ClCompile>
     <ClCompile Include="D3D11DeviceManager.cpp">
       <CompileAsManaged>false</CompileAsManaged>
     </ClCompile>
@@ -214,8 +217,10 @@
     <ClInclude Include="D3DBatchDrawTypes.h" />
     <ClInclude Include="D3DTaskType.h" />
     <ClInclude Include="D3D11ShareD3D9Renderer.h" />
+    <ClInclude Include="D3D11ShareD3D9DeviceManager.h" />
     <ClInclude Include="D3D11ShareD3D9Backend.h" />
     <ClInclude Include="D3D11DeviceManager.h" />
+    <ClInclude Include="D3D11DeviceManagerShared.h" />
     <ClInclude Include="D3D11SwapChainRenderer.h" />
     <ClInclude Include="D3D11SwapChainBackend.h" />
   </ItemGroup>

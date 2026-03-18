@@ -19,6 +19,9 @@
     <ClCompile Include="D3D11SwapChainRenderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="D3D11ShareD3D9DeviceManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="InstanceVS_Model4.hlsl">
@@ -59,6 +62,12 @@
     <ClInclude Include="D3D11SwapChainBackend.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="D3D11DeviceManagerShared.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D11ShareD3D9DeviceManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Header Files">
@@ -72,4 +81,3 @@
     </Filter>
   </ItemGroup>
 </Project>
-

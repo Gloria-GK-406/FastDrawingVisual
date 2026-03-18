@@ -1,18 +1,11 @@
 #pragma once
 
-#include "D3D11ShareD3D9Renderer.h"
-
 using namespace System;
 using namespace FastDrawingVisual::CommandRuntime;
 using namespace FastDrawingVisual::Rendering;
 
-namespace System::Windows {
-ref class Application;
-ref class Window;
-}
-
-namespace System::Windows::Interop {
-ref class HwndSource;
+namespace fdv::d3d11 {
+class D3D11ShareD3D9Renderer;
 }
 
 namespace FastDrawingVisual::Rendering::Backends {
@@ -47,13 +40,11 @@ public ref class D3D11ShareD3D9Backend sealed : public IRenderBackend,
   bool CreateNativeRenderer(int width, int height);
   void SubmitFrame(LayeredFramePacket frame);
   void DestroyRenderer();
-  IntPtr GetOrCreateDeviceHwnd();
   void UpdateReadyState();
   void ThrowIfDisposed();
 
  private:
   fdv::d3d11::D3D11ShareD3D9Renderer* renderer_ = nullptr;
-  System::Windows::Interop::HwndSource^ fallbackHwndSource_ = nullptr;
   int width_ = 0;
   int height_ = 0;
   bool isInitialized_ = false;

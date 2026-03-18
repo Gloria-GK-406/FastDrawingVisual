@@ -347,7 +347,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
     return bufferHr;
   }
 
-  task.instanceBuffer = instanceBuffer;
+  task.SetInstanceBuffer(instanceBuffer.Get());
   task.shapeInstanceCount = 0;
   task.textItems.clear();
   task.imageItems.clear();
@@ -370,7 +370,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
     }
 
     const HRESULT mapHr =
-        uploadContext->Map(task.instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD,
+        uploadContext->Map(task.instanceBuffer, 0, D3D11_MAP_WRITE_DISCARD,
                            0, &mapped);
     if (FAILED(mapHr) || mapped.pData == nullptr) {
       return FAILED(mapHr) ? mapHr : E_FAIL;
@@ -413,7 +413,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
 
       case batch::BatchKind::Triangles:
         if (instanceBufferMapped) {
-          uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+          uploadContext->Unmap(task.instanceBuffer, 0);
         }
         return E_NOTIMPL;
 
@@ -428,7 +428,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
              instanceBufferUsedBytes + batchBytes >
                  instanceBufferCapacityBytes)) {
           if (instanceBufferMapped) {
-            uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+            uploadContext->Unmap(task.instanceBuffer, 0);
           }
           return mappedBytes == nullptr ? E_UNEXPECTED : E_BOUNDS;
         }
@@ -469,7 +469,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
 
       default:
         if (instanceBufferMapped) {
-          uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+          uploadContext->Unmap(task.instanceBuffer, 0);
         }
         return E_INVALIDARG;
       }
@@ -477,7 +477,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
 
     if (batchHr != S_FALSE) {
       if (instanceBufferMapped) {
-        uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+        uploadContext->Unmap(task.instanceBuffer, 0);
       }
       const HRESULT hr = FAILED(batchHr) ? batchHr : E_INVALIDARG;
       wchar_t message[512]{};
@@ -494,7 +494,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
   }
 
   if (instanceBufferMapped) {
-    uploadContext->Unmap(task.instanceBuffer.Get(), 0);
+    uploadContext->Unmap(task.instanceBuffer, 0);
   }
 
   task.viewportWidth = static_cast<float>(width_);
@@ -587,8 +587,7 @@ HRESULT D3D11SwapChainRenderer::SubmitLayeredCommandsAndPresent(
   }
 
   D3D11FrameTask task{};
-  task.renderTargetView =
-      static_cast<ID3D11RenderTargetView*>(currentRtv);
+  task.SetRenderTargetView(static_cast<ID3D11RenderTargetView*>(currentRtv));
   task.completion = std::make_shared<D3DFrameTaskCompletion>();
   if (task.completion == nullptr) {
     return E_OUTOFMEMORY;
@@ -782,10 +781,7 @@ void D3D11SwapChainRenderer::ReleaseRendererResources() {
   ReleaseRenderTargetResources();
   state_->swapChain.Reset();
 
-  if (sharedManagerClientRegistered_) {
-    state_->deviceManager->ReleaseClient();
-    sharedManagerClientRegistered_ = false;
-  }
+  state_->deviceManager->ReleaseClient();
 }
 
 HRESULT D3D11SwapChainRenderer::Initialize() {

@@ -10,7 +10,6 @@
 
 #include <windows.h>
 
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -29,9 +28,9 @@ namespace fdv::d3d11 {
 
 using Microsoft::WRL::ComPtr;
 
-class D3D11DeviceManager final {
+class D3D11ShareD3D9DeviceManager final {
  public:
-  static D3D11DeviceManager& Instance();
+  static D3D11ShareD3D9DeviceManager& Instance();
 
   HRESULT EnsureReady();
   void RegisterClient();
@@ -45,20 +44,25 @@ class D3D11DeviceManager final {
   std::uint64_t generation() const;
   ComPtr<ID3D11Device> GetDevice() const;
   ComPtr<ID3D11DeviceContext> GetImmediateContext() const;
+  ComPtr<IDirect3D9Ex> GetD3D9() const;
+  ComPtr<IDirect3DDevice9Ex> GetD3D9Device() const;
+  HWND GetDeviceHwnd() const;
 
   void LockExecution();
   void UnlockExecution();
 
  private:
-  D3D11DeviceManager();
-  ~D3D11DeviceManager();
-
-  D3D11DeviceManager(const D3D11DeviceManager&) = delete;
-  D3D11DeviceManager& operator=(const D3D11DeviceManager&) = delete;
-
   struct FrameTaskQueueEntry;
 
-  HRESULT CreateSharedDevice();
+  D3D11ShareD3D9DeviceManager();
+  ~D3D11ShareD3D9DeviceManager();
+
+  D3D11ShareD3D9DeviceManager(const D3D11ShareD3D9DeviceManager&) = delete;
+  D3D11ShareD3D9DeviceManager& operator=(const D3D11ShareD3D9DeviceManager&) =
+      delete;
+
+  HRESULT EnsureHiddenWindowUnlocked();
+  HRESULT CreateSharedInteropDevices();
   HRESULT EnsurePipelineResourcesUnlocked();
   HRESULT EnsureWorkerReady();
   HRESULT ExecuteFrameTask(const D3D11FrameTask& task,
@@ -88,33 +92,13 @@ class D3D11DeviceManager final {
   ComPtr<ID3D11Buffer> unitQuadVertexBuffer_ = nullptr;
   ComPtr<ID3D11Buffer> viewConstantsBuffer_ = nullptr;
   std::unique_ptr<fdv::textd2d::D2DTextRenderer> textRenderer_;
+  ComPtr<IDirect3D9Ex> d3d9_ = nullptr;
+  ComPtr<IDirect3DDevice9Ex> d3d9Device_ = nullptr;
+  HWND hiddenHwnd_ = nullptr;
   HANDLE queueSemaphore_ = nullptr;
   HANDLE stopEvent_ = nullptr;
   HANDLE workerThread_ = nullptr;
   std::vector<std::unique_ptr<FrameTaskQueueEntry>> queue_;
-};
-
-template <typename TManager>
-class ExecutionLockGuard final {
- public:
-  explicit ExecutionLockGuard(TManager& manager) : manager_(manager) {
-    const auto waitStart = std::chrono::steady_clock::now();
-    manager_.LockExecution();
-    const auto waitEnd = std::chrono::steady_clock::now();
-    waitDurationMs_ =
-        std::chrono::duration<double, std::milli>(waitEnd - waitStart).count();
-  }
-
-  ~ExecutionLockGuard() { manager_.UnlockExecution(); }
-
-  ExecutionLockGuard(const ExecutionLockGuard&) = delete;
-  ExecutionLockGuard& operator=(const ExecutionLockGuard&) = delete;
-
-  double waitDurationMs() const { return waitDurationMs_; }
-
- private:
-  TManager& manager_;
-  double waitDurationMs_ = 0.0;
 };
 
 } // namespace fdv::d3d11
