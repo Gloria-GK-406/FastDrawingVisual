@@ -1,21 +1,23 @@
 using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace FastDrawingVisual.Rendering
 {
     public sealed class LatestWinsRenderWorker : IDisposable
     {
+        private static readonly SharedRenderScheduler s_scheduler = new();
+
         private readonly Func<bool> _canExecute;
         private readonly Func<IDrawingContext?> _contextFactory;
         private readonly Action<Exception> _onExecutionFault;
-        private readonly object _sync = new();
-        private readonly SemaphoreSlim _signal = new(0, 1);
+        private readonly ManualResetEventSlim _idleEvent = new(initialState: true);
         private volatile Action<IDrawingContext>? _pendingDrawAction;
-        private CancellationTokenSource? _cts;
-        private Task? _workerTask;
-        private int _signalState;
-        private bool _isDisposed;
+        private int _queuedState;
+        private int _executingState;
+        private volatile bool _isStarted;
+        private volatile bool _isDisposed;
 
         public LatestWinsRenderWorker(
             Func<bool> canExecute,
@@ -30,63 +32,14 @@ namespace FastDrawingVisual.Rendering
         public void Start()
         {
             ThrowIfDisposed();
-
-            lock (_sync)
-            {
-                if (_workerTask is { IsCompleted: false })
-                    return;
-
-                _cts?.Dispose();
-                _cts = new CancellationTokenSource();
-                _workerTask = Task.Run(() => WorkerLoopAsync(_cts.Token));
-            }
-
+            _isStarted = true;
             SignalIfPending();
         }
 
         public bool Stop(TimeSpan timeout)
         {
-            Task? workerTask;
-            CancellationTokenSource? cts;
-
-            lock (_sync)
-            {
-                workerTask = _workerTask;
-                cts = _cts;
-            }
-
-            if (workerTask == null && cts == null)
-                return true;
-
-            cts?.Cancel();
-
-            if (workerTask != null)
-            {
-                try
-                {
-                    if (timeout == Timeout.InfiniteTimeSpan)
-                        workerTask.Wait();
-                    else if (!workerTask.Wait(timeout))
-                        return false;
-                }
-                catch (AggregateException ex) when (IsCancellationOnly(ex))
-                {
-                }
-            }
-
-            lock (_sync)
-            {
-                if (ReferenceEquals(_workerTask, workerTask))
-                    _workerTask = null;
-
-                if (ReferenceEquals(_cts, cts))
-                {
-                    _cts?.Dispose();
-                    _cts = null;
-                }
-            }
-
-            return true;
+            _isStarted = false;
+            return WaitForIdle(timeout);
         }
 
         public void Submit(Action<IDrawingContext> drawAction)
@@ -96,13 +49,13 @@ namespace FastDrawingVisual.Rendering
                 return;
 
             Interlocked.Exchange(ref _pendingDrawAction, drawAction);
-            Signal();
+            QueueIfNeeded();
         }
 
         public void SignalIfPending()
         {
             if (_pendingDrawAction != null)
-                Signal();
+                QueueIfNeeded();
         }
 
         public void Dispose()
@@ -112,69 +65,78 @@ namespace FastDrawingVisual.Rendering
 
             _isDisposed = true;
             Stop(Timeout.InfiniteTimeSpan);
-            _signal.Dispose();
+            _idleEvent.Dispose();
         }
 
-        private async Task WorkerLoopAsync(CancellationToken token)
+        private void ExecuteScheduled()
         {
-            try
-            {
-                while (true)
-                {
-                    await _signal.WaitAsync(token).ConfigureAwait(false);
-                    Interlocked.Exchange(ref _signalState, 0);
+            Interlocked.Exchange(ref _queuedState, 0);
 
-                    if (!_canExecute())
-                        continue;
-
-                    IDrawingContext? context;
-                    try
-                    {
-                        context = _contextFactory();
-                    }
-                    catch (Exception ex)
-                    {
-                        SafeReportFault(ex);
-                        continue;
-                    }
-
-                    if (context == null)
-                        continue;
-
-                    try
-                    {
-                        using (context)
-                        {
-                            var action = Interlocked.Exchange(ref _pendingDrawAction, null);
-                            if (action == null)
-                                continue;
-
-                            action(context);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        SafeReportFault(ex);
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        private void Signal()
-        {
-            if (Interlocked.Exchange(ref _signalState, 1) != 0)
+            if (_isDisposed || !_isStarted)
                 return;
 
+            if (Interlocked.CompareExchange(ref _executingState, 1, 0) != 0)
+            {
+                QueueIfNeeded();
+                return;
+            }
+
+            _idleEvent.Reset();
+
             try
             {
-                _signal.Release();
+                if (!_canExecute())
+                    return;
+
+                IDrawingContext? context;
+                try
+                {
+                    context = _contextFactory();
+                }
+                catch (Exception ex)
+                {
+                    SafeReportFault(ex);
+                    return;
+                }
+
+                if (context == null)
+                    return;
+
+                try
+                {
+                    using (context)
+                    {
+                        var action = Interlocked.Exchange(ref _pendingDrawAction, null);
+                        if (action == null)
+                            return;
+
+                        action(context);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SafeReportFault(ex);
+                }
             }
-            catch (SemaphoreFullException)
+            finally
             {
+                Interlocked.Exchange(ref _executingState, 0);
+                _idleEvent.Set();
+
+                if (!_isDisposed && _isStarted && _pendingDrawAction != null)
+                    QueueIfNeeded();
             }
+        }
+
+        private void QueueIfNeeded()
+        {
+            if (_isDisposed || !_isStarted)
+                return;
+
+            if (Interlocked.Exchange(ref _queuedState, 1) != 0)
+                return;
+
+            s_scheduler.Enqueue(this);
         }
 
         private void SafeReportFault(Exception ex)
@@ -194,15 +156,72 @@ namespace FastDrawingVisual.Rendering
                 throw new ObjectDisposedException(nameof(LatestWinsRenderWorker));
         }
 
-        private static bool IsCancellationOnly(AggregateException ex)
+        private bool WaitForIdle(TimeSpan timeout)
         {
-            foreach (var inner in ex.Flatten().InnerExceptions)
+            if (timeout == Timeout.InfiniteTimeSpan)
             {
-                if (inner is not OperationCanceledException)
+                while (Volatile.Read(ref _executingState) != 0)
+                    _idleEvent.Wait();
+                return true;
+            }
+
+            long timeoutMs = (long)timeout.TotalMilliseconds;
+            if (timeoutMs < -1)
+                throw new ArgumentOutOfRangeException(nameof(timeout));
+
+            int boundedTimeoutMs = timeoutMs > int.MaxValue ? int.MaxValue : (int)timeoutMs;
+            var stopwatch = Stopwatch.StartNew();
+
+            while (Volatile.Read(ref _executingState) != 0)
+            {
+                int remainingMs = boundedTimeoutMs - (int)stopwatch.ElapsedMilliseconds;
+                if (remainingMs <= 0)
+                    return false;
+
+                if (!_idleEvent.Wait(remainingMs))
                     return false;
             }
 
             return true;
+        }
+
+        private sealed class SharedRenderScheduler
+        {
+            private readonly ConcurrentQueue<LatestWinsRenderWorker> _queue = new();
+            private readonly SemaphoreSlim _signal = new(0);
+
+            public SharedRenderScheduler()
+            {
+                int workerCount = Math.Clamp(Environment.ProcessorCount, 1, 8);
+                for (int i = 0; i < workerCount; i++)
+                {
+                    var thread = new Thread(WorkerLoop)
+                    {
+                        IsBackground = true,
+                        Name = $"FDV.RenderScheduler.{i + 1}"
+                    };
+                    thread.Start();
+                }
+            }
+
+            public void Enqueue(LatestWinsRenderWorker worker)
+            {
+                _queue.Enqueue(worker);
+                _signal.Release();
+            }
+
+            private void WorkerLoop()
+            {
+                while (true)
+                {
+                    _signal.Wait();
+
+                    if (!_queue.TryDequeue(out var worker))
+                        continue;
+
+                    worker.ExecuteScheduled();
+                }
+            }
         }
     }
 }

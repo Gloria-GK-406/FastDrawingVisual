@@ -19,6 +19,8 @@ struct D3D11SwapChainRendererState {
   D3D11DeviceManager* deviceManager = nullptr;
   ComPtr<IDXGISwapChain1> swapChain = nullptr;
   ComPtr<ID3D11RenderTargetView> rtv0 = nullptr;
+  ComPtr<ID3D11Buffer> instanceBuffer = nullptr;
+  UINT instanceBufferCapacityBytes = 0;
   batch::BatchCompiler batchCompiler;
 };
 
@@ -130,6 +132,42 @@ HRESULT CreateDxgiFactoryFromDevice(ID3D11Device* device,
     return FAILED(hr) ? hr : E_FAIL;
   }
 
+  return S_OK;
+}
+
+HRESULT EnsureReusableInstanceBuffer(D3D11DeviceManager& deviceManager,
+                                     UINT requiredBytes,
+                                     ComPtr<ID3D11Buffer>& bufferOut,
+                                     UINT& capacityBytesOut) {
+  if (requiredBytes == 0) {
+    return S_OK;
+  }
+
+  const UINT minBytes = (std::max)(requiredBytes, 1024u);
+  if (bufferOut != nullptr && capacityBytesOut >= minBytes) {
+    return S_OK;
+  }
+
+  ComPtr<ID3D11Device> device = deviceManager.GetDevice();
+  if (device == nullptr) {
+    return E_UNEXPECTED;
+  }
+
+  D3D11_BUFFER_DESC bufferDesc = {};
+  bufferDesc.ByteWidth = minBytes;
+  bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+  bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+  bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+  ComPtr<ID3D11Buffer> instanceBuffer;
+  const HRESULT hr = device->CreateBuffer(
+      &bufferDesc, nullptr, instanceBuffer.GetAddressOf());
+  if (FAILED(hr) || instanceBuffer == nullptr) {
+    return FAILED(hr) ? hr : E_FAIL;
+  }
+
+  bufferOut = instanceBuffer;
+  capacityBytesOut = minBytes;
   return S_OK;
 }
 
@@ -339,15 +377,15 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
                 static_cast<UINT>(sizeof(batch::ShapeInstance))
           : 0u;
 
-  ComPtr<ID3D11Buffer> instanceBuffer;
-  UINT instanceBufferCapacityBytes = 0;
-  const HRESULT bufferHr = sharedManager.CreateDynamicInstanceBuffer(
-      requiredInstanceBytes, instanceBuffer, instanceBufferCapacityBytes);
+  const HRESULT bufferHr = EnsureReusableInstanceBuffer(
+      sharedManager, requiredInstanceBytes, state_->instanceBuffer,
+      state_->instanceBufferCapacityBytes);
   if (FAILED(bufferHr)) {
     return bufferHr;
   }
 
-  task.SetInstanceBuffer(instanceBuffer.Get());
+  task.SetInstanceBuffer(requiredInstanceBytes > 0 ? state_->instanceBuffer.Get()
+                                                   : nullptr);
   task.shapeInstanceCount = 0;
   task.textItems.clear();
   task.imageItems.clear();
@@ -426,7 +464,7 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
         if (batchBytes > 0 &&
             (mappedBytes == nullptr ||
              instanceBufferUsedBytes + batchBytes >
-                 instanceBufferCapacityBytes)) {
+                 state_->instanceBufferCapacityBytes)) {
           if (instanceBufferMapped) {
             uploadContext->Unmap(task.instanceBuffer, 0);
           }
@@ -435,13 +473,13 @@ HRESULT D3D11SwapChainRenderer::CollectFrameTask(
 
         if (batchBytes > 0) {
           std::memcpy(mappedBytes + instanceBufferUsedBytes,
-                      shapeInstances.data(), batchBytes);
+                       shapeInstances.data(), batchBytes);
           instanceBufferUsedBytes += batchBytes;
           task.shapeInstanceCount += static_cast<int>(shapeInstances.size());
         }
         diagnostics.maxVertexBufferCapacityBytes =
             (std::max)(diagnostics.maxVertexBufferCapacityBytes,
-                       instanceBufferCapacityBytes);
+                       state_->instanceBufferCapacityBytes);
         diagnostics.vertexBytesUploaded = instanceBufferUsedBytes;
         break;
       }
@@ -690,6 +728,7 @@ D3D11SwapChainRenderer::D3D11SwapChainRenderer(int width, int height)
     : width_(width), height_(height) {
   state_ = new D3D11SwapChainRendererState();
   state_->deviceManager = &D3D11DeviceManager::Instance();
+  state_->deviceManager->RegisterClient();
 
   InitializeCriticalSectionAndSpinCount(&cs_, 1000);
   csInitialized_ = true;
@@ -697,6 +736,8 @@ D3D11SwapChainRenderer::D3D11SwapChainRenderer(int width, int height)
 
 D3D11SwapChainRenderer::~D3D11SwapChainRenderer() {
   ReleaseRendererResources();
+  state_->deviceManager->ReleaseClient();
+
   delete state_;
   state_ = nullptr;
 
@@ -777,11 +818,11 @@ HRESULT D3D11SwapChainRenderer::CreateSwapChain() {
 
 void D3D11SwapChainRenderer::ReleaseRendererResources() {
   state_->batchCompiler = batch::BatchCompiler();
+  state_->instanceBuffer.Reset();
+  state_->instanceBufferCapacityBytes = 0;
 
   ReleaseRenderTargetResources();
   state_->swapChain.Reset();
-
-  state_->deviceManager->ReleaseClient();
 }
 
 HRESULT D3D11SwapChainRenderer::Initialize() {
