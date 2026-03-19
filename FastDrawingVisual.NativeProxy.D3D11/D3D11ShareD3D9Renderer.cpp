@@ -298,7 +298,7 @@ void RegisterDurationMetric(int& metricId, const void* renderer,
 
   wchar_t metricName[112]{};
   swprintf_s(metricName, L"native.d3d11.r%p.%ls", renderer, suffix);
-  FDVLOG_MetricSpec spec{};
+  MetricSpec spec{};
   spec.name = metricName;
   spec.periodSec = kMetricWindowSec;
   spec.format = kDrawMetricFormat;
@@ -587,7 +587,7 @@ void D3D11ShareD3D9Renderer::RegisterMetrics() {
   if (fpsMetricId_ <= 0) {
     wchar_t metricName[96]{};
     swprintf_s(metricName, L"native.d3d11.r%p.fps", static_cast<void*>(this));
-    FDVLOG_MetricSpec spec{};
+    MetricSpec spec{};
     spec.name = metricName;
     spec.periodSec = kMetricWindowSec;
     spec.format = kFpsMetricFormat;

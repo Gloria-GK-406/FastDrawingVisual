@@ -19,7 +19,7 @@ static bool IsNullOrEmpty(const wchar_t *text) {
 
 } // namespace
 
-int LogMetricsAggregator::RegisterMetric(const FDVLOG_MetricSpec *spec) {
+int LogMetricsAggregator::RegisterMetric(const MetricSpec *spec) {
   if (!spec)
     return 0;
 

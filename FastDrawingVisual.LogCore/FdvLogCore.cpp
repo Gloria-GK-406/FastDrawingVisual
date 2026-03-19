@@ -545,7 +545,7 @@ public:
     Enqueue(ev);
   }
 
-  int RegisterMetric(const FDVLOG_MetricSpec *spec) {
+  int RegisterMetric(const MetricSpec *spec) {
     return metrics_.RegisterMetric(spec);
   }
 
@@ -772,6 +772,10 @@ bool __cdecl FDVLOG_Initialize(const FDVLOG_Config *config) {
   return true;
 }
 
+bool __cdecl FDVLOG_IsInitialized() {
+  return fdvlog::GetLogger() != nullptr;
+}
+
 void __cdecl FDVLOG_Shutdown(int flushTimeoutMs) {
   std::shared_ptr<fdvlog::LoggerCore> old;
   {
@@ -807,7 +811,7 @@ void __cdecl FDVLOG_WriteETW(int level, const wchar_t *category,
   logger->WriteEtw(level, category, message, isDirect);
 }
 
-int __cdecl FDVLOG_RegisterMetric(const FDVLOG_MetricSpec *spec) {
+int __cdecl FDVLOG_RegisterMetric(const MetricSpec *spec) {
   auto logger = fdvlog::GetOrCreateLogger();
   if (!logger)
     return 0;

@@ -1220,7 +1220,7 @@ void D3D9Renderer::RegisterMetrics() {
   wchar_t metricName[104] = {};
   swprintf_s(metricName, L"native.d3d9.r%p.parse_submit_ms",
              static_cast<void*>(this));
-  FDVLOG_MetricSpec spec{};
+  MetricSpec spec{};
   spec.name = metricName;
   spec.periodSec = kMetricWindowSec;
   spec.format = kParseSubmitMetricFormat;

@@ -6,6 +6,7 @@
 
 using namespace System;
 using namespace System::Diagnostics;
+using namespace System::Threading;
 
 namespace {
 
@@ -70,7 +71,7 @@ int LogProxy::RegisterMetric(String ^ name, UInt32 periodSec, String ^ format,
   pin_ptr<const wchar_t> n = PtrToStringChars(name);
   pin_ptr<const wchar_t> f = PtrToStringChars(format);
 
-  FDVLOG_MetricSpec spec{};
+  MetricSpec spec{};
   spec.name = name->Length > 0 ? n : nullptr;
   spec.periodSec = Math::Max(periodSec, 1U);
   spec.format = format->Length > 0 ? f : nullptr;
@@ -84,6 +85,68 @@ bool LogProxy::UnregisterMetric(int metricId) {
 
 void LogProxy::LogMetric(int metricId, double value) {
   FDVLOG_LogMetric(metricId, value);
+}
+
+bool LogProxy::IsInitialized() { return FDVLOG_IsInitialized(); }
+
+Metric ^ LogProxy::CreateMetric(String ^ name, UInt32 periodSec,
+                                String ^ format, LogLevel level) {
+  return gcnew Metric("managed", name,
+                      RegisterMetric(name, periodSec, format, level));
+}
+
+Metric::Metric(String ^ category, String ^ name, int metricId)
+    : category_(Coalesce(category, "managed")),
+      name_(Coalesce(name, String::Empty)), metricId_(metricId) {}
+
+Metric::~Metric() {
+  Release(true);
+  GC::SuppressFinalize(this);
+}
+
+Metric::!Metric() { Release(false); }
+
+void Metric::Add(double value) {
+  const int metricId = metricId_;
+  if (metricId <= 0) {
+    return;
+  }
+
+  try {
+    LogProxy::LogMetric(metricId, value);
+  } catch (Exception ^ ex) {
+    WriteFallback(category_, "MetricFallback",
+                  DescribeException("metric add failed", ex));
+  }
+}
+
+void Metric::Add(float value) { Add(static_cast<double>(value)); }
+
+bool Metric::IsValid::get() { return metricId_ > 0; }
+
+int Metric::Id::get() { return metricId_; }
+
+String ^ Metric::Name::get() { return name_; }
+
+void Metric::Release(bool reportFailure) {
+  const int metricId = Interlocked::Exchange(metricId_, 0);
+  if (metricId <= 0) {
+    return;
+  }
+
+  if (!LogProxy::IsInitialized()) {
+    return;
+  }
+
+  try {
+    LogProxy::UnregisterMetric(metricId);
+  } catch (Exception ^ ex) {
+    if (reportFailure) {
+      WriteFallback(category_, "MetricFallback",
+                    DescribeException("metric unregister failed", ex));
+    }
+  } catch (...) {
+  }
 }
 
 Logger::Logger(String ^ category) : category_(Coalesce(category, "managed")) {}
@@ -116,6 +179,18 @@ void Logger::WarnEtw(String ^ message) { Write(LogLevel::Warn, message, true); }
 
 void Logger::ErrorEtw(String ^ message) {
   Write(LogLevel::Error, message, true);
+}
+
+Metric ^ Logger::CreateMetric(String ^ name, UInt32 periodSec, String ^ format,
+                              LogLevel level) {
+  try {
+    return gcnew Metric(category_, name,
+                        LogProxy::RegisterMetric(name, periodSec, format, level));
+  } catch (Exception ^ ex) {
+    WriteFallback(category_, "MetricFallback",
+                  DescribeException("create metric failed", ex));
+    return gcnew Metric(category_, name, 0);
+  }
 }
 
 int Logger::RegisterMetric(String ^ name, UInt32 periodSec, String ^ format,

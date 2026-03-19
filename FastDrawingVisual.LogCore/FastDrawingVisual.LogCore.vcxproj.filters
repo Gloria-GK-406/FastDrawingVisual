@@ -41,5 +41,14 @@
     <ClInclude Include="LogEtwSink.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="LogCoreResource.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Mertic.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="LogCoreResources.rc" />
   </ItemGroup>
 </Project>

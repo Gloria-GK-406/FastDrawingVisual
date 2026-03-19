@@ -21,6 +21,9 @@
     <ClInclude Include="RendererLockGuard.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Watch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Header Files">

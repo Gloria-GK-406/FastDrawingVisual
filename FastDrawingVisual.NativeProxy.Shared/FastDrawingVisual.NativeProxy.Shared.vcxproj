@@ -146,6 +146,7 @@
     <ClInclude Include="D3DFrameTaskTypes.h" />
     <ClInclude Include="FramePacket.h" />
     <ClInclude Include="RendererLockGuard.h" />
+    <ClInclude Include="Watch.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="FDV_GenerateCommandProtocol"

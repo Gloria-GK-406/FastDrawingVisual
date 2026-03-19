@@ -1,8 +1,8 @@
 #pragma once
 
 namespace FastDrawingVisual::Log {
-public
-enum class LogLevel : int {
+
+public enum class LogLevel : int {
   Trace = 0,
   Debug = 1,
   Info = 2,
@@ -11,7 +11,9 @@ enum class LogLevel : int {
   Fatal = 5
 };
 
-ref class LogProxy abstract sealed {
+ref class Metric;
+
+public ref class LogProxy abstract sealed {
 public:
   static void Log(LogLevel level, System::String ^ category,
                   System::String ^ message);
@@ -33,14 +35,47 @@ public:
                             System::String ^ format, LogLevel level);
   static bool UnregisterMetric(int metricId);
   static void LogMetric(int metricId, double value);
+  static bool IsInitialized();
+  static Metric ^ CreateMetric(System::String ^ name, System::UInt32 periodSec,
+                               System::String ^ format, LogLevel level);
 };
 
-public
+public ref class Metric sealed {
+public:
+  ~Metric();
+  !Metric();
+
+  void Add(double value);
+  void Add(float value);
+
+  property bool IsValid {
+    bool get();
+  }
+
+  property int Id {
+    int get();
+  }
+
+  property System::String ^ Name {
+    System::String ^ get();
+  }
+
+internal:
+  Metric(System::String ^ category, System::String ^ name, int metricId);
+
+private:
+  void Release(bool reportFailure);
+
+  initonly System::String ^ category_;
+  initonly System::String ^ name_;
+  int metricId_;
+};
+
 /// <summary>
 /// Category-bound managed logger. Native LogCore owns lazy initialization and
 /// process-wide lifetime.
 /// </summary>
-ref class Logger sealed {
+public ref class Logger sealed {
 public:
   Logger(System::String ^ category);
 
@@ -61,6 +96,9 @@ public:
   void WarnEtw(System::String ^ message);
   void ErrorEtw(System::String ^ message);
 
+  Metric ^ CreateMetric(System::String ^ name, System::UInt32 periodSec,
+                        System::String ^ format, LogLevel level);
+
   /// <summary>Registers a periodic metric bucket.</summary>
   /// <param name="name">Metric name; empty uses an auto-generated name.</param>
   /// <param name="periodSec">Bucket period in seconds; minimum is 1.</param>
@@ -79,4 +117,5 @@ private:
 
   initonly System::String ^ category_;
 };
+
 } // namespace FastDrawingVisual::Log

@@ -17,7 +17,7 @@ class LogMetricsAggregator {
 public:
   using EmitCallback = std::function<void(const std::wstring &line, int level)>;
 
-  int RegisterMetric(const FDVLOG_MetricSpec *spec);
+  int RegisterMetric(const MetricSpec *spec);
   bool UnregisterMetric(int metricId);
   void Reset();
   void OnMetricEvent(const MetricPayload &payload, uint64_t timestamp100ns,
