@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cwchar>
+#include <cstring>
 #include <d3d9.h>
 #include <d3dcompiler.h>
 #include <d3d11.h>
@@ -53,6 +54,8 @@ struct D3D11ShareD3D9RendererState {
   ComPtr<IDirect3D9Ex> d3d9 = nullptr;
   ComPtr<IDirect3DDevice9Ex> d3d9Device = nullptr;
   ComPtr<IDirect3DSurface9> presentingSurface = nullptr;
+  ComPtr<ID3D11Buffer> instanceBuffer = nullptr;
+  UINT instanceBufferCapacityBytes = 0;
   batch::BatchCompiler batchCompiler;
   SurfaceSlot slots[kFrameCount];
   std::uint64_t deviceGeneration = 0;
@@ -391,38 +394,38 @@ D3D11ShareD3D9DeviceManager& GetDeviceManager() {
   return D3D11ShareD3D9DeviceManager::Instance();
 }
 
-HRESULT CreateShapeInstanceBuffer(
-    ID3D11Device* device, const std::vector<batch::ShapeInstance>& shapeInstances,
-    ID3D11Buffer*& bufferOut) {
-  if (bufferOut != nullptr) {
-    bufferOut->Release();
-    bufferOut = nullptr;
-  }
-  if (shapeInstances.empty()) {
+HRESULT EnsureReusableInstanceBuffer(
+    D3D11ShareD3D9DeviceManager& deviceManager, UINT requiredBytes,
+    ComPtr<ID3D11Buffer>& bufferOut, UINT& capacityBytesOut) {
+  if (requiredBytes == 0) {
     return S_OK;
   }
 
+  const UINT minBytes = (std::max)(requiredBytes, 1024u);
+  if (bufferOut != nullptr && capacityBytesOut >= minBytes) {
+    return S_OK;
+  }
+
+  ComPtr<ID3D11Device> device = deviceManager.GetDevice();
   if (device == nullptr) {
-    return E_POINTER;
+    return E_UNEXPECTED;
   }
 
   D3D11_BUFFER_DESC bufferDesc = {};
-  bufferDesc.ByteWidth =
-      static_cast<UINT>(shapeInstances.size() * sizeof(batch::ShapeInstance));
-  bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
+  bufferDesc.ByteWidth = minBytes;
+  bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
   bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+  bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
-  D3D11_SUBRESOURCE_DATA initialData = {};
-  initialData.pSysMem = shapeInstances.data();
-
-  ComPtr<ID3D11Buffer> createdBuffer;
-  const HRESULT hr = device->CreateBuffer(&bufferDesc, &initialData,
-                                          createdBuffer.GetAddressOf());
-  if (FAILED(hr) || createdBuffer == nullptr) {
+  ComPtr<ID3D11Buffer> instanceBuffer;
+  const HRESULT hr = device->CreateBuffer(
+      &bufferDesc, nullptr, instanceBuffer.GetAddressOf());
+  if (FAILED(hr) || instanceBuffer == nullptr) {
     return FAILED(hr) ? hr : E_FAIL;
   }
 
-  bufferOut = createdBuffer.Detach();
+  bufferOut = instanceBuffer;
+  capacityBytesOut = minBytes;
   return S_OK;
 }
 
@@ -831,19 +834,48 @@ HRESULT D3D11ShareD3D9Renderer::SubmitLayeredCommandsAndPreparePresent(
   }
 
   if (!shapeInstances.empty()) {
-    const HRESULT bufferHr =
-        CreateShapeInstanceBuffer(state_->device.Get(), shapeInstances,
-                                  task.instanceBuffer);
+    const UINT requiredInstanceBytes =
+        static_cast<UINT>(shapeInstances.size() * sizeof(batch::ShapeInstance));
+    const UINT previousCapacityBytes = state_->instanceBufferCapacityBytes;
+    const HRESULT bufferHr = EnsureReusableInstanceBuffer(
+        deviceManager, requiredInstanceBytes, state_->instanceBuffer,
+        state_->instanceBufferCapacityBytes);
     if (FAILED(bufferHr)) {
       state_->slots[drawSlotIndex].state = SurfaceState::Ready;
       LogStageFailure(static_cast<void*>(this), frameId, L"build_shape_buffer",
                       bufferHr, diagnostics, width_, height_);
       return bufferHr;
     }
+
+    ExecutionLockGuard<D3D11ShareD3D9DeviceManager> uploadLock(deviceManager);
+    ComPtr<ID3D11DeviceContext> uploadContext = deviceManager.GetImmediateContext();
+    if (uploadContext == nullptr || state_->instanceBuffer == nullptr) {
+      state_->slots[drawSlotIndex].state = SurfaceState::Ready;
+      LogStageFailure(static_cast<void*>(this), frameId, L"map_shape_buffer",
+                      E_UNEXPECTED, diagnostics, width_, height_);
+      return E_UNEXPECTED;
+    }
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    const HRESULT mapHr = uploadContext->Map(
+        state_->instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(mapHr) || mapped.pData == nullptr) {
+      state_->slots[drawSlotIndex].state = SurfaceState::Ready;
+      LogStageFailure(static_cast<void*>(this), frameId, L"map_shape_buffer",
+                      FAILED(mapHr) ? mapHr : E_FAIL, diagnostics, width_, height_);
+      return FAILED(mapHr) ? mapHr : E_FAIL;
+    }
+
+    std::memcpy(mapped.pData, shapeInstances.data(), requiredInstanceBytes);
+    uploadContext->Unmap(state_->instanceBuffer.Get(), 0);
+
+    task.SetInstanceBuffer(state_->instanceBuffer.Get());
     task.shapeInstanceCount = static_cast<int>(shapeInstances.size());
-    diagnostics.vertexBytesUploaded =
-        static_cast<UINT>(shapeInstances.size() * sizeof(batch::ShapeInstance));
-    diagnostics.maxVertexBufferCapacityBytes = diagnostics.vertexBytesUploaded;
+    diagnostics.vertexBytesUploaded = requiredInstanceBytes;
+    diagnostics.maxVertexBufferCapacityBytes = state_->instanceBufferCapacityBytes;
+    if (previousCapacityBytes < state_->instanceBufferCapacityBytes) {
+      ++diagnostics.vertexBufferResizeCount;
+    }
   }
 
   auto completion = std::make_shared<D3DFrameTaskCompletion>();
@@ -978,6 +1010,8 @@ void D3D11ShareD3D9Renderer::ReleaseRendererResources() {
   }
 
   state_->batchCompiler = batch::BatchCompiler();
+  state_->instanceBuffer.Reset();
+  state_->instanceBufferCapacityBytes = 0;
 
   ReleaseRenderTargetResources();
   state_->deviceGeneration = 0;
