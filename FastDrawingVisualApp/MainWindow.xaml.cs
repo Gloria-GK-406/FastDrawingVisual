@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace FastDrawingVisualApp
@@ -13,13 +14,15 @@ namespace FastDrawingVisualApp
     public partial class MainWindow : Window
     {
         private readonly DispatcherTimer _metricsTimer;
+        private readonly List<FastDrawingVisual.Controls.FastDrawingVisual> _multiCanvasTiles = new();
         private readonly IReadOnlyList<RendererOption> _rendererOptions;
         private readonly ObservableCollection<BenchmarkRunRecord> _history = new();
-        private BenchmarkRunner? _runner;
+        private IBenchmarkRunController? _runner;
 
         public MainWindow()
         {
             InitializeComponent();
+            InitializeMultiCanvasTiles();
 
             _rendererOptions = new[]
             {
@@ -52,6 +55,7 @@ namespace FastDrawingVisualApp
             _metricsTimer.Start();
 
             UpdateConfigDescription();
+            UpdateCanvasMode();
             UpdateRunningState(false);
         }
 
@@ -60,12 +64,22 @@ namespace FastDrawingVisualApp
             StopRunner();
 
             var config = BuildConfig();
-            FastCanvas.PreferredRenderer = config.Renderer;
-            _runner = new BenchmarkRunner(FastCanvas, config);
+            if (IsGrid16Scenario(config.Scenario))
+            {
+                for (int i = 0; i < _multiCanvasTiles.Count; i++)
+                    _multiCanvasTiles[i].PreferredRenderer = config.Renderer;
+
+                _runner = new MultiCanvasBenchmarkRunner(_multiCanvasTiles, config);
+            }
+            else
+            {
+                FastCanvas.PreferredRenderer = config.Renderer;
+                _runner = new BenchmarkRunner(FastCanvas, config);
+            }
 
             StatusText.Text = "Running";
             ConfigSummaryText.Text = config.Summary;
-            CanvasOverlayText.Text = $"{config.Renderer} | {config.Scenario.DisplayName}";
+            CanvasOverlayText.Text = BuildCanvasOverlayText(config.Scenario, ((RendererOption?)RendererCombo.SelectedItem)?.DisplayName ?? config.Renderer.ToString());
             UpdateRunningState(true);
             UpdateMetrics(_runner.CreateSnapshot());
         }
@@ -107,6 +121,7 @@ namespace FastDrawingVisualApp
         private void OnConfigSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             UpdateConfigDescription();
+            UpdateCanvasMode();
         }
 
         private BenchmarkConfig BuildConfig()
@@ -135,7 +150,7 @@ namespace FastDrawingVisualApp
             RendererDescriptionText.Text = renderer?.Description ?? string.Empty;
             CanvasOverlayText.Text = renderer == null
                 ? "Idle"
-                : $"{renderer.DisplayName} | {(scenario?.DisplayName ?? "Scenario")}";
+                : BuildCanvasOverlayText(scenario, renderer.DisplayName);
         }
 
         private void UpdateRunningState(bool isRunning)
@@ -215,7 +230,7 @@ namespace FastDrawingVisualApp
             UpdateConfigDescription();
         }
 
-        private void AddHistoryRecord(BenchmarkRunner runner, BenchmarkMetricsSnapshot snapshot)
+        private void AddHistoryRecord(IBenchmarkRunController runner, BenchmarkMetricsSnapshot snapshot)
         {
             if (_history.Count >= 10)
                 _history.RemoveAt(_history.Count - 1);
@@ -227,8 +242,75 @@ namespace FastDrawingVisualApp
         {
             _metricsTimer.Stop();
             StopRunner();
+            for (int i = 0; i < _multiCanvasTiles.Count; i++)
+                _multiCanvasTiles[i].Dispose();
             FastCanvas.Dispose();
             base.OnClosed(e);
+        }
+
+        private void InitializeMultiCanvasTiles()
+        {
+            for (int i = 0; i < 16; i++)
+            {
+                var tileCanvas = new FastDrawingVisual.Controls.FastDrawingVisual
+                {
+                    Margin = new Thickness(1)
+                };
+                var tileLabel = new TextBlock
+                {
+                    Text = $"#{i + 1:00}",
+                    Foreground = (Brush)FindResource("TextMain"),
+                    FontSize = 11,
+                    FontFamily = new FontFamily("Consolas")
+                };
+                var tileOverlay = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromArgb(0xAA, 0x11, 0x18, 0x21)),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(8, 4, 8, 4),
+                    Margin = new Thickness(10),
+                    VerticalAlignment = VerticalAlignment.Top,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Child = tileLabel
+                };
+                var tileHost = new Grid();
+                tileHost.Children.Add(tileCanvas);
+                tileHost.Children.Add(tileOverlay);
+
+                var tileBorder = new Border
+                {
+                    Margin = new Thickness(6),
+                    Background = (Brush)FindResource("PanelBgAlt"),
+                    BorderBrush = (Brush)FindResource("Stroke"),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(8),
+                    Child = tileHost
+                };
+
+                MultiCanvasGrid.Children.Add(tileBorder);
+                _multiCanvasTiles.Add(tileCanvas);
+            }
+        }
+
+        private void UpdateCanvasMode()
+        {
+            bool useGrid16 = IsGrid16Scenario(ScenarioCombo.SelectedItem as IBenchmarkScenario);
+            FastCanvas.Visibility = useGrid16 ? Visibility.Collapsed : Visibility.Visible;
+            SingleCanvasOverlay.Visibility = useGrid16 ? Visibility.Collapsed : Visibility.Visible;
+            MultiCanvasGrid.Visibility = useGrid16 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private static bool IsGrid16Scenario(IBenchmarkScenario? scenario)
+            => string.Equals(scenario?.Key, KLineGrid16Scenario.ScenarioId, StringComparison.Ordinal);
+
+        private static string BuildCanvasOverlayText(IBenchmarkScenario? scenario, string rendererDisplayName)
+        {
+            if (scenario == null)
+                return "Idle";
+
+            return IsGrid16Scenario(scenario)
+                ? $"{rendererDisplayName} | 16x {scenario.DisplayName}"
+                : $"{rendererDisplayName} | {scenario.DisplayName}";
         }
 
         private sealed class RendererOption

@@ -128,7 +128,18 @@
             <Border Grid.Column="0" Margin="0,0,12,0" Style="{StaticResource PanelBorderStyle}">
                 <Grid>
                     <fdv:FastDrawingVisual x:Name="FastCanvas" Margin="12" />
-                    <Border Margin="24" VerticalAlignment="Top" HorizontalAlignment="Left" Background="#AA111821" CornerRadius="8" Padding="10,8">
+                    <UniformGrid x:Name="MultiCanvasGrid"
+                                 Rows="4"
+                                 Columns="4"
+                                 Margin="12"
+                                 Visibility="Collapsed" />
+                    <Border x:Name="SingleCanvasOverlay"
+                            Margin="24"
+                            VerticalAlignment="Top"
+                            HorizontalAlignment="Left"
+                            Background="#AA111821"
+                            CornerRadius="8"
+                            Padding="10,8">
                         <StackPanel>
                             <TextBlock Text="Canvas Load Focus"
                                        Foreground="{StaticResource TextMuted}"

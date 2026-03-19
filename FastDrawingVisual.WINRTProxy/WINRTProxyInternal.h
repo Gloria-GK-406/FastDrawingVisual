@@ -9,6 +9,7 @@
 #include <windows.ui.composition.h>
 #include <windows.ui.composition.desktop.h>
 #include <winrt/base.h>
+#include <winrt/Windows.System.h>
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>

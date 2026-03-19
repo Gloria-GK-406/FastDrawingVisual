@@ -6,6 +6,22 @@
 
 namespace
 {
+    struct DispatcherQueueThreadState
+    {
+        PDISPATCHERQUEUECONTROLLER controller = nullptr;
+
+        ~DispatcherQueueThreadState()
+        {
+            if (controller != nullptr)
+            {
+                controller->Release();
+                controller = nullptr;
+            }
+        }
+    };
+
+    thread_local DispatcherQueueThreadState g_dispatcherQueueThreadState;
+
     template<typename TInterface>
     winrt::com_ptr<TInterface> QueryCompositorInterface(
         winrt::Windows::UI::Composition::Compositor const& compositor)
@@ -60,6 +76,21 @@ namespace
             return true;
         }
 
+        if (g_dispatcherQueueThreadState.controller != nullptr)
+        {
+            g_dispatcherQueueThreadState.controller->AddRef();
+            state->dispatcherQueueController = g_dispatcherQueueThreadState.controller;
+            SetLastError(state, S_OK);
+            return true;
+        }
+
+        auto currentQueue = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
+        if (currentQueue != nullptr)
+        {
+            SetLastError(state, S_OK);
+            return true;
+        }
+
         DispatcherQueueOptions options = {};
         options.dwSize = sizeof(options);
         options.threadType = DQTYPE_THREAD_CURRENT;
@@ -67,7 +98,7 @@ namespace
 
         PDISPATCHERQUEUECONTROLLER controller = nullptr;
         const HRESULT hr = CreateDispatcherQueueController(options, &controller);
-        if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS))
+        if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS) || hr == 0x8001010EL)
         {
             SetLastError(state, S_OK);
             return true;
@@ -79,6 +110,8 @@ namespace
             return false;
         }
 
+        g_dispatcherQueueThreadState.controller = controller;
+        controller->AddRef();
         state->dispatcherQueueController = controller;
         SetLastError(state, S_OK);
         return true;

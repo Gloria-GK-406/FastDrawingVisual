@@ -9,7 +9,7 @@ using System.Windows.Media;
 
 namespace FastDrawingVisualApp.Benchmark
 {
-    internal sealed class BenchmarkRunner : IDisposable
+    internal sealed class BenchmarkRunner : IBenchmarkRunController
     {
         private readonly FastDrawingVisual.Controls.FastDrawingVisual _canvas;
         private readonly BenchmarkConfig _config;
